@@ -2,6 +2,7 @@ open Terms
 open Types
 open Pitypes
 open Clause
+open Concurrent
 
 (** Subsumption of clauses w.r.t. to set and queue of clauses *)
 
@@ -106,39 +107,6 @@ module type SubsumptionSig =
     val implies_mod_eq_set : clause -> clause -> bool
 
   end
-
-  
-module Concurrent = 
-  struct
-
-    module T = DomainsLib.Task
-    let numCores : int = Domainslib.Domains.num_domains ()
-
-    let list_exists f lst = 
-      let pool = T.setup_pool ~num_domains:numCores ()
-      in
-      let rec runPool = 
-        match lst with
-        | [] -> false
-        | h::t ->
-            let a = T.async pool (fun _ -> f h) in
-            let b = T.async pool (fun () -> boolOrList f t) in
-            T.await pool a || T.await pool b
-      in
-      let res = T.run pool (fun _ -> runPool) in
-      T.teardown_pool pool;
-      res
-
-    let function_list f_lst = 
-      let pool = T.setup_pool ~num_domains:numCores ()
-      in
-      let res = T.run pool (fun _ -> 
-        List.map (fun f -> T.async pool (fun _ -> f ())) f_lst
-      ) |> List.map (T.await pool) in
-      T.teardown_pool pool;
-      res 
-
-  end 
 
 
 module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
@@ -1141,7 +1109,7 @@ module FeatureTrie =
       | Empty, _ -> false
       | Node(_,elt_l), [] ->
           (* Only the elements with empty feature vector can be less or equal *)
-          List.exists p elt_l
+          Concurrent.list_exists p elt_l
       | Node(fe_map,elt_l), (fe,v)::q_vec ->
           (* Since feature_vector are always sorted in increasing order w.r.t. compare_feature, we have
              that [fe_vec] is sorted in decreasing order w.r.t. FV.compare_fst.
@@ -1160,7 +1128,7 @@ module FeatureTrie =
           (* We need to look in fe_map the branches that have a feature smaller than fe. *)
 
           (* The elements with no positive features are smaller *)
-          let lst = (Concurrent.list_exists P elt_L) :: FVTree.exists_leq (exists_leq p) q_vec fe_map :: [] in
+          let lst = (Concurrent.list_exists p elt_l) :: FVTree.exists_leq (exists_leq p) q_vec fe_map :: [] in
           List.exists (fun x -> x) lst
 
     let rec iter f_iter = function
@@ -1567,7 +1535,7 @@ module MakeSet
     (* [implies set vector cl] checks whether a clause from [set] implies (w.r.t. [f_implies])
        the clause [cl] that has [vector] as feature vector. *)
     let implies set (cl, vector, sub_data) =
-      let test_fun elt =
+      let test_fun tok elt =
         let (elt_cl, elt_sub_data) = elt.annot_clause in
         elt.active == Active && S.implies_no_test elt_cl elt_sub_data cl sub_data
       in
