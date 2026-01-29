@@ -6,36 +6,29 @@ let limit : int = 100
 
 let create_flag : flag = Atomic.make false
 
-let create_token : (*int ->*) flag -> token = 
-  fun (*lim*) fl-> (ref 0, limit, fl)
+let create_token ?(lim=limit) (fl:flag) = (ref 0, lim, fl)
 
-let set_token (tkn : token) : unit =
+let set_token (tkn : token) =
   let (count_ref, lim, fl) = tkn in
   Atomic.set fl true
 
-  (** designed to or, as it returns true when stopped *)
-let check_token (tkn : token) (f : token -> bool) : bool = 
+(** [check_token] is designed to or, as it returns true when stopped *)
+let check_token (tkn : token) (f : token -> bool) = 
   let (count_ref, lim, fl) = tkn in
-  let stop = ref false in 
-  if !count_ref >= lim then (
-      stop := Atomic.get fl;
-      count_ref := 0 )
-  else (
-    count_ref := !count_ref + 1 );
-  if !stop then true else f tkn
-
+  incr count_ref;
+  (!count_ref mod lim = 0 && Atomic.get fl) || f tkn
 
 module T = Domainslib.Task
 let numCores = 4 (*Domainslib.Domains.num_domains ()*)
 let pool = T.setup_pool ~num_domains:numCores ()
 
-let bool_function_list_or (fns : (token -> bool) list) fl (*(lim : int)*) : bool =
-  let promises = List.map (fun fn -> T.async pool (fun () -> fn (create_token (*lim*) fl))) fns in
-  List.exists (fun a -> a) (List.map (fun p -> T.await pool p) promises)
+let bool_function_list_or (fns : (token -> bool) list) fl : bool =
+  let promises = List.map (fun fn -> T.async pool (fun () -> fn (create_token fl))) fns in
+  List.exists (fun p -> T.await pool p) promises
 
-let list_exists (f: token -> 'a -> bool) (lst : 'a list) (*(lim : int)*) : bool =
-  let fns = List.map (fun a -> fun (tkn : token) -> f tkn a) lst in
-  bool_function_list_or fns (*lim*)
+let list_exists (f: token -> 'a -> bool) (l : 'a list) flag =
+  let promises = List.map (fun a -> T.async pool (fun () -> f (create_token flag) a)) l in
+  List.exists (fun p -> T.await pool p) promises
 
 
 (* Need to coordinate checking/setting the flag, I'm thinking atomic actions will make this 
