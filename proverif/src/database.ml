@@ -1105,11 +1105,11 @@ module FeatureTrie =
 
     (* [exists_leq p fe_vec t] returns true if there exists an element of [t] with
        feature vector less or equal to [fe_vec] that satisfies the predicate [p] *)
-    let rec exists_leq p fe_vec t = match t, fe_vec with
+    let rec exists_leq flag p fe_vec t = match t, fe_vec with
       | Empty, _ -> false
       | Node(_,elt_l), [] ->
           (* Only the elements with empty feature vector can be less or equal *)
-          Concurrent.list_exists p elt_l
+          Concurrent.list_exists flag p elt_l
       | Node(fe_map,elt_l), (fe,v)::q_vec ->
           (* Since feature_vector are always sorted in increasing order w.r.t. compare_feature, we have
              that [fe_vec] is sorted in decreasing order w.r.t. FV.compare_fst.
@@ -1128,8 +1128,7 @@ module FeatureTrie =
           (* We need to look in fe_map the branches that have a feature smaller than fe. *)
 
           (* The elements with no positive features are smaller *)
-          let lst = (fun t -> Concurrent.list_exists (p t) elt_l) :: (fun _ -> FVTree.exists_leq (exists_leq p) q_vec fe_map :: []) in
-          Concurrent.bool_function_list_or lst
+          Concurrent.or_function flag (fun _ -> Concurrent.list_exists flag p elt_l) (fun _ -> FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map)
 
     let rec iter f_iter = function
       | Empty -> ()
