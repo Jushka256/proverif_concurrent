@@ -27,17 +27,17 @@ module Concurrent =
 
 
     module T = Domainslib.Task
-    let numCores = Domainslib.Domains.num_domains ()
+    let numCores = 4 (*Domainslib.Domains.num_domains ()*)
     let pool = T.setup_pool ~num_domains:numCores ()
+
+    let bool_funciton_list_or (fns : (token -> bool) list) (*(lim : int)*) : bool =
+      let fl = create_flag in
+      let promises = List.map (fun fn -> T.async pool (fun () -> fn (create_token (*lim*) fl))) fns in
+      List.exists (fun a -> a) (List.map (fun p -> T.await pool p) promises)
 
     let list_exists (f: token -> 'a -> bool) (lst : 'a list) (*(lim : int)*) : bool =
       let fns = List.map (fun a -> fun (tkn : token) -> f tkn a) lst in
       bool_funciton_list_or fns (*lim*)
-
-    let bool_funciton_list_or (fns : (token -> bool) list) (*(lim : int)*) : bool =
-      let fl = create_flag () in
-      let promises = List.map (fun fn -> T.async pool (fun () -> fn (create_token (*lim*) fl))) fns in
-      List.exists List.map (fun p -> T.await pool p) promises
 
 
     (* Need to coordinate checking/setting the flag, I'm thinking atomic actions will make this 
