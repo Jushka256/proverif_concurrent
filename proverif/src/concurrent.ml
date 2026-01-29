@@ -1,5 +1,5 @@
 
-type flag = bool Atomic.t
+type flag = bool Atomic.t 
 type token = int ref * int * flag
 
 let limit : int = 100
@@ -13,7 +13,8 @@ let set_token (tkn : token) : unit =
   let (count_ref, lim, fl) = tkn in
   Atomic.set fl true
 
-let check_token (tkn : token) (f : token -> bool) : bool =
+  (** designed to or, as it returns true when stopped *)
+let check_token (tkn : token) (f : token -> bool) : bool = 
   let (count_ref, lim, fl) = tkn in
   let stop = ref false in 
   if !count_ref >= lim then (
@@ -28,8 +29,7 @@ module T = Domainslib.Task
 let numCores = 4 (*Domainslib.Domains.num_domains ()*)
 let pool = T.setup_pool ~num_domains:numCores ()
 
-let bool_function_list_or (fns : (token -> bool) list) (*(lim : int)*) : bool =
-  let fl = create_flag in
+let bool_function_list_or (fns : (token -> bool) list) fl (*(lim : int)*) : bool =
   let promises = List.map (fun fn -> T.async pool (fun () -> fn (create_token (*lim*) fl))) fns in
   List.exists (fun a -> a) (List.map (fun p -> T.await pool p) promises)
 

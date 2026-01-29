@@ -1128,8 +1128,8 @@ module FeatureTrie =
           (* We need to look in fe_map the branches that have a feature smaller than fe. *)
 
           (* The elements with no positive features are smaller *)
-          let lst = (Concurrent.list_exists p elt_l) :: FVTree.exists_leq (exists_leq p) q_vec fe_map :: [] in
-          List.exists (fun x -> x) lst
+          let lst = (fun t -> Concurrent.list_exists (p t) elt_l) :: (fun _ -> FVTree.exists_leq (exists_leq p) q_vec fe_map :: []) in
+          Concurrent.bool_function_list_or lst
 
     let rec iter f_iter = function
       | Empty -> ()
