@@ -12,7 +12,7 @@ val create_token : ?lim:int -> flag -> token
 val set_token : token -> unit
 
 (** Takes a token and continuation function, returns true if the flag is set otherwise runs the continuation.  For use with Or *)
-val check_token : token -> (token -> bool) -> bool
+val check_token : token -> (unit -> 'a) -> (unit -> 'a) -> 'a
 
 (** Runs a boolean function on each element of a list concurrently, returns or of results *)
 val list_exists : flag -> (token -> 'a -> bool) -> 'a list -> bool 

@@ -13,10 +13,13 @@ let set_token (tkn : token) =
   Atomic.set fl true
 
 (** [check_token] is designed to or, as it returns true when stopped *)
-let check_token (tkn : token) (f : token -> bool) = 
+let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a)= 
   let (count_ref, lim, fl) = tkn in
   incr count_ref;
-  (!count_ref mod lim = 0 && Atomic.get fl) || f tkn
+  if (!count_ref mod lim = 0 && Atomic.get fl) then 
+    f_end ()
+  else
+    f_cont ()
 
 module T = Domainslib.Task
 let numCores = 4 (*Domainslib.Domains.num_domains ()*)
