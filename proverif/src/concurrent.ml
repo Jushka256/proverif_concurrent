@@ -13,17 +13,24 @@ let set_token (tkn : token) =
   Atomic.set fl true
 
 (** [check_token] is designed to or, as it returns true when stopped *)
-let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a)= 
+let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) = 
+  Printf.printf "Check_token\n";
+  flush_all ();
   let (count_ref, lim, fl) = tkn in
   incr count_ref;
+  Printf.printf "Check_token - count %d - lim %d - fl %b\n" !count_ref lim (Atomic.get fl);
+  flush_all ();
   if (!count_ref mod lim = 0 && Atomic.get fl) then 
     f_end ()
   else
     f_cont ()
 
 module T = Domainslib.Task
+
 let numCores = 4 (*Domainslib.Domains.num_domains ()*)
 let pool = T.setup_pool ~num_domains:numCores ()
+
+let run_concurrent f = T.run pool f
 
 let or_function flag (fn1:token->bool) (fn2:token->bool) = 
   let prom1 = T.async pool (fun () -> fn1 (create_token flag)) in

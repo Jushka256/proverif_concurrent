@@ -1590,10 +1590,12 @@ module MakeSet
         elt.active == Active && S.implies_no_test_concurrent tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in (* This is the beginning of the subsumption? *)
-      if !Param.feature then (
-        FeatureTrie.exists_leq fl test_fun vector set.trie )
-      else
-        Concurrent.list_exists fl test_fun set.elt_list
+      Concurrent.run_concurrent (fun () ->
+        if !Param.feature then (
+          FeatureTrie.exists_leq fl test_fun vector set.trie )
+        else
+          Concurrent.list_exists fl test_fun set.elt_list
+      )
 
     let deactivate_implied_by empty_add_data set (cl, vector, sub_data) =
       if !Param.feature then
@@ -1798,15 +1800,17 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
         elt.active && S.implies_no_test_concurrent tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in
-      if !Param.feature then
-        FeatureTrie.exists_leq fl test_fun vector queue.trie
-      else
-        let rec existsrec q =
-          match q with
-            None -> false
-          | Some q' -> Concurrent.or_function fl (fun tok -> test_fun tok q') (fun tok -> existsrec q'.next)
-        in
-        existsrec queue.qstart
+      Concurrent.run_concurrent (fun () -> 
+        if !Param.feature then
+          FeatureTrie.exists_leq fl test_fun vector queue.trie
+        else
+          let rec existsrec q =
+            match q with
+              None -> false
+            | Some q' -> Concurrent.or_function fl (fun tok -> test_fun tok q') (fun tok -> existsrec q'.next)
+          in
+          existsrec queue.qstart
+      )
 
     let deactivate_implied_by queue (cl, vector, sub_data) =
       let iter_fun elem =

@@ -22,3 +22,5 @@ val bool_function_list_or : flag -> (token -> bool) list ->  bool
 
 (** Returns or of running two functions concurrently *)
 val or_function : flag -> (token -> bool) -> (token -> bool) -> bool
+
+val run_concurrent : (unit -> 'a) -> 'a
