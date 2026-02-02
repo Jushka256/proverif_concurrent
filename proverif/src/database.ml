@@ -98,6 +98,8 @@ module type SubsumptionSig =
        This function is only used in combination with the feature vector. *)
     val implies_no_test : clause -> subsumption_data -> clause -> subsumption_data -> bool
 
+    val implies_no_test_tok : token -> clause -> subsumption_data -> clause -> subsumption_data -> bool
+
     (* [generate_subsumption_data r] generates the subsumption data associated to [r]. *)
     val generate_subsumption_data : clause -> sub_annot_clause
 
@@ -220,6 +222,32 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       else implies_internal cl1 sub_data1 cl2 sub_data2
 
     let implies_no_test = implies_internal
+
+
+    let implies_internal_tok tok cl1 sub_data1 cl2 sub_data2 =
+      try
+        Terms.auto_cleanup (fun () ->
+          begin match cl1.C.conclusion with
+            | Pred(p, []) when p == Param.bad_pred -> ()
+            | _ -> Terms.match_facts cl1.C.conclusion cl2.C.conclusion
+          end;
+
+          let r2_bound_facts = match_hyp_bound sub_data1.bound_facts sub_data2.bound_facts in
+
+          let keep_vars = lazy (Terms.get_vars_generic C.iter_term_exclude_constraint cl2) in
+          let get_vars_op = Some (fun () -> Lazy.force keep_vars) in
+          (* All facts of [elt1.bound_facts] have been matched. *)
+          match_hyp (fun () ->
+            if not (TermsEq.implies_constraints3 get_vars_op cl2.constraints cl1.constraints)
+            then raise Terms.NoMatch;
+          ) sub_data1.unbound_facts (r2_bound_facts @ sub_data2.unbound_facts);
+          Concurrent.set_token tok;
+          true
+        )
+      with Terms.NoMatch -> false
+
+
+    let implies_no_test_tok = implies_internal_tok
 
     (* Set Subsumption for the part of blocking predicates *)
 
@@ -1536,7 +1564,7 @@ module MakeSet
     let implies set (cl, vector, sub_data) =
       let test_fun tok elt =
         let (elt_cl, elt_sub_data) = elt.annot_clause in
-        elt.active == Active && S.implies_no_test elt_cl elt_sub_data cl sub_data
+        elt.active == Active && S.implies_no_test_tok tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in (* This is the beginning of the subsumption? *)
       if !Param.feature then (
@@ -1744,17 +1772,16 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
     let implies queue (cl, vector, sub_data) =
       let test_fun tok elt =
         let (elt_cl,_,elt_sub_data) = elt.annot_clause in
-        elt.active && S.implies_no_test elt_cl elt_sub_data cl sub_data
+        elt.active && S.implies_no_test_tok tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in
       if !Param.feature then
         FeatureTrie.exists_leq fl test_fun vector queue.trie
       else
-        let tok = Concurrent.create_token fl in
         let rec existsrec q =
           match q with
             None -> false
-          | Some q' -> (test_fun tok q') || (existsrec q'.next)
+          | Some q' -> Concurrent.or_function fl (fun tok -> test_fun tok q') (fun tok -> existsrec q'.next)
         in
         existsrec queue.qstart
 

@@ -6,6 +6,7 @@
 open Types
 open Pitypes
 open Clause
+open Concurrent
 
 (* Subsumption *)
 
@@ -58,6 +59,8 @@ module type SubsumptionSig =
     (** Similar to [implies] except that we do not apply an initial test on the number of hypotheses in the rule.
        This function is only used in combination with the feature vector. *)
     val implies_no_test : clause -> subsumption_data -> clause -> subsumption_data -> bool
+
+    val implies_no_test_tok : token -> clause -> subsumption_data -> clause -> subsumption_data -> bool
 
     (** [generate_subsumption_data r] generates the subsumption data associated to [r]. *)
     val generate_subsumption_data : clause -> sub_annot_clause
