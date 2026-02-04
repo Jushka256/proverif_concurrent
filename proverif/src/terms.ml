@@ -495,7 +495,7 @@ let equal_facts f1 f2 =
 
 let current_bound_vars = ref []
 
-let link v l =
+let link ?(id_thread=0) v l =
   (* Check that message variables are linked only to messages,
      not to fail or to may-fail variables *)
   if not v.unfailing then
@@ -515,7 +515,7 @@ let link v l =
           (* NoLink should not be used with function link,
              it is set by cleanup *)
           assert false
-      |	FLink _ | PGLink _ | SLink _ | ETLink _ | Marked -> ()
+      |	FLink _ | PGLink _ | SLink _ | ETLink _ | Marked | CLink _ -> ()
     end;
   (* Check that types are correct, when they are not ignored *)
   begin
@@ -986,24 +986,14 @@ and copy_conclusion_query2 = function
 
 exception NoMatch
 
-let rec match_terms t1 t2 =
-  (* Commented out this typing checking test for speed
-  if not (Param.get_ignore_types()) then
-  begin
-    if get_term_type t1 != get_term_type t2 then
-      Parsing_helper.internal_error __POS__
-        ("Type error in match_terms: " ^
-         (term_string t1) ^ " has type " ^ (get_term_type t1).tname ^
-         " while " ^
-         (term_string t2) ^ " has type " ^ (get_term_type t2).tname)
-  end; *)
+let rec match_terms ?(id_thread=1) t1 t2 =
    match (t1,t2) with
      (Var v), t ->
        begin
          match v.link with
            NoLink ->
              if v.unfailing
-             then link v (TLink t)
+             then link ~id_thread v (TLink t)
              else
                begin
                         match t with
@@ -1016,7 +1006,7 @@ let rec match_terms t1 t2 =
        end
    | (FunApp (f1,l1')), (FunApp (f2,l2')) ->
        if f1 != f2 then raise NoMatch;
-       List.iter2 match_terms l1' l2'
+       List.iter2 (match_terms ~id_thread) l1' l2'
    | _,_ -> raise NoMatch
 
 let match_facts f1 f2 =

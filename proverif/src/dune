@@ -1,6 +1,6 @@
 (executables
  (names main main_interact proveriftotex)
- (libraries lablgtk2 unix str domainslib)
+ (libraries lablgtk2 unix str mydomainslib)
  (modules_without_implementation piptree pitptree pitypes ptree types)
  (foreign_stubs (language c) (names columns))
  (promote (until-clean) (into ../)))
