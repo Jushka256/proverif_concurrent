@@ -290,7 +290,7 @@ sig
 
   (** [match_hyp h1 h2] matches [h1] with [h2].
       @raise NoMatch if they cannot be matched. *)
-  val match_hyp : hyp -> hyp -> unit
+  val match_hyp : ?id_thread:int -> hyp -> hyp -> unit
 
   (** Tools *)
 

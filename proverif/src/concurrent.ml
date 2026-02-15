@@ -32,17 +32,17 @@ let pool = T.setup_pool ~num_domains:numCores ()
 
 let run_concurrent f = T.run pool f
 
-let or_function flag (fn1:token->bool) (fn2:token->bool) = 
-  let prom1 = T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i; fn1 (create_token flag)) in
-  let prom2 = T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i; fn2 (create_token flag)) in
+let or_function flag (fn1:int->token->bool) (fn2:int->token->bool) = 
+  let prom1 = T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i; fn1 i (create_token flag)) in
+  let prom2 = T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i; fn2 i (create_token flag)) in
   T.await pool prom1 || T.await pool prom2
 
-let bool_function_list_or fl (fns : (token -> bool) list)  : bool =
-  let promises = List.map (fun fn -> T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i;fn (create_token fl))) fns in
+let bool_function_list_or fl (fns : (int -> token -> bool) list)  : bool =
+  let promises = List.map (fun fn -> T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i;fn i (create_token fl))) fns in
   List.exists (fun p -> T.await pool p) promises
 
-let list_exists flag (f: token -> 'a -> bool) (l : 'a list) =
-  let promises = List.map (fun a -> T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i; f (create_token flag) a)) l in
+let list_exists flag (f: int -> token -> 'a -> bool) (l : 'a list) =
+  let promises = List.map (fun a -> T.async pool (fun i () -> Printf.printf "This is my ID : %d\n" i; f i (create_token flag) a)) l in
   List.exists (fun p -> T.await pool p) promises
 
 

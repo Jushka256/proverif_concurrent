@@ -275,15 +275,17 @@ let simplify_maximal_temporal_constraints f_next at_constra =
 
 (* 4. Simplification of temporal constraints *)
 
-let simplify_temporal_constraints at_constr =
+let simplify_temporal_constraints ?(id_thread=0) at_constr =
   let mapping = ref [] in
+  let is_NoLink lst = match lst.(id_thread) with NoLink -> true | _ -> false in
+  let is_VLink lst = match lst.(id_thread) with VLink _ -> true | _ -> false in
   let assoc_new_var (t, ext) = match t with
-    | Var ({ link = NoLink; _ } as v) ->
+    | Var ({ link = lst; _ } as v) when (is_NoLink lst) ->
         let v_nat = Terms.new_var_def Param.nat_type in
-        v.link <- VLink v_nat;
+        (v.link).(id_thread) <- VLink v_nat;
         mapping := (v_nat,(v,ext)) :: !mapping;
         Var v_nat
-    | Var ({ link = VLink v_nat; _}) -> Var v_nat
+    | Var ({ link = lst; _}) when (is_VLink lst) -> let VLink v_nat = lst.(id_thread) in Var v_nat
     | _ -> Parsing_helper.internal_error __POS__ "[simplify_temporal_constraints] Temporal term should be variables."
   in
 
@@ -314,7 +316,7 @@ let simplify_temporal_constraints at_constr =
 
   let vars_to_preserve = List.map (fun (v_nat,_) -> v_nat) !mapping in
 
-  List.iter (fun (_,(v,_)) -> v.link <- NoLink) !mapping;
+  List.iter (fun (_,(v,_)) -> (v.link).(id_thread) <- NoLink) !mapping;
 
   (* We simplify the constraints *)
   let (eq_list',nat_constr') =
@@ -327,7 +329,7 @@ let simplify_temporal_constraints at_constr =
         (!eq_list,nat_constr2)
       ) (fun nat_constr2 ->
         let eq_list' =
-          List.fold_left (fun acc v -> match v.link with
+          List.fold_left (fun acc v -> match (v.link).(id_thread) with
             | NoLink -> acc
             | TLink _ -> (Var v,Terms.copy_term4 (Var v)) :: acc
             | _ -> Parsing_helper.internal_error __POS__ "[simplify_temporal_constraints] Unexpected link."
@@ -603,7 +605,7 @@ let transform_conclusion_query prem_info evl eql neql ineql =
 
 (* The main function *)
 
-let encode_temporal_realquery query =
+let encode_temporal_realquery ?(id_thread=0) query =
   let Before(full_premises,concl) = add_fresh_occ_at_realquery query in
   let (premises,constra_prem) = List.partition (function QSEvent _ | QFact _ -> true | _ -> false) full_premises in
   check_distinct_time_var_premises premises;
@@ -617,7 +619,7 @@ let encode_temporal_realquery query =
       check_distinct_time_var premises evl;
       check_assigned_time (premises@evl) at_constr;
       try
-        let (eql,neql,ineql) = simplify_temporal_constraints at_constr in
+        let (eql,neql,ineql) = simplify_temporal_constraints ~id_thread:id_thread at_constr in
         let concl_query = transform_conclusion_query premises_info (List.rev evl) eql neql ineql in
         let concl_query' = List.fold_left (fun acc constr -> Reduction_helper.make_qand acc (QEvent constr)) concl_query  other_constr in
         let concl_query'' = 
@@ -633,8 +635,8 @@ let encode_temporal_realquery query =
   let premises' = List.map generate_query_event premises_info in
   Before(premises'@constra_prem,!acc_new_concl)
 
-let encode_temporal_realquery_e ext query =
-  let query' = encode_temporal_realquery query in
+let encode_temporal_realquery_e ?(id_thread=0) ext query =
+  let query' = encode_temporal_realquery ~id_thread:id_thread query in
   match query' with
     | Before(prem,concl) -> 
         let (att_idx_prem,_) = 
@@ -814,17 +816,17 @@ let rec partition_public_vars public_vars = function
   | ChoiceQuery :: _ ->
       Parsing_helper.internal_error __POS__ "Choice query should have been treated before"
 
-let encode_corresp_query pi_state encode_steps = function
+let encode_corresp_query ?(id_thread=0) pi_state encode_steps = function
   | (PutBegin _,_) as x -> x
   | (RealQuery(q, public_vars),ext) as x ->
       if public_vars == [] then
         if exists_at_realquery q
-        then RealQuery(encode_temporal_realquery_e ext q,[]),ext
+        then RealQuery(encode_temporal_realquery_e ~id_thread:id_thread ext q,[]),ext
         else x
       else
         (* Remove the public variables: they are encoded in the process *)
         if exists_at_realquery q
-        then RealQuery(encode_temporal_realquery_e ext q,[]),ext
+        then RealQuery(encode_temporal_realquery_e ~id_thread:id_thread ext q,[]),ext
         else RealQuery(q, []),ext
   | QSecret(secrets, public_vars, Reachability),ext ->
       let ty = Terms.get_term_type (List.hd secrets) in
@@ -848,9 +850,9 @@ let encode_corresp_query pi_state encode_steps = function
   | QSecret(_,_,RealOrRandom),_ ->
       Parsing_helper.internal_error __POS__ "secret .. [real_or_random] should have been already encoded"
 
-let encode_reach_secret pi_state encode_steps = function
+let encode_reach_secret ?(id_thread=0) pi_state encode_steps = function
   | CorrespQuery(ql,s_status) ->
-      let ql' = List.map (encode_corresp_query pi_state encode_steps) ql in
+      let ql' = List.map (encode_corresp_query ~id_thread:id_thread pi_state encode_steps) ql in
       if List.for_all2 (==) ql ql' then
         CorrespQuery(ql,s_status)
       else
@@ -862,7 +864,7 @@ let rec get_events = function
   | (Secret_reach(_,e))::r -> e :: (get_events r)
   | _::r -> get_events r
 
-let rec encode_public_vars next_f pi_state p_desc rest =
+let rec encode_public_vars ?(id_thread=0) next_f pi_state p_desc rest =
   match rest with
     [] -> (* All queries already handled *) ()
   | q::_ ->
@@ -872,7 +874,7 @@ let rec encode_public_vars next_f pi_state p_desc rest =
       let (set1, rest) = partition_public_vars public_vars rest in
       (* encode the queries that have this public_vars *)
       let encode_steps = ref [] in
-      let encoded_queries = List.map (encode_reach_secret pi_state encode_steps) set1 in
+      let encoded_queries = List.map (encode_reach_secret ~id_thread:id_thread pi_state encode_steps) set1 in
       let new_events = get_events (!encode_steps) in
       let encode_steps', new_free_names =
         if public_vars == [] then
@@ -898,7 +900,7 @@ let rec encode_public_vars next_f pi_state p_desc rest =
           pi_events = new_events @ pi_state1.pi_events
         };
       (* treat the rest *)
-      encode_public_vars next_f pi_state p_desc rest
+      encode_public_vars ~id_thread:id_thread next_f pi_state p_desc rest
 
 (* Encode lemmas with temporal variables to good one *)
 
@@ -934,18 +936,18 @@ let encode_temporal_lemmas next_f pi_state =
 
 (* Main encoding functions *)
 
-let encode_aux next_f pi_state p ql =
+let encode_aux ?(id_thread=0) next_f pi_state p ql =
   let rest = encode_ror_secret next_f pi_state p [] ql in
-  encode_public_vars (encode_temporal_lemmas next_f) pi_state p rest
+  encode_public_vars ~id_thread:id_thread (encode_temporal_lemmas next_f) pi_state p rest
 
-let encode_secret_public_vars next_f pi_state =
+let encode_secret_public_vars ?(id_thread=0) next_f pi_state =
   match pi_state.pi_process_query with
     Equivalence _ | SingleProcessSingleQuery(_, ChoiceQuery) ->
       encode_temporal_lemmas next_f (Lemma.encode_lemmas_for_equivalence_queries pi_state)
   | SingleProcessSingleQuery(p,q) ->
-      encode_aux next_f pi_state p [q]
+      encode_aux ~id_thread:id_thread next_f pi_state p [q]
   | SingleProcess(p,ql) ->
-      encode_aux next_f pi_state p ql
+      encode_aux ~id_thread:id_thread next_f pi_state p ql
 
 
 let rec get_unlinked_vars_acc_term_e (acc: binder list ref) ((term, _): term_e) = Terms.get_unlinked_vars_acc acc term
@@ -1085,15 +1087,15 @@ let rec encode_destructors_in_event f_next cons (event: event) =
     ) cons t1 t2
   | (QMax _ | QMaxq _) as q -> f_next cons q (* it is checked in exists_destructor_in_event that in these other cases here, there cannot occur a destructor *)
   
-let rec encode_destructed_in_conclusion_query (sub_cl: conclusion_query) cl_acc = 
+let rec encode_destructed_in_conclusion_query ?(id_thread=0) (sub_cl: conclusion_query) cl_acc = 
   let vars_sub_cl = 
     let acc = ref [] in
     get_unlinked_vars_acc_conclusion acc sub_cl;
     !acc
   in
-  encode_destructors_in_conclusion_query (fun cons' sub_cl' ->
+  encode_destructors_in_conclusion_query ~id_thread:id_thread (fun cons' sub_cl' ->
     let sub_cl_acc = ref (copy_conclusion_query4 sub_cl') in
-    List.iter (fun v -> match v.link with
+    List.iter (fun v -> match (v.link).(id_thread) with
       | NoLink -> ()
       | TLink t -> 
           let t' = Terms.copy_term4 t in
@@ -1106,7 +1108,7 @@ let rec encode_destructed_in_conclusion_query (sub_cl: conclusion_query) cl_acc 
     cl_acc := Reduction_helper.make_qor !cl_acc !sub_cl_acc
   ) Terms.true_constraints sub_cl
     
-and encode_destructors_in_conclusion_query f_next cons = function
+and encode_destructors_in_conclusion_query ?(id_thread=0) f_next cons = function
   | QTrue -> f_next cons QTrue
   | QFalse -> f_next cons QFalse
   | QConstraints _ as q -> f_next cons q
@@ -1117,27 +1119,27 @@ and encode_destructors_in_conclusion_query f_next cons = function
           f_next cons' (QEvent ev')
       ) cons ev
   | QAnd(cl1,cl2) ->
-      encode_destructors_in_conclusion_query (fun cons1 cl1' ->
-        encode_destructors_in_conclusion_query (fun cons2 cl2' ->
+      encode_destructors_in_conclusion_query ~id_thread:id_thread (fun cons1 cl1' ->
+        encode_destructors_in_conclusion_query ~id_thread:id_thread (fun cons2 cl2' ->
           f_next cons2 (Reduction_helper.make_qand cl1' cl2')
         ) cons1 cl2
       ) cons cl1
   | QOr(cl1,cl2) ->
       let cl_acc = ref QFalse in
 
-      encode_destructed_in_conclusion_query cl1 cl_acc;
-      encode_destructed_in_conclusion_query cl2 cl_acc;
+      encode_destructed_in_conclusion_query ~id_thread:id_thread cl1 cl_acc;
+      encode_destructed_in_conclusion_query ~id_thread:id_thread cl2 cl_acc;
 
       f_next cons !cl_acc
   | NestedQuery nq -> 
-      let nq' = encode_destructors_in_realquery nq in
+      let nq' = encode_destructors_in_realquery ~id_thread:id_thread nq in
       f_next cons (NestedQuery nq')
 
-and encode_destructors_in_realquery (Before(hypothesis, conclusion_query)) =
+and encode_destructors_in_realquery ?(id_thread=0) (Before(hypothesis, conclusion_query)) =
   (* Destructuring the hypothesis is not yet supported. Supporting this would need to introduce a structure to support multiple encoded queries for a single source query. 
      See also [exists_destructor_in_realquery] and [copy_real_query4] which use this assumption. *)
   let cl_acc = ref QFalse in
-  encode_destructed_in_conclusion_query conclusion_query cl_acc;
+  encode_destructed_in_conclusion_query ~id_thread:id_thread conclusion_query cl_acc;
   Before(hypothesis, !cl_acc)
 
 let rec exists_destructor_in_event (event: event) =
@@ -1172,53 +1174,53 @@ let exists_destructor_in_query_e = function
       exists_destructor_in_realquery real_query
   | _ -> false
   
-let encode_destructors_in_query_e = function
+let encode_destructors_in_query_e ?(id_thread=0) = function
   | (RealQuery(real_query, term_list), extent) -> 
-      (RealQuery(encode_destructors_in_realquery real_query, term_list), extent)
+      (RealQuery(encode_destructors_in_realquery ~id_thread:id_thread real_query, term_list), extent)
   | _ as q -> q
 
-let encode_destructors_in_t_lemmas (lemma: t_lemmas) =
+let encode_destructors_in_t_lemmas ?(id_thread=0) (lemma: t_lemmas) =
   match lemma with
   | LemmaToTranslate _ -> Parsing_helper.internal_error __POS__ "[encode_destructors_in_t_lemmas] Should have been translated already."
   | Lemma lem_state -> 
     let new_lemmas = List.map (fun lemma -> 
-      let new_query = encode_destructors_in_query_e lemma.ql_query in
+      let new_query = encode_destructors_in_query_e ~id_thread:id_thread lemma.ql_query in
       { lemma with ql_query = new_query }
       ) lem_state.lemmas 
     in
     Lemma { lem_state with lemmas = new_lemmas }
 
 
-let encode_destructors_in_t_query = function
+let encode_destructors_in_t_query ?(id_thread=0) = function
     CorrespQuery(ql,s_status) as qc -> 
       if List.exists exists_destructor_in_query_e ql
         then
-          CorrespQEnc (List.map (fun original -> (original, encode_destructors_in_query_e original)) ql, s_status)
+          CorrespQEnc (List.map (fun original -> (original, encode_destructors_in_query_e ~id_thread:id_thread original)) ql, s_status)
         else 
           qc
   | CorrespQEnc(query_list,s_status) -> 
-      CorrespQEnc (List.map (fun (original, encoded) -> (original, encode_destructors_in_query_e encoded)) query_list, s_status)
+      CorrespQEnc (List.map (fun (original, encoded) -> (original, encode_destructors_in_query_e ~id_thread:id_thread encoded)) query_list, s_status)
   | ChoiceQEnc _ |  ChoiceQuery | NonInterfQuery _ | WeakSecret _ as q -> q 
   | QueryToTranslate _ ->
       Parsing_helper.internal_error __POS__ "Query should have been translated before encoding"
 
-let encode_destructors_process = function
+let encode_destructors_process ?(id_thread=0) = function
     (Equivalence _) as p -> p
   | SingleProcessSingleQuery(p,q) ->
-    let new_query = encode_destructors_in_t_query q in
+    let new_query = encode_destructors_in_t_query ~id_thread:id_thread q in
     SingleProcessSingleQuery(p, new_query)
   | SingleProcess(p,ql) ->
-    let new_queries = List.map encode_destructors_in_t_query ql in
+    let new_queries = List.map (encode_destructors_in_t_query ~id_thread:id_thread) ql in
     SingleProcess(p, new_queries)
 
-let encode_destructors pi_state =
-  let new_process_query = encode_destructors_process pi_state.pi_process_query in
+let encode_destructors ?(id_thread=0) pi_state =
+  let new_process_query = encode_destructors_process ~id_thread:id_thread pi_state.pi_process_query in
   let new_axioms =
     List.map (fun ((query, extent), b) ->
-      ((encode_destructors_in_realquery query, extent), b)
+      ((encode_destructors_in_realquery ~id_thread:id_thread query, extent), b)
 	) pi_state.pi_original_axioms
   in
-  let new_lemmas = List.map encode_destructors_in_t_lemmas pi_state.pi_lemma in
+  let new_lemmas = List.map (encode_destructors_in_t_lemmas ~id_thread:id_thread) pi_state.pi_lemma in
   { pi_state with pi_process_query = new_process_query; pi_original_axioms = new_axioms; pi_lemma = new_lemmas }
 
 (* Give the fact to query from the detailed query

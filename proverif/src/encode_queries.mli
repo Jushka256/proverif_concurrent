@@ -5,12 +5,12 @@ open Pitypes
    and "query ...==>... public_vars ..." into correspondence queries
    without public_vars. The process may need to be modified, 
    and groups of queries may need to be split. *)
-val encode_secret_public_vars : (t_pi_state -> unit) -> t_pi_state -> unit
+val encode_secret_public_vars : ?id_thread:int -> (t_pi_state -> unit) -> t_pi_state -> unit
 
 (* Encode destructors in queries, lemmas and restrictions. Destructors 
    in hypothesis are not allowed; hence this function returns the same number
    of queries as before *)
-val encode_destructors : t_pi_state -> t_pi_state
+val encode_destructors : ?id_thread:int -> t_pi_state -> t_pi_state
 
 (* Give the fact to query from the detailed query
    This is used only to create a resembling specification for SPASS

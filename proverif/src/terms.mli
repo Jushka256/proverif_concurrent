@@ -228,7 +228,7 @@ val copy_realquery2 : Pitypes.realquery -> Pitypes.realquery
 
 exception NoMatch
 val match_terms : ?id_thread:int -> term -> term -> unit
-val match_facts : fact -> fact -> unit
+val match_facts : ?id_thread:int -> fact -> fact -> unit
 
 val match_facts_unblock : fact -> fact -> unit
 val match_facts_unblock_phase_geq : fact -> fact -> unit

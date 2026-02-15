@@ -235,12 +235,14 @@ let output_rule cur_state out_fact = match cur_state.record_fun_opt with
 
 (* Decide when to optimize mess(c,M) into attacker(M) *)
 
-let rec get_term_side get_left = function
-  | Var({ link = TLink t; _}) ->  get_term_side get_left t
-  | FunApp({ f_cat = Choice; _},[t1;t2]) -> if get_left then get_term_side get_left t1 else get_term_side get_left t2
+let rec get_term_side id_thread get_left = 
+  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
+  function
+  | Var({ link = lst; _}) when is_TLink lst -> let TLink t = lst.(id_thread) in get_term_side id_thread get_left t
+  | FunApp({ f_cat = Choice; _},[t1;t2]) -> if get_left then get_term_side id_thread get_left t1 else get_term_side id_thread get_left t2
   | t -> t
 
-let optimize_mess cur_state tc =
+let optimize_mess id_thread cur_state tc =
   let rec is_public_term = function
     | FunApp({ f_cat = Name _; f_private = false },_) -> true
     | FunApp({ f_cat = Eq _; f_private = false; _ }, args)
@@ -249,10 +251,10 @@ let optimize_mess cur_state tc =
   in
 
   let is_same_public_term () =
-    let tc1 = get_term_side true tc in
+    let tc1 = get_term_side id_thread true tc in
     if is_public_term tc1
     then
-      let tc2 = get_term_side false tc in
+      let tc2 = get_term_side id_thread false tc in
       Terms.equal_terms tc1 tc2
     else false
   in
@@ -367,10 +369,10 @@ and transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c trans
       transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c transl_t to_transl pos other
   | _ -> Parsing_helper.internal_error __POS__ "[Pitranslweak.transl_rewrite_rules_one_side_execute] Unexpected case."
 
-and transl_term_one_side next_f cur_state do_left = function
+and transl_term_one_side id_thread next_f cur_state do_left = function
   | Var v ->
       begin
-        match  v.link with
+        match  v.link.(id_thread) with
           | TLink (FunApp(_,[t1;t2])) ->
               next_f cur_state (if do_left then t1 else t2)
           | _ -> internal_error __POS__ "unexpected link in translate_term (1)"
@@ -703,7 +705,7 @@ let get_occurrence_name_for_precise cur_state occ =
     | _ -> internal_error __POS__ "[Pitranslweak.get_occurrence_name_for_precise] Unexpected function category in the translation of events."
 
 
-let rec transl_process cur_state process =
+let rec transl_process id_thread cur_state process =
   verify_explored_occurrence cur_state process (fun () ->
     (* DEBUG mode *)
 
@@ -715,8 +717,8 @@ let rec transl_process cur_state process =
     match process with
     | Nil -> ()
     | Par(proc1,proc2) ->
-        transl_process cur_state proc1;
-        transl_process cur_state proc2
+        transl_process id_thread cur_state proc1;
+        transl_process id_thread cur_state proc2
     | Repl(proc,occ) ->
         (* Always introduce session identifiers ! *)
         let var = Terms.new_var ~orig:false "@sid" Param.sid_type in
@@ -729,7 +731,7 @@ let rec transl_process cur_state process =
             name_params_types = Param.sid_type ::cur_state.name_params_types;
             hyp_tags = (ReplTag(occ, Reduction_helper.count_name_params cur_state.name_params)) :: cur_state.hyp_tags
           } in
-        transl_process cur_state' proc
+        transl_process id_thread cur_state' proc
     | Restr(name,(args,env),proc,occ) ->
         begin
           match name.f_cat with
@@ -763,7 +765,7 @@ let rec transl_process cur_state process =
                 then internal_error __POS__ "prev_inputs_meaning and np should have the same size";
 
                 r.prev_inputs <- Some (FunApp(name, np));
-                transl_process cur_state proc;
+                transl_process id_thread cur_state proc;
                 r.prev_inputs <- None
 
             | _ -> internal_error __POS__ "A restriction should have a name as parameter"
@@ -779,7 +781,7 @@ let rec transl_process cur_state process =
           transl_term_incl_destructor (fun cur_state1 term1_left term1_right ->
               (* Branch THEN (both sides are true) *)
               unify_list (fun () ->
-                transl_process { cur_state1 with hyp_tags = (TestTag occ)::cur_state1.hyp_tags } proc_then
+                transl_process id_thread { cur_state1 with hyp_tags = (TestTag occ)::cur_state1.hyp_tags } proc_then
               ) cur_state1 [term1_left;term1_right] [Terms.true_term;Terms.true_term];
 
               if !for_equivalence
@@ -822,13 +824,13 @@ let rec transl_process cur_state process =
             transl_both_side_succeed (fun cur_state2 ->
               (* Branch THEN *)
               unify_list (fun () ->
-                transl_process { cur_state2 with
+                transl_process id_thread { cur_state2 with
                                  hyp_tags = (TestTag occ)::cur_state2.hyp_tags
                                } proc_then
               ) cur_state2 [term1_left;term1_right] [Terms.true_term;Terms.true_term];
 
               (* Branch ELSE *)
-              transl_process { cur_state2 with
+              transl_process id_thread { cur_state2 with
                 constra = { cur_state2.constra with neq = [term1_left,Terms.true_term]::[term1_right,Terms.true_term]::cur_state2.constra.neq };
                 hyp_tags = (TestTag occ)::cur_state2.hyp_tags
               } proc_else;
@@ -886,7 +888,7 @@ let rec transl_process cur_state process =
               transl_both_side_succeed (fun cur_state4 ->
                 (* Branch THEN *)
                 unify_list (fun () ->
-                  transl_process { cur_state4 with
+                  transl_process id_thread { cur_state4 with
                     name_params = (List.rev_map
                         (fun b -> (MVar(b, None), get_var_link cur_state4 b, IfQueryNeedsIt)
                             ) binders_list) @ cur_state4.name_params;
@@ -896,7 +898,7 @@ let rec transl_process cur_state process =
                 ) cur_state4 [term_left;term_right] [term_pat_left;term_pat_right];
 
                 (* Branch ELSE *)
-                transl_process { cur_state4 with
+                transl_process id_thread { cur_state4 with
                   constra = { cur_state4.constra with neq = [gen_pat_l,term_left]::[gen_pat_r,term_right]::cur_state4.constra.neq };
                   hyp_tags = (LetTag occ)::cur_state4.hyp_tags
                 } proc_else;
@@ -924,7 +926,7 @@ let rec transl_process cur_state process =
 
               (* Case both sides fail *)
               transl_both_side_fail (fun cur_state4 ->
-                transl_process { cur_state4 with
+                transl_process id_thread { cur_state4 with
                   hyp_tags = (LetTag occ)::cur_state4.hyp_tags
                 } proc_else
               ) cur_state3 [term_pat_left;term_left] [term_pat_right;term_right];
@@ -932,7 +934,7 @@ let rec transl_process cur_state process =
               (* Case left side succeed and right side fail *)
               transl_one_side_fails (fun cur_state4 ->
                 (* Branch ELSE *)
-                transl_process { cur_state4 with
+                transl_process id_thread { cur_state4 with
                   constra = { cur_state4.constra with neq = [gen_pat_l,term_left]::cur_state4.constra.neq };
                   hyp_tags = (LetTag occ)::cur_state4.hyp_tags
                 } proc_else;
@@ -950,7 +952,7 @@ let rec transl_process cur_state process =
               (* Case right side succeed and left side fail *)
               transl_one_side_fails (fun cur_state4 ->
                 (* Branch ELSE *)
-                transl_process { cur_state4 with
+                transl_process id_thread { cur_state4 with
                   constra = { cur_state4.constra with neq = [gen_pat_r,term_right]::cur_state4.constra.neq };
                   hyp_tags = (LetTag occ)::cur_state4.hyp_tags
                 } proc_else;
@@ -969,7 +971,7 @@ let rec transl_process cur_state process =
         ) cur_state (OLet(occ)) term
     | LetFilter(_,_,_,_,_) -> user_error "Predicates are currently incompatible with proofs of equivalences."
     | Input(tc,pat,proc,occ) ->
-        if optimize_mess cur_state tc then
+        if optimize_mess id_thread cur_state tc then
           begin
             transl_pat (fun cur_state1 term_pattern binders ->
               transl_term (fun cur_state2 term_pat_left term_pat_right ->
@@ -1012,7 +1014,7 @@ let rec transl_process cur_state process =
 
                     let (hypothesis,hyp_tags) = build_hyp term_pat_left term_pat_right cur_state3 in
                     (* Pattern satisfied in both sides *)
-                    transl_process { cur_state3 with
+                    transl_process id_thread { cur_state3 with
                       name_params = (List.rev_map
                         (fun b -> (MVar(b,None), get_var_link cur_state3 b, Always)
                             ) binders) @ cur_state3.name_params;
@@ -1114,7 +1116,7 @@ let rec transl_process cur_state process =
                       let (hypothesis,hyp_tags) = build_hyp term_pat_left term_pat_right cur_state5 in
 
                       (* Pattern satisfied in both sides *)
-                      transl_process { cur_state5 with
+                      transl_process id_thread { cur_state5 with
                         name_params = (List.rev_map
                           (fun b -> (MVar(b, None), get_var_link cur_state5 b, Always)
                               ) binders) @ cur_state5.name_params;
@@ -1196,12 +1198,12 @@ let rec transl_process cur_state process =
             ) cur_state (OInChannel(occ)) tc
           end
     | Output(term_ch, term, proc, occ) ->
-        if optimize_mess cur_state term_ch then
+        if optimize_mess id_thread cur_state term_ch then
           begin
                transl_term (fun cur_state1 term_left term_right ->
                   (* Case both sides succeed *)
                   transl_both_side_succeed (fun cur_state2 ->
-                    transl_process { cur_state2 with
+                    transl_process id_thread { cur_state2 with
                         hyp_tags = (OutputTag occ)::cur_state2.hyp_tags
                       } proc;
 
@@ -1235,7 +1237,7 @@ let rec transl_process cur_state process =
                   transl_term (fun cur_state2 term_left term_right ->
                     (* Case both sides succeed *)
                     transl_both_side_succeed (fun cur_state3 ->
-                      transl_process { cur_state3 with
+                      transl_process id_thread { cur_state3 with
                           hyp_tags = (OutputTag occ)::cur_state3.hyp_tags
                         } proc;
 
@@ -1289,7 +1291,7 @@ let rec transl_process cur_state process =
                           } (Pred(Param.event2_pred, [term_left;term_right]));
                       | WithOcc -> Parsing_helper.internal_error __POS__ "[Pitranslweak.transl_process] Status of event should not be injective for equivalence queries."
                     end;
-                  transl_process { cur_state2 with hyp_tags = (EventTag(occ)) :: cur_state2.hyp_tags } p
+                  transl_process id_thread { cur_state2 with hyp_tags = (EventTag(occ)) :: cur_state2.hyp_tags } p
                 ) cur_state1 [term_left] [term_right];
             | NoOcc ->
                 transl_both_side_succeed (fun cur_state2 ->
@@ -1309,7 +1311,7 @@ let rec transl_process cur_state process =
                       hyp_tags = BeginFact :: (EventTag(occ)) :: cur_state2.hyp_tags
                     }
                   in
-                  transl_process cur_state3 p
+                  transl_process id_thread cur_state3 p
                 ) cur_state1 [term_left] [term_right];
             | WithOcc -> Parsing_helper.internal_error __POS__ "[Pitranslweak.transl_process] Status of event should not be injective for equivalence queries."
           end;
@@ -1341,7 +1343,7 @@ let rec transl_process cur_state process =
               hyp_tags = (InsertTag occ) :: cur_state2.hyp_tags
             } (table_fact cur_state2.cur_phase term_left term_right);
 
-            transl_process { cur_state2 with
+            transl_process id_thread { cur_state2 with
               hyp_tags = (InsertTag occ) :: cur_state2.hyp_tags
             } proc;
           ) cur_state1 [term_left] [term_right];
@@ -1408,7 +1410,7 @@ let rec transl_process cur_state process =
                 let (hypothesis,hyp_tags) = build_hyp term_pat_left term_pat_right cur_state4 in
                 (* Success *)
                 unify_list (fun () ->
-                  transl_process { cur_state4 with
+                  transl_process id_thread { cur_state4 with
                     name_params = (List.rev_map
                       (fun b -> (MVar(b,None), get_var_link cur_state4 b, Always)
                           ) binders) @ cur_state4.name_params;
@@ -1486,14 +1488,14 @@ let rec transl_process cur_state process =
             ) cur_state2 term
          ) cur_state1 term_pattern
        ) cur_state pat;
-       transl_process { cur_state with hyp_tags = GetTagElse(occ) :: cur_state.hyp_tags } proc_else
+       transl_process id_thread { cur_state with hyp_tags = GetTagElse(occ) :: cur_state.hyp_tags } proc_else
     | Phase(n,proc,_) ->
-        transl_process { cur_state with
+        transl_process id_thread { cur_state with
                         input_pred = Param.get_pred (InputPBin(n));
                         output_pred = Param.get_pred (OutputPBin(n));
                         cur_phase = n } proc
     | NamedProcess(_,_,p) ->
-        transl_process cur_state p
+        transl_process id_thread cur_state p
     | Barrier _ | AnnBarrier _ ->
         internal_error __POS__ "Barriers should not appear here (7)"
   )
@@ -1867,7 +1869,7 @@ let reset() =
   current_precise_actions := [];
   Hashtbl.reset explored_occurrences
 
-let transl pi_state =
+let transl ?(id_thread=0) pi_state =
   (* Reset the record of which occurrence are precise (needed for reconstruction) *)
   Reduction_helper.reset_occ_precise_event ();
   reset ();
@@ -1996,7 +1998,7 @@ let transl pi_state =
   let tmp_for_equivalence = !for_equivalence in
   let tmp_current_precise_actions = !current_precise_actions in
 
-  Terms.auto_cleanup (fun () -> set_free_names_prev_inputs (fun () -> transl_process cur_state_init p) pi_state);
+  Terms.auto_cleanup (fun () -> set_free_names_prev_inputs (fun () -> transl_process id_thread cur_state_init p) pi_state);
 
   let generate_process_clauses f_add =
     min_choice_phase := tmp_min_choice_phase;
@@ -2004,7 +2006,7 @@ let transl pi_state =
     for_equivalence := tmp_for_equivalence;
     current_precise_actions := tmp_current_precise_actions;
     let cur_state = { cur_state_init with record_fun_opt = Some f_add } in
-    Terms.auto_cleanup (fun () -> set_free_names_prev_inputs (fun () ->  transl_process cur_state p) pi_state)
+    Terms.auto_cleanup (fun () -> set_free_names_prev_inputs (fun () ->  transl_process id_thread cur_state p) pi_state)
   in
   (* Take into account "nounif" declarations *)
 

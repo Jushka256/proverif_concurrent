@@ -98,7 +98,7 @@ module type SubsumptionSig =
        This function is only used in combination with the feature vector. *)
     val implies_no_test : clause -> subsumption_data -> clause -> subsumption_data -> bool
 
-    val implies_no_test_concurrent : token -> clause -> subsumption_data -> clause -> subsumption_data -> bool
+    val implies_no_test_concurrent : ?id_thread:int -> token -> clause -> subsumption_data -> clause -> subsumption_data -> bool
 
     (* [generate_subsumption_data r] generates the subsumption data associated to [r]. *)
     val generate_subsumption_data : clause -> sub_annot_clause
@@ -244,12 +244,12 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     (* Main function for subsumption of two clauses. *)
 
-    let implies_internal_concurrent tok cl1 sub_data1 cl2 sub_data2 =
+    let implies_internal_concurrent ?(id_thread=0) tok cl1 sub_data1 cl2 sub_data2 =
       try
         Terms.auto_cleanup (fun () ->
           begin match cl1.C.conclusion with
             | Pred(p, []) when p == Param.bad_pred -> ()
-            | _ -> Terms.match_facts cl1.C.conclusion cl2.C.conclusion
+            | _ -> Terms.match_facts ~id_thread:id_thread cl1.C.conclusion cl2.C.conclusion
           end;
 
           let r2_bound_facts = match_hyp_bound sub_data1.bound_facts sub_data2.bound_facts in
@@ -1179,7 +1179,7 @@ module FeatureTrie =
           (* We need to look in fe_map the branches that have a feature smaller than fe. *)
 
           (* The elements with no positive features are smaller *)
-          Concurrent.or_function flag (fun _ -> Concurrent.list_exists flag p elt_l) (fun _ -> FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map)
+          Concurrent.or_function flag (fun _ _ -> Concurrent.list_exists flag p elt_l) (fun _ _ -> FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map)
 
     let rec iter f_iter = function
       | Empty -> ()
@@ -1585,9 +1585,9 @@ module MakeSet
     (* [implies set vector cl] checks whether a clause from [set] implies (w.r.t. [f_implies])
        the clause [cl] that has [vector] as feature vector. *)
     let implies set (cl, vector, sub_data) =
-      let test_fun tok elt =
+      let test_fun i tok elt =
         let (elt_cl, elt_sub_data) = elt.annot_clause in
-        elt.active == Active && S.implies_no_test_concurrent tok elt_cl elt_sub_data cl sub_data
+        elt.active == Active && (S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data)
       in
       let fl = Concurrent.create_flag () in (* This is the beginning of the subsumption? *)
       Concurrent.run_concurrent (fun () ->
@@ -1795,9 +1795,9 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
       iterrec queue.qstart
 
     let implies queue (cl, vector, sub_data) =
-      let test_fun tok elt =
+      let test_fun i tok elt =
         let (elt_cl,_,elt_sub_data) = elt.annot_clause in
-        elt.active && S.implies_no_test_concurrent tok elt_cl elt_sub_data cl sub_data
+      elt.active && S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in
       Concurrent.run_concurrent (fun () -> 
@@ -1807,7 +1807,7 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
           let rec existsrec q =
             match q with
               None -> false
-            | Some q' -> Concurrent.or_function fl (fun tok -> test_fun tok q') (fun tok -> existsrec q'.next)
+            | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun i tok -> existsrec q'.next)
           in
           existsrec queue.qstart
       )

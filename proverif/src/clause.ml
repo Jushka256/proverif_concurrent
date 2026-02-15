@@ -171,7 +171,7 @@ sig
 
   (** [match_hyp h1 h2] matches [h1] with [h2].
       @raise NoMatch if they cannot be matched. *)
-  val match_hyp : hyp -> hyp -> unit
+  val match_hyp : ?id_thread:int -> hyp -> hyp -> unit
 
   (** Tools *)
 
@@ -423,8 +423,8 @@ struct
           not (Ordering.includes_clause ord1 ord2)
         then raise Terms.NoMatch
 
-  let match_hyp (f1,crel1,_) (f2,crel2,_) =
-    Terms.match_facts f1 f2;
+  let match_hyp ?(id_thread=0) (f1,crel1,_) (f2,crel2,_) =
+    Terms.match_facts ~id_thread:id_thread f1 f2;
     if not (Ordering.includes_clause crel1 crel2)
     then raise Terms.NoMatch
 

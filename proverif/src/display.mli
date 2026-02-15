@@ -117,9 +117,9 @@ sig
   val display_rule_nonewline : reduction -> unit
   val display_rule : reduction -> unit
   val display_rule_indep : reduction -> unit
-  val display_rule_abbrev : reduction -> unit
-  val display_rule_num_abbrev : reduction -> unit
-  val display_ordered_rule : ordered_reduction -> unit
+  val display_rule_abbrev : ?id_thread:int -> reduction -> unit
+  val display_rule_num_abbrev : ?id_thread:int -> reduction -> unit
+  val display_ordered_rule : ?id_thread:int -> ordered_reduction -> unit
   val display_ordered_rule_indep : ordered_reduction -> unit
   val display_ordered_rule_abbrev : ordered_reduction -> unit
   val display_inside_query : fact list -> constraints -> fact list -> fact list -> unit
@@ -155,12 +155,12 @@ sig
 
   module WithLinks :
   sig
-    val term : term -> unit
+    val term : ?id_thread:int -> term -> unit
     val term_list : term list -> unit
     val fact : fact -> unit
     val constra : (term * term) list -> unit
     val constraints : constraints -> unit
-    val concl : bool -> fact -> hypspec list -> unit
+    val concl : ?id_thread:int -> bool -> fact -> hypspec list -> unit
   end
 
   val display_history_tree : string -> fact_tree -> unit

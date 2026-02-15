@@ -99,7 +99,7 @@ type fixed_or_renamable =
 type binder = { vname : renamable_id;
                 unfailing : bool;
 		btype : typet;
-		mutable link : linktype }
+		mutable link : linktype array }
 
 (* Processes: patterns *)
 

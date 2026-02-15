@@ -1,14 +1,14 @@
 open Types
 
-val term_evaluation : term -> term
-val equal_terms_modulo_eval : term -> term -> bool
-val term_evaluation_fail : term -> term
-val match_pattern : pattern -> term -> unit
+val term_evaluation : ?id_thread:int -> term -> term
+val equal_terms_modulo_eval : ?id_thread:int -> term -> term -> bool
+val term_evaluation_fail : ?id_thread:int -> term -> term
+val match_pattern : ?id_thread:int -> pattern -> term -> unit
 val decompose_term : term * term -> (term * term) list
 val decompose_list : (term * term) list -> (term * term) list
 val decompose_term_rev : binder * term -> (binder * term) list
 val decompose_list_rev : (binder * term) list -> (binder * term) list
-val term_evaluation_letfilter :
+val term_evaluation_letfilter : ?id_thread:int -> 
     Pitypes.term_occ -> term list -> (arg_meaning * term * when_include) list ->
       term list * (arg_meaning * term * when_include) list
 val is_in_public : (term * term) list -> term -> term option
@@ -17,7 +17,7 @@ val decompose_tuple : term -> term list
 val can_be_built : (term * term) list -> term -> term option
 val remove_first_in_public :
   (term * term) list -> (binder * term) list -> (binder * term) list
-val update_term_list : (term * term) list ->
+val update_term_list : ?id_thread:int -> (term * term) list ->
   (term * term) list -> (binder * term) list -> (binder * term) list
 val add_public_and_close :
     term Pitypes.reduc_state -> (term * term) list -> term Pitypes.reduc_state

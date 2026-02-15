@@ -3,8 +3,8 @@ open Types
 (* Equality of processes modulo renaming of bound names and variables
    and of channel names in annotated barriers. *)
 
-let get_link v =
-  match v.link with
+let get_link id_thread v =
+  match v.link.(id_thread) with
     NoLink -> v
   | VLink v' -> v'
   | _ -> Parsing_helper.internal_error __POS__ "unexpected link in Proswapper.get_link"
@@ -15,21 +15,21 @@ let get_ren ren f =
   with Not_found ->
     f
 
-let rec eq_term ren1 ren2 t1 t2 =
+let rec eq_term id_thread ren1 ren2 t1 t2 =
   match t1,t2 with
     Var v1, Var v2 ->
-      let v1' = get_link v1 in
-      let v2' = get_link v2 in
+      let v1' = get_link id_thread v1 in
+      let v2' = get_link id_thread v2 in
       v1' == v2'
   | FunApp(f1,[]), FunApp(f2,[]) ->
       let f1' = get_ren ren1 f1 in
       let f2' = get_ren ren2 f2 in
       f1' == f2'
   | FunApp(f1,l1), FunApp(f2,l2) ->
-      (f1 == f2) && (List.for_all2 (eq_term ren1 ren2) l1 l2)
+      (f1 == f2) && (List.for_all2 (eq_term id_thread ren1 ren2) l1 l2)
   | _ -> false
 
-let rec eq_pat ren1 ren2 pat1 pat2 =
+let rec eq_pat id_thread ren1 ren2 pat1 pat2 =
   match pat1, pat2 with
     PatVar v1, PatVar v2 ->
       (v1.btype == v2.btype) &&
@@ -38,62 +38,62 @@ let rec eq_pat ren1 ren2 pat1 pat2 =
        Terms.link v2 (VLink v');
        true)
   | PatTuple(f1,l1), PatTuple(f2,l2) ->
-      (f1 == f2) && (List.for_all2 (eq_pat ren1 ren2) l1 l2)
+      (f1 == f2) && (List.for_all2 (eq_pat id_thread ren1 ren2) l1 l2)
   | PatEqual t1, PatEqual t2 ->
-      eq_term ren1 ren2 t1 t2
+      eq_term id_thread ren1 ren2 t1 t2
   | _ -> false
 
-let rec eq_proc ren1 ren2 p1 p2 =
+let rec eq_proc id_thread ren1 ren2 p1 p2 =
   match p1,p2 with
     Nil, Nil -> true
   | NamedProcess(_, _, p1'), NamedProcess(_, _, p2') ->
-     eq_proc ren1 ren2 p1' p2'
+     eq_proc id_thread ren1 ren2 p1' p2'
   | Par(p1',p1''), Par(p2',p2'') ->
-      (eq_proc ren1 ren2 p1' p2') &&
-      (eq_proc ren1 ren2 p1'' p2'')
+      (eq_proc id_thread ren1 ren2 p1' p2') &&
+      (eq_proc id_thread ren1 ren2 p1'' p2'')
   | Repl(p1',_), Repl(p2',_) ->
-      eq_proc ren1 ren2 p1' p2'
+      eq_proc id_thread ren1 ren2 p1' p2'
   | Restr(f1,_,p1',_), Restr(f2,_,p2',_) ->
       (snd f1.f_type == snd f2.f_type) &&
       (let f' = Terms.copy_name ~orig:false f1 [] in
-       eq_proc ((f1,f')::ren1) ((f2,f')::ren2) p1' p2')
+       eq_proc id_thread ((f1,f')::ren1) ((f2,f')::ren2) p1' p2')
   | Test(t1,p1',p1'',_), Test(t2,p2',p2'',_) ->
-      (eq_term ren1 ren2 t1 t2) &&
-      (eq_proc ren1 ren2 p1' p2') &&
-      (eq_proc ren1 ren2 p1'' p2'')
+      (eq_term id_thread ren1 ren2 t1 t2) &&
+      (eq_proc id_thread ren1 ren2 p1' p2') &&
+      (eq_proc id_thread ren1 ren2 p1'' p2'')
   | Input(t1,pat1,p1',_), Input(t2,pat2,p2',_) ->
-      (eq_term ren1 ren2 t1 t2) &&
+      (eq_term id_thread ren1 ren2 t1 t2) &&
       (Terms.auto_cleanup (fun () ->
-         if eq_pat ren1 ren2 pat1 pat2 then
-           eq_proc ren1 ren2 p1' p2'
+         if eq_pat id_thread ren1 ren2 pat1 pat2 then
+           eq_proc id_thread ren1 ren2 p1' p2'
          else
            false))
   | Output(t1,t1',p1',_), Output(t2,t2',p2',_) ->
-      (eq_term ren1 ren2 t1 t2) &&
-      (eq_term ren1 ren2 t1' t2') &&
-      (eq_proc ren1 ren2 p1' p2')
+      (eq_term id_thread ren1 ren2 t1 t2) &&
+      (eq_term id_thread ren1 ren2 t1' t2') &&
+      (eq_proc id_thread ren1 ren2 p1' p2')
   | Let(pat1,t1,p1',p1'',_), Let(pat2,t2,p2',p2'',_) ->
-      (eq_term ren1 ren2 t1 t2) &&
+      (eq_term id_thread ren1 ren2 t1 t2) &&
       (Terms.auto_cleanup (fun () ->
-         if eq_pat ren1 ren2 pat1 pat2 then
-           eq_proc ren1 ren2 p1' p2'
+         if eq_pat id_thread ren1 ren2 pat1 pat2 then
+           eq_proc id_thread ren1 ren2 p1' p2'
          else
            false)) &&
-      (eq_proc ren1 ren2 p1'' p2'')
+      (eq_proc id_thread ren1 ren2 p1'' p2'')
   | Insert(t1,p1',_), Insert(t2,p2',_) ->
-      (eq_term ren1 ren2 t1 t2) &&
-      (eq_proc ren1 ren2 p1' p2')
+      (eq_term id_thread ren1 ren2 t1 t2) &&
+      (eq_proc id_thread ren1 ren2 p1' p2')
   | Get(pat1,t1,p1',p1'',_), Get(pat2,t2,p2',p2'',_) ->
       (Terms.auto_cleanup (fun () ->
-         if eq_pat ren1 ren2 pat1 pat2 then
-           (eq_term ren1 ren2 t1 t2) &&
-           (eq_proc ren1 ren2 p1' p2')
+         if eq_pat id_thread ren1 ren2 pat1 pat2 then
+           (eq_term id_thread ren1 ren2 t1 t2) &&
+           (eq_proc id_thread ren1 ren2 p1' p2')
          else
            false)) &&
-      (eq_proc ren1 ren2 p1'' p2'')
+      (eq_proc id_thread ren1 ren2 p1'' p2'')
   | Event(t1,_,p1',_), Event(t2,_,p2',_) ->
-      (eq_term ren1 ren2 t1 t2) &&
-      (eq_proc ren1 ren2 p1' p2')
+      (eq_term id_thread ren1 ren2 t1 t2) &&
+      (eq_proc id_thread ren1 ren2 p1' p2')
   | Phase _, _ | _, Phase _ ->
       Parsing_helper.user_error "Phases are incompatible with sync."
   | LetFilter _, _ | _, LetFilter _ ->
@@ -103,13 +103,13 @@ let rec eq_proc ren1 ren2 p1 p2 =
   | AnnBarrier(n1,_,_,_,subst1,p1',_), AnnBarrier(n2,_,_,_,subst2,p2',_) ->
       (n1 == n2) &&
       (List.length subst1 == List.length subst2) &&
-      (List.for_all2 (fun (_,t1) (_,t2) -> eq_term ren1 ren2 t1 t2) subst1 subst2) &&
+      (List.for_all2 (fun (_,t1) (_,t2) -> eq_term id_thread ren1 ren2 t1 t2) subst1 subst2) &&
       (Terms.auto_cleanup (fun () ->
          List.iter2 (fun (v1,_) (v2,_) ->
            let v' = Terms.copy_var ~orig:false v1 in
-           Terms.link v1 (VLink v');
-           Terms.link v2 (VLink v')) subst1 subst2;
-         eq_proc ren1 ren2 p1' p2'))
+           Terms.link ~id_thread:id_thread v1 (VLink v');
+           Terms.link ~id_thread:id_thread v2 (VLink v')) subst1 subst2;
+         eq_proc id_thread ren1 ren2 p1' p2'))
   | _ -> false
 
 (* [swappable b1 b2] returns true when the two barriers [b1] and [b2]
@@ -119,7 +119,7 @@ type swap_opt =
   | NonSwappable
   | Swappable of binder list * process
 	
-let swappable (_,_,_,swap_opt1) (_,_,_,swap_opt2) =
+let swappable id_thread (_,_,_,swap_opt1) (_,_,_,swap_opt2) =
   match swap_opt1, swap_opt2 with
   | Swappable(vl1,p1), Swappable(vl2,p2) ->
       (List.length vl1 == List.length vl2) &&
@@ -128,7 +128,7 @@ let swappable (_,_,_,swap_opt1) (_,_,_,swap_opt2) =
 	let vlfresh = List.map (fun v1 -> Terms.copy_var ~orig:false v1) vl1 in
 	List.iter2 (fun v1 vfresh -> Terms.link v1 (VLink vfresh)) vl1 vlfresh;
 	List.iter2 (fun v2 vfresh -> Terms.link v2 (VLink vfresh)) vl2 vlfresh;
-	eq_proc [] [] p1 p2))
+	eq_proc id_thread [] [] p1 p2))
   | _ -> false
 
 (* split function
@@ -331,19 +331,19 @@ let rec combine_barriers_both_execute barrierl1 barrierl2 =
 	  (level1, barriers1 @ barriers2) :: (combine_barriers_both_execute rest1 rest2)
 	end
 
-let rec union l1 = function
+let rec union id_thread l1 = function
   | [] -> l1
   | (((tag,ext),a,c,swap_opt) as barrier)::l2 ->
       let (same_tag,other_tag) = List.partition (fun ((tag',ext),_,_,_) -> tag = tag') l1 in
       match same_tag with
       | [((tag',ext'),a',c',swap_opt') as barrier'] ->
 	  assert (a == a' && c == c');
-	  let swap_opt'' = if swappable barrier barrier' then swap_opt' else NonSwappable in
-	  ((tag', ext'),a',c',swap_opt'')::(union other_tag l2)
-      | [] -> barrier::(union l1 l2)
+	  let swap_opt'' = if swappable id_thread barrier barrier' then swap_opt' else NonSwappable in
+	  ((tag', ext'),a',c',swap_opt'')::(union id_thread other_tag l2)
+      | [] -> barrier::(union id_thread l1 l2)
       | _ -> assert false
 	  
-let rec combine_barriers_one_executes occ ins br1 br2 barrierl1 barrierl2 =
+let rec combine_barriers_one_executes id_thread occ ins br1 br2 barrierl1 barrierl2 =
   match barrierl1, barrierl2 with
   | [], _ -> barrierl2
   | _, [] -> barrierl1
@@ -354,14 +354,14 @@ let rec combine_barriers_one_executes occ ins br1 br2 barrierl1 barrierl2 =
 	  Parsing_helper.input_warning ("In branch "^br2^" of {"^(string_of_int occ.occ)^"}"^ins^
 					", synchronization at level "^(string_of_int level1)^
 					" will block, so synchronization at level "^(string_of_int level2)^" will never be reached") ext2;
-	  (level1, barriers1)::(combine_barriers_one_executes occ ins br1 br2 rest1 barrierl2)
+	  (level1, barriers1)::(combine_barriers_one_executes id_thread occ ins br1 br2 rest1 barrierl2)
 	end
       else if level2 < level1 then
 	begin
 	  let ((_,ext1),_,_,_) = List.hd barriers1 in
 	  Parsing_helper.input_warning ("In branch "^br1^" of {"^(string_of_int occ.occ)^"}"^ins^
 					", synchronization at level "^(string_of_int level2)^" will block, so synchronization at level "^(string_of_int level1)^" will never be reached") ext1;
-	  (level2, barriers2)::(combine_barriers_one_executes occ ins br1 br2 barrierl1 rest2)
+	  (level2, barriers2)::(combine_barriers_one_executes id_thread occ ins br1 br2 barrierl1 rest2)
 	end
       else (* level1 = level2 *)
 	begin
@@ -377,7 +377,7 @@ let rec combine_barriers_one_executes occ ins br1 br2 barrierl1 barrierl2 =
 	      Parsing_helper.input_warning ("In branch "^br1^" of {"^(string_of_int occ.occ)^"}"^ins^
 					    ", synchronization at level "^(string_of_int level1)^" will block, because tag "^tag2^" will be missing") ext1
 		) barriers2;
-	  (level1, union barriers1 barriers2)::(combine_barriers_one_executes occ ins br1 br2 rest1 rest2)
+	  (level1, union id_thread barriers1 barriers2)::(combine_barriers_one_executes id_thread occ ins br1 br2 rest1 rest2)
 	end
 
 let add_tag level (((tag,ext),_,_,_) as barrier) barrierl =
@@ -390,7 +390,7 @@ let add_tag level (((tag,ext),_,_,_) as barrier) barrierl =
   end;
   (level, [barrier])::barrierl
 	  
-let annotate_full compile_for_equiv barrier_tags p =
+let annotate_full id_thread compile_for_equiv barrier_tags p =
 
   let rec annotate = function
       Nil -> ([], Nil)
@@ -410,7 +410,7 @@ let annotate_full compile_for_equiv barrier_tags p =
     | Test(t,p1,p2,occ) ->
 	let (barrierl1, p1') = annotate p1 in
 	let (barrierl2, p2') = annotate p2 in
-	(combine_barriers_one_executes occ "if" "then" "else" barrierl1 barrierl2, Test(t,p1',p2', occ))
+	(combine_barriers_one_executes id_thread occ "if" "then" "else" barrierl1 barrierl2, Test(t,p1',p2', occ))
     | Input(t,pat,p,occ) ->
 	let (barrierl, p') = annotate p in
 	(barrierl, Input(t,pat,p', occ))
@@ -420,21 +420,21 @@ let annotate_full compile_for_equiv barrier_tags p =
     | Let(pat,t,p1,p2,occ) ->
 	let (barrierl1, p1') = annotate p1 in
 	let (barrierl2, p2') = annotate p2 in
-	(combine_barriers_one_executes occ "let" "in" "else" barrierl1 barrierl2, Let(pat,t,p1',p2', occ))
+	(combine_barriers_one_executes id_thread occ "let" "in" "else" barrierl1 barrierl2, Let(pat,t,p1',p2', occ))
     | Insert(t,p,occ) ->
 	let (barrierl, p') = annotate p in
 	(barrierl, Insert(t,p',occ))
     | Get(pat,t,p1,p2,occ) ->
 	let (barrierl1, p1') = annotate p1 in
 	let (barrierl2, p2') = annotate p2 in
-	(combine_barriers_one_executes occ "get" "in" "else" barrierl1 barrierl2, Get(pat,t,p1',p2',occ))
+	(combine_barriers_one_executes id_thread occ "get" "in" "else" barrierl1 barrierl2, Get(pat,t,p1',p2',occ))
     | Event(t,args,p,occ) ->
 	let (barrierl, p') = annotate p in
 	(barrierl, Event(t,args,p',occ))
     | LetFilter(l,f,p1,p2,occ) ->
 	let (barrierl1, p1') = annotate p1 in
 	let (barrierl2, p2') = annotate p2 in
-	(combine_barriers_one_executes occ "let...suchthat" "in" "else" barrierl1 barrierl2, LetFilter(l,f,p1',p2', occ))
+	(combine_barriers_one_executes id_thread occ "let...suchthat" "in" "else" barrierl1 barrierl2, LetFilter(l,f,p1',p2', occ))
     | Phase _ ->
 	Parsing_helper.user_error "Phases are incompatible with sync"
     | Barrier(n,(tag,ext),p,occ) ->
@@ -507,12 +507,12 @@ let rec compile = function
    containing the same elements as [barriers], with swappable barriers
    grouped in the same sublist. *)
 
-let partition_swappable barriers =
+let partition_swappable id_thread barriers =
   let partition = ref [] in
   let rec add_in_partition bar = function
       [] -> partition := (ref [bar])::(!partition)
     | (part1::rest) ->
-	if swappable (List.hd (!part1)) bar then
+	if swappable id_thread (List.hd (!part1)) bar then
 	  part1 := bar :: (!part1)
 	else
 	  add_in_partition bar rest
@@ -590,10 +590,10 @@ let rec add_out_permut_list (next_f : process -> unit) barll vll p =
    into barriers of the same level, and inside each level, into a partition
    of swappable barriers. *)
 
-let rec compute_partitions = function
+let rec compute_partitions id_thread = function
     [] -> []
   | (level, first_barr):: rest_barr ->
-      (level, partition_swappable first_barr) :: (compute_partitions rest_barr)
+      (level, partition_swappable id_thread first_barr) :: (compute_partitions id_thread rest_barr)
 
 (* [display_partitions bar_partition] displays [bar_partition] *)
 
@@ -777,13 +777,13 @@ let rec fixed_synch permut = function
    [compile_barriers_equiv next_f p] calls [next_f] on each process obtained by
    compiling the barriers in [p], with swapping. *)
 
-let compile_barriers_equiv next_f barrier_tags p =
-  let (barr, pann) = annotate_full true barrier_tags p in
+let compile_barriers_equiv id_thread next_f barrier_tags p =
+  let (barr, pann) = annotate_full id_thread true barrier_tags p in
   (* For debugging: *)
   print_string "Annotated process:\n";
   Display.Text.display_process "" pann;
   let pcomp = compile pann in
-  let bar_partition = compute_partitions barr in
+  let bar_partition = compute_partitions id_thread barr in
   display_partitions bar_partition;
   Display.Text.print_string ("There are " ^ (string_of_int (count_permuts_parts bar_partition)) ^ " possible swappings.\n");
   match !Param.set_swapping with
@@ -833,8 +833,8 @@ let rec synch = function
    [compile_barriers p] returns the process obtained by
    compiling the barriers in [p], without swapping. *)
 
-let compile_barriers_corresp barrier_tags p =
-  let (barr, pann) = annotate_full false barrier_tags p in
+let compile_barriers_corresp id_thread barrier_tags p =
+  let (barr, pann) = annotate_full id_thread false barrier_tags p in
   (* For debugging: *)
   print_string "Annotated process:\n";
   Display.Text.display_process "" pann;
@@ -846,14 +846,14 @@ let reset() =
 
 open Pitypes
 
-let compile_barriers_desc next_f barrier_tags p_desc =
+let compile_barriers_desc id_thread next_f barrier_tags p_desc =
   if p_desc.bi_pro then
-    compile_barriers_equiv (fun p' ->
+    compile_barriers_equiv id_thread (fun p' ->
       next_f { proc = p'; bi_pro = true; display_num = None;
 	       construction = BarrierSwap(p_desc) }
 	) barrier_tags p_desc.proc
   else
-    next_f { proc = compile_barriers_corresp barrier_tags p_desc.proc;
+    next_f { proc = compile_barriers_corresp id_thread barrier_tags p_desc.proc;
 	     bi_pro = false;
 	     display_num = None;
 	     construction = BarrierNoSwap(p_desc) }
@@ -863,12 +863,12 @@ let rec add_channels accu = function
   | (_,(a,c))::rest ->
       add_channels (a::c::accu) rest
       
-let compile_barriers next_f pi_state =
+let compile_barriers ?(id_thread=0) next_f pi_state =
   reset();
   begin
     match pi_state.pi_process_query with
     | SingleProcessSingleQuery(p, q) ->
-        compile_barriers_desc (fun p' ->
+        compile_barriers_desc id_thread (fun p' ->
           next_f
             { pi_state with
               pi_process_query = SingleProcessSingleQuery(p', q);
@@ -876,7 +876,7 @@ let compile_barriers next_f pi_state =
             }
               ) pi_state.pi_all_barrier_tags p
     | SingleProcess(p,ql) ->
-        compile_barriers_desc (fun p' ->
+        compile_barriers_desc id_thread (fun p' ->
           next_f
             { pi_state with
               pi_process_query = SingleProcess(p', ql);

@@ -986,14 +986,14 @@ and copy_conclusion_query2 = function
 
 exception NoMatch
 
-let rec match_terms ?(id_thread=1) t1 t2 =
+let rec match_terms ?(id_thread=0) t1 t2 =
    match (t1,t2) with
      (Var v), t ->
        begin
          match v.link with
            NoLink ->
              if v.unfailing
-             then link ~id_thread v (TLink t)
+             then link ~id_thread:id_thread v (TLink t)
              else
                begin
                         match t with
@@ -1006,14 +1006,14 @@ let rec match_terms ?(id_thread=1) t1 t2 =
        end
    | (FunApp (f1,l1')), (FunApp (f2,l2')) ->
        if f1 != f2 then raise NoMatch;
-       List.iter2 (match_terms ~id_thread) l1' l2'
+       List.iter2 (match_terms ~id_thread:id_thread) l1' l2'
    | _,_ -> raise NoMatch
 
-let match_facts f1 f2 =
+let match_facts ?(id_thread=0) f1 f2 =
   match (f1,f2) with
     Pred(chann1, t1),Pred(chann2, t2) ->
       if chann1 != chann2 then raise NoMatch;
-      List.iter2 match_terms t1 t2
+      List.iter2 (match_terms ~id_thread:id_thread) t1 t2
 
 (* Same as match_facts except that f1 of phase n can be matched with f2 of phase m with n >= m when they are attacker facts.
    Used to apply Lemmas. *)

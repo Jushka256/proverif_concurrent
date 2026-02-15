@@ -15,12 +15,12 @@ val set_token : token -> unit
 val check_token : token -> (unit -> 'a) -> (unit -> 'a) -> 'a
 
 (** Runs a boolean function on each element of a list concurrently, returns or of results *)
-val list_exists : flag -> (token -> 'a -> bool) -> 'a list -> bool 
+val list_exists : flag -> (int -> token -> 'a -> bool) -> 'a list -> bool 
 
 (** Runs a list of boolean functions concurrently, returns or of results *)
-val bool_function_list_or : flag -> (token -> bool) list ->  bool
+val bool_function_list_or : flag -> (int -> token -> bool) list ->  bool
 
 (** Returns or of running two functions concurrently *)
-val or_function : flag -> (token -> bool) -> (token -> bool) -> bool
+val or_function : flag -> (int -> token -> bool) -> (int -> token -> bool) -> bool
 
 val run_concurrent : (unit -> 'a) -> 'a

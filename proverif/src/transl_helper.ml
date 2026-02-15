@@ -63,8 +63,10 @@ open Utils
   initial clauses.
 *)
 
-let rec status_term = function
-  | Var { link = TLink t; _ } -> status_term t
+let rec status_term ?(id_thread=0) = 
+  let is_TLink lst = match lst.(id_thread) with | TLink _ -> true | _ -> false in
+  function
+  | Var { link = lst; _ } when (is_TLink lst) -> let TLink t = lst.(id_thread) in status_term t
   | FunApp(f,[]) when f.f_cat = Failure -> 0
   | Var(v) when v.unfailing -> 1
   | _ -> 2

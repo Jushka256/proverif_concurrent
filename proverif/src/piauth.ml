@@ -25,7 +25,7 @@ let shown_stop = ref false
    Returns true when a trace has definitely been found.
  *)
 
-let display_clause_trace lemmas detail recheck opt_query list_started cl =
+let display_clause_trace id_thread lemmas detail recheck opt_query list_started cl =
   Display.Text.print_string "goal reachable: ";
   Ord.Text.display_abbrev cl;
   if !Param.html_output then
@@ -102,7 +102,7 @@ let display_clause_trace lemmas detail recheck opt_query list_started cl =
                           Parsing_helper.debug (fun () ->
                             let check_one_term = 
                               Terms.iter_variables (fun v ->
-                                if v.link <> NoLink then assert(false)
+                                if v.link.(id_thread) <> NoLink then assert(false)
                               )
                             in
                             List.iter (Ord.iter_term check_one_term) clauses
@@ -1014,7 +1014,7 @@ let match_unblock_predicates restwork g_pred_unblock g_constra pred_unblock_cl p
    Note: the constraints [g_constra_to_negate] are closed under the equational theory before calling this function.
  *)
 
-let negate_predicate_constra lemmas cl (* (hypl,concl,hist,constra) *) g_constra_to_negate =
+let negate_predicate_constra id_thread lemmas cl (* (hypl,concl,hist,constra) *) g_constra_to_negate =
   assert (g_constra_to_negate.is_not_nat == []);
 
   let accu = ref [] in
@@ -1089,7 +1089,7 @@ let negate_predicate_constra lemmas cl (* (hypl,concl,hist,constra) *) g_constra
             TermsEq.unify_modulo (fun () ->
               (* Retrieve the substitution *)
               let subst =
-                List.fold_left (fun acc x -> match x.link with
+                List.fold_left (fun acc x -> match x.link.(id_thread) with
                   | NoLink -> acc
                   | TLink t -> (x,TermsEq.remove_syntactic_term t)::acc
                   | _ -> Parsing_helper.internal_error __POS__ "[negate_predicate_constra] Unexpected link."
@@ -1097,7 +1097,7 @@ let negate_predicate_constra lemmas cl (* (hypl,concl,hist,constra) *) g_constra
               in
 
               (* Remove the link to copy the history *)
-              List.iter (fun (x,_) -> x.link <- NoLink) subst;
+              List.iter (fun (x,_) -> x.link.(id_thread) <- NoLink) subst;
               let hist' =
                 Terms.auto_cleanup (fun () ->
                   let concl' = Terms.copy_fact2 cl.Ord.conclusion in
@@ -1107,7 +1107,7 @@ let negate_predicate_constra lemmas cl (* (hypl,concl,hist,constra) *) g_constra
                 )
               in
               (* Relink the variables *)
-              List.iter (fun (x,t) -> x.link <- TLink t) subst;
+              List.iter (fun (x,t) -> x.link.(id_thread) <- TLink t) subst;
 
               let clause1 = { cl with history = hist' } in
               let clause2 = Terms.auto_cleanup (fun () -> Ord.copy2 clause1 ) in
@@ -1400,7 +1400,7 @@ and eval_gather_conclusion restwork = function
       with Unify ->
         eval_gather_conclusion restwork concl2
 
-let rec clause_match_realquery restwork lemmas initial_nb_premise clause (* (((hyp,concl,_,constra) as clause):auth_ordered_reduction) *) = function
+let rec clause_match_realquery id_thread restwork lemmas initial_nb_premise clause (* (((hyp,concl,_,constra) as clause):auth_ordered_reduction) *) = function
   | Before(evl_premise,concl_q) ->
       let evl_premise_no_constra = 
         List.filter (function
@@ -1537,7 +1537,7 @@ let rec clause_match_realquery restwork lemmas initial_nb_premise clause (* (((h
                             with NoMatch | TermsEq.FalseConstraint -> raise Unify
                           end;
 
-                          let new_clauses_to_check = negate_predicate_constra lemmas clause g_constra_to_negate in
+                          let new_clauses_to_check = negate_predicate_constra id_thread lemmas clause g_constra_to_negate in
 
                           (* Instantiate the nested queries with the value given by the clause *)
                           if matching_nested = []
@@ -1546,11 +1546,11 @@ let rec clause_match_realquery restwork lemmas initial_nb_premise clause (* (((h
                             let (nested_query,request_clause) = generate_nested_query_and_rule evl_premise g_ev g_constra_to_check g_constra_to_negate g_pred matching_nested clause in
                             if injectivity_data = None
                             then
-                              if Terms.auto_cleanup (fun () -> True = check_query ~close_equation:false ~contain_nested:true None lemmas initial_nb_premise request_clause nested_query)
+                              if Terms.auto_cleanup (fun () -> True = check_query ~close_equation:false ~contain_nested:true id_thread None lemmas initial_nb_premise request_clause nested_query)
                               then Terms.auto_cleanup (fun () -> restwork new_clauses_to_check)
                               else raise Unify
                             else
-                              if True != Terms.auto_cleanup (fun () -> check_inj_query ~close_equation:false ~contain_nested:true (fun () -> restwork new_clauses_to_check) (fun _ -> DontKnow) lemmas initial_nb_premise request_clause nested_query)
+                              if True != Terms.auto_cleanup (fun () -> check_inj_query ~close_equation:false ~contain_nested:true id_thread (fun () -> restwork new_clauses_to_check) (fun _ -> DontKnow) lemmas initial_nb_premise request_clause nested_query)
                               then raise Unify
                         ) g_pred_unblock_to_check g_constra_to_check hyp_preds hyp_preds_block
                       ) lemmas injectivity_data positive_clause_op
@@ -1564,7 +1564,7 @@ let rec clause_match_realquery restwork lemmas initial_nb_premise clause (* (((h
         true
       with Unify -> false
 
-and check_non_inj_clauses display_attack_opt query lemmas initial_nb_premise clauses =
+and check_non_inj_clauses id_thread display_attack_opt query lemmas initial_nb_premise clauses =
   let queue = ref clauses in
   let final_result = ref True in
   let size_queue = ref (List.length !queue) in
@@ -1590,7 +1590,7 @@ and check_non_inj_clauses display_attack_opt query lemmas initial_nb_premise cla
           end;
 
         if 
-          clause_match_realquery (fun clauses' -> 
+          clause_match_realquery id_thread (fun clauses' -> 
             queue := clauses' @ q; 
             incr count_verified_clauses;
             size_queue := !size_queue - 1 + List.length clauses';
@@ -1626,7 +1626,7 @@ and check_non_inj_clauses display_attack_opt query lemmas initial_nb_premise cla
   Ordering.cleanup_ordering ();
   res
 
-and check_query ?(close_equation=true) ?(contain_nested=false) display_attack_opt lemmas initial_nb_premise request_rule query =
+and check_query ?(close_equation=true) ?(contain_nested=false) id_thread display_attack_opt lemmas initial_nb_premise request_rule query =
   let solved_rules = Rules.solving_request_rule ~close_equation:close_equation lemmas request_rule in
 
   let solved_rules' =
@@ -1642,13 +1642,13 @@ and check_query ?(close_equation=true) ?(contain_nested=false) display_attack_op
       solved_rules
   in
 
-  let result = check_non_inj_clauses display_attack_opt query lemmas initial_nb_premise solved_rules' in
+  let result = check_non_inj_clauses id_thread display_attack_opt query lemmas initial_nb_premise solved_rules' in
   if result = True
   then success_clauses := solved_rules' @ (!success_clauses);
 
   result
 
-and check_inj_clauses restwork query lemmas initial_nb_premise clauses =
+and check_inj_clauses id_thread restwork query lemmas initial_nb_premise clauses =
   let query' = Terms.auto_cleanup (fun () -> copy_query query) in
   match clauses with
     | [] ->
@@ -1662,14 +1662,14 @@ and check_inj_clauses restwork query lemmas initial_nb_premise clauses =
         (* For injective queries, it is important that the [additional_clauses]
            generated by [clause_match_realquery] are checked in the [restwork] part
            of [clause_match_realquery]. *)
-        clause_match_realquery (fun additional_clauses ->
+        clause_match_realquery id_thread (fun additional_clauses ->
           Terms.auto_cleanup (fun () ->
-            if not (check_inj_clauses restwork query lemmas initial_nb_premise (additional_clauses@cll))
+            if not (check_inj_clauses id_thread restwork query lemmas initial_nb_premise (additional_clauses@cll))
             then raise Unify
           )
         ) lemmas initial_nb_premise cl query'
 
-and check_inj_query ?(close_equation=true) ?(contain_nested=false) restwork display_attack lemmas initial_nb_premise request_rule query =
+and check_inj_query ?(close_equation=true) ?(contain_nested=false) id_thread restwork display_attack lemmas initial_nb_premise request_rule query =
   let solved_rules = Rules.solving_request_rule ~close_equation:close_equation lemmas request_rule in
   let solved_rules' =
     (* Remove clauses subsumed modulo equational theory, when the query is not nested.
@@ -1680,7 +1680,7 @@ and check_inj_query ?(close_equation=true) ?(contain_nested=false) restwork disp
       solved_rules
   in
 
-  if check_inj_clauses restwork query lemmas initial_nb_premise solved_rules'
+  if check_inj_clauses id_thread restwork query lemmas initial_nb_premise solved_rules'
   then
     begin
       success_clauses := solved_rules' @ (!success_clauses);
@@ -1691,7 +1691,7 @@ and check_inj_query ?(close_equation=true) ?(contain_nested=false) restwork disp
 
 (* Main verification functions *)
 
-let verify_inj_query display_when_true nested list_started all_lemmas (Before(evl,_) as query) =
+let verify_inj_query id_thread display_when_true nested list_started all_lemmas (Before(evl,_) as query) =
   assert (!current_bound_vars == []);
   let request_rule = generate_initial_request_rule query in
 
@@ -1723,12 +1723,12 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
               DontKnow
           | cl::q_cl ->
               success_clauses := [];
-              let sub_res = check_inj_clauses (fun () -> ()) query all_lemmas initial_nb_premise [cl] in
+              let sub_res = check_inj_clauses id_thread (fun () -> ()) query all_lemmas initial_nb_premise [cl] in
               success_clauses := [];
               if not sub_res
               then
                 begin
-                  if display_clause_trace all_lemmas true (Some (fun _ -> false)) (Some query) list_started cl
+                  if display_clause_trace id_thread all_lemmas true (Some (fun _ -> false)) (Some query) list_started cl
                   then False
                   else if (!traces_to_reconstruct != 0) && (!Param.reconstruct_derivation)
                   then explore_clauses false q_cl
@@ -1748,7 +1748,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
 
           (* I do not use recheck of the clause. It is not clear how I can check that
              a "double" clause does not satisfy the query. *)
-          display_clause_trace all_lemmas true (Some (fun _ -> false)) (Some query) list_started cl
+          display_clause_trace id_thread all_lemmas true (Some (fun _ -> false)) (Some query) list_started cl
         ) tmp_faulty_clauses
       in
 
@@ -1761,7 +1761,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
           begin
             (* We try with other clauses *)
             success_clauses := [];
-            List.iter (fun cl -> ignore (check_inj_clauses (fun () -> ()) query all_lemmas initial_nb_premise [cl])) clauses;
+            List.iter (fun cl -> ignore (check_inj_clauses id_thread (fun () -> ()) query all_lemmas initial_nb_premise [cl])) clauses;
             success_clauses := [];
             let res_att =
               List.exists (fun cl ->
@@ -1769,7 +1769,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
 
                 (* I do not use recheck of the clause. It is not clear how I can check that
                    a "double" clause does not satisfy the query. *)
-                display_clause_trace all_lemmas true (Some (fun _ -> false)) (Some query) list_started cl
+                display_clause_trace id_thread all_lemmas true (Some (fun _ -> false)) (Some query) list_started cl
               ) !faulty_clauses_injective
             in
             faulty_clauses_injective := [];
@@ -1780,7 +1780,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
   in
 
   success_clauses := [];
-  let res = check_inj_query ~contain_nested:nested (fun () -> ()) display_attack all_lemmas initial_nb_premise request_rule query in
+  let res = check_inj_query ~contain_nested:nested id_thread (fun () -> ()) display_attack all_lemmas initial_nb_premise request_rule query in
   let clauses = !success_clauses in
   success_clauses := [];
   if display_when_true && res = True then
@@ -1794,7 +1794,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
           clauses
       in
       if !Param.verbose_goal_reachable
-      then  List.iter (fun cl -> ignore (display_clause_trace all_lemmas false None None list_started cl)) clauses
+      then  List.iter (fun cl -> ignore (display_clause_trace id_thread all_lemmas false None None list_started cl)) clauses
       else
         begin
           Display.Text.print_line ("Number of goals reachable: "^(string_of_int (List.length clauses)))
@@ -1802,7 +1802,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
     end;
   res
 
-let verify_non_inj_query display_when_true nested list_started lemmas (Before(evl,_) as query) =
+let verify_non_inj_query id_thread display_when_true nested list_started lemmas (Before(evl,_) as query) =
   assert (!current_bound_vars == []);
   let request_rule = generate_initial_request_rule query in
 
@@ -1811,17 +1811,17 @@ let verify_non_inj_query display_when_true nested list_started lemmas (Before(ev
   let display_attack cl =
     let recheck_fun cl =
       success_clauses := [];
-      let res = check_non_inj_clauses None query lemmas initial_nb_premise [cl] in
+      let res = check_non_inj_clauses id_thread None query lemmas initial_nb_premise [cl] in
       success_clauses := [];
       res = True
     in
-    if display_clause_trace lemmas true (Some recheck_fun) (Some query) list_started cl
+    if display_clause_trace id_thread lemmas true (Some recheck_fun) (Some query) list_started cl
     then False
     else DontKnow
   in
 
   success_clauses := [];
-  let res = check_query ~contain_nested:nested (Some display_attack) lemmas initial_nb_premise request_rule query in
+  let res = check_query ~contain_nested:nested id_thread (Some display_attack) lemmas initial_nb_premise request_rule query in
   let clauses = !success_clauses in
   success_clauses := [];
   if display_when_true && res = True then
@@ -1835,7 +1835,7 @@ let verify_non_inj_query display_when_true nested list_started lemmas (Before(ev
           clauses
       in
       if !Param.verbose_goal_reachable
-      then List.iter (fun cl -> ignore (display_clause_trace lemmas false None None list_started cl)) clauses
+      then List.iter (fun cl -> ignore (display_clause_trace id_thread lemmas false None None list_started cl)) clauses
       else
         begin
           Display.Text.print_line ("Number of goals reachable: "^(string_of_int (List.length clauses)))
@@ -1843,7 +1843,7 @@ let verify_non_inj_query display_when_true nested list_started lemmas (Before(ev
     end;
   res
 
-let verify_query display_query lemmas ind_lemmas qdisp (Before(el, _) as q) =
+let verify_query id_thread display_query lemmas ind_lemmas qdisp (Before(el, _) as q) =
   Display.auto_cleanup_display (fun () ->
     Display.Text.print_string "Starting query ";
     Display.Text.display_corresp_secret_putbegin_query qdisp;
@@ -1869,12 +1869,12 @@ let verify_query display_query lemmas ind_lemmas qdisp (Before(el, _) as q) =
     let is_simple = is_simple_query q' in
 
     if is_simple
-    then verify_non_inj_query true false list_started (lemmas@ind_lemmas) q'
+    then verify_non_inj_query id_thread true false list_started (lemmas@ind_lemmas) q'
     else
       begin
         (* We simplify the query *)
         let simple_q = simplify_query q' in
-        let result_simple = verify_non_inj_query false false list_started (lemmas@ind_lemmas) simple_q in
+        let result_simple = verify_non_inj_query id_thread false false list_started (lemmas@ind_lemmas) simple_q in
         supplemental_info := [simple_q, result_simple];
         (* If the simplified query cannot be proved, then q cannot be proved either.
            If we could reconstruct a trace against the simplified query, then q is false *)
@@ -1886,20 +1886,20 @@ let verify_query display_query lemmas ind_lemmas qdisp (Before(el, _) as q) =
           if is_non_injective_query q'
           then
             (* The query [q'] is not simple and it is non-injective, so it is nested *)
-            verify_non_inj_query true true list_started all_lemmas q'
+            verify_non_inj_query id_thread true true list_started all_lemmas q'
           else
             if is_non_nested_query q'
-            then verify_inj_query true false list_started all_lemmas q'
+            then verify_inj_query id_thread true false list_started all_lemmas q'
             else
               begin
                 (* We look at the simplified non-nested but injective query first *)
                 let non_nested_q = remove_nested q' in
-                let result_non_nested = verify_inj_query false false list_started all_lemmas non_nested_q in
+                let result_non_nested = verify_inj_query id_thread false false list_started all_lemmas non_nested_q in
                 match result_non_nested with
                   | True ->
                       supplemental_info := [non_nested_q, result_non_nested];
                       (* When the simplified non-nested query is true, look at the real query *)
-                      verify_inj_query true true list_started all_lemmas q'
+                      verify_inj_query id_thread true true list_started all_lemmas q'
                   | DontKnow ->
                       supplemental_info := (non_nested_q, result_non_nested) :: !supplemental_info;
                       DontKnow
@@ -1917,7 +1917,7 @@ let verify_query display_query lemmas ind_lemmas qdisp (Before(el, _) as q) =
 
 (* Prove *)
 
-let do_query ?(partial=false) display_query lemmas ind_lemmas result_solve_queries index
+let do_query ?(partial=false) id_thread display_query lemmas ind_lemmas result_solve_queries index
     (solve_status,((qorig,_) as qorig_e), ((qencoded,_) as qencoded_e)) =
   match qencoded with
   | PutBegin _ -> ()
@@ -1929,7 +1929,7 @@ let do_query ?(partial=false) display_query lemmas ind_lemmas result_solve_queri
       let r =
         if !for_biprocess && Rules.bad_in_saturated_database ()
         then DontKnow
-        else verify_query display_query lemmas ind_lemmas qorig q
+        else verify_query id_thread display_query lemmas ind_lemmas qorig q
       in
       Display.Text.display_result_and_supplemental ~partial qorig qencoded r (!supplemental_info);
       if !Param.html_output
@@ -1953,7 +1953,7 @@ let display_final_result list_results =
   if !Param.html_output then
     Display.Html.display_final_result list_results
 
-let solve_auth horn_state pi_state =
+let solve_auth ?(id_thread=0) horn_state pi_state =
   let result_solve_queries = ref [] in
   let (queries, max_subset, induction) = match pi_state.pi_process_query with
     | SingleProcessSingleQuery(p_desc, CorrespQuery (ql,solve_status)) ->
@@ -2016,7 +2016,7 @@ let solve_auth horn_state pi_state =
       Display.Text.print_line "Starting proving a group of queries by induction.";
       let i_queries = List.mapi (fun i q -> (i,q)) queries in
       let rec verify_queries ind_lemmas verified_queries to_verify =
-        List.iter (fun (i,q) -> do_query ~partial:true true lemmas ind_lemmas result_solve_queries i q) to_verify;
+        List.iter (fun (i,q) -> do_query ~partial:true id_thread true lemmas ind_lemmas result_solve_queries i q) to_verify;
 
         (* We look for queries that are false and that were proven by induction *)
         let verify_again = ref false in
@@ -2053,13 +2053,13 @@ let solve_auth horn_state pi_state =
     match queries with
       | [q] ->
           (* Since there is only one query, we do not need to display partial result. *)
-          do_query false lemmas inductive_lemmas result_solve_queries 0 q;
+          do_query id_thread false lemmas inductive_lemmas result_solve_queries 0 q;
           List.map (fun (r,r_query,_) -> r,r_query) !result_solve_queries
       | _ ->
           let partial = not max_subset && induction in
 
           if !Param.html_output then Display.Html.print_string "<UL>\n";
-          List.iteri (do_query ~partial:partial true lemmas inductive_lemmas result_solve_queries) queries;
+          List.iteri (do_query ~partial:partial id_thread true lemmas inductive_lemmas result_solve_queries) queries;
           if !Param.html_output then Display.Html.print_string "</UL>\n";
 
           let results = List.rev_map (fun (r,r_query,_) -> r,r_query) !result_solve_queries in

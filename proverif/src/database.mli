@@ -60,7 +60,7 @@ module type SubsumptionSig =
        This function is only used in combination with the feature vector. *)
     val implies_no_test : clause -> subsumption_data -> clause -> subsumption_data -> bool
 
-    val implies_no_test_concurrent : token -> clause -> subsumption_data -> clause -> subsumption_data -> bool
+    val implies_no_test_concurrent : ?id_thread:int -> token -> clause -> subsumption_data -> clause -> subsumption_data -> bool
 
     (** [generate_subsumption_data r] generates the subsumption data associated to [r]. *)
     val generate_subsumption_data : clause -> sub_annot_clause
