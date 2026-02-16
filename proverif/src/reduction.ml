@@ -2074,7 +2074,7 @@ let find_sid_fact id_thread end_sid no_dup_begin_sids = function
         end
   | _ -> ()
 
-let rec find_sid_tree id_thread end_sid all_sids no_dup_begin_sids t =
+(* let rec find_sid_tree id_thread end_sid all_sids no_dup_begin_sids t =
   find_sid_fact id_thread end_sid no_dup_begin_sids t.thefact;
   match t.desc with
   | FHAny | FEmpty -> ()
@@ -2095,7 +2095,7 @@ let rec find_sid_tree id_thread end_sid all_sids no_dup_begin_sids t =
             | ReplTag(_,count_params) -> add_sid (get_sid id_thread (List.nth nlrev count_params)) all_sids
             | _ -> ()
           ) hsl
-      |	_ -> ()
+      |	_ -> () *)
 
 
 (* For injectivity: [check_query_falsified q final_state] checks
