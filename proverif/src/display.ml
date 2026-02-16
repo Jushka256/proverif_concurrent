@@ -67,14 +67,14 @@ let auto_assign_abbrev_table f_next abbrev_table =
     current_abbrev_table := tmp_abbrev_table;
     raise e
 
-let rec get_session_id id_thread t =
+let rec get_session_id t =
   match t with
   | Var v ->
-      begin match v.link.(id_thread) with
-      | TLink t' -> get_session_id id_thread t'
+      begin match v.link.(0) with
+      | TLink t' -> get_session_id t'
       | _ -> 
-          let _,occ = List.find (fun (t',_) -> Terms.equal_terms t t') !current_abbrev_table in
-          Terms.get_session_id_from_occurrence occ
+        let _,occ = List.find (fun (t',_) -> Terms.equal_terms t t') !current_abbrev_table in
+        Terms.get_session_id_from_occurrence occ
       end
   | _ -> Terms.get_session_id_from_occurrence t
 
@@ -221,37 +221,36 @@ let find_abbrev abbrev_table t =
   in
   find_abbrev_rec (!abbrev_table)
 
-let rec abbrev_term id_thread abbrev_table = 
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  let is_VLink lst = match lst.(id_thread) with VLink _ -> true | _ -> false in
-  function
-    Var { link = lst } when is_TLink lst -> let TLink t = lst.(id_thread) in abbrev_term id_thread abbrev_table t
-  | Var { link = lst } when is_VLink lst -> let VLink v = lst.(id_thread) in (Var v)
-  | Var v -> Var v
+let rec abbrev_term abbrev_table = function
+    Var v ->
+      begin match v.link.(0) with
+      | TLink t -> abbrev_term abbrev_table t
+      | _ -> Var v
+      end
   | FunApp(f,l) ->
-      let l' = List.map (abbrev_term id_thread abbrev_table) l in
+      let l' = List.map (abbrev_term abbrev_table) l in
       match f.f_cat, l with
         (Name _), (_::_) ->
         (* Abbreviate names with arguments *)
           find_abbrev abbrev_table (FunApp(f,l'))
       | _ -> FunApp(f,l')
 
-let abbrev_fact id_thread abbrev_table = function
-    Pred(p,l) -> Pred(p, List.map (abbrev_term id_thread abbrev_table) l)
+let abbrev_fact abbrev_table = function
+    Pred(p,l) -> Pred(p, List.map (abbrev_term abbrev_table) l)
 
-let abbrev_constra id_thread abbrev_table c = Terms.map_constraints (abbrev_term id_thread abbrev_table) c
+let abbrev_constra abbrev_table c = Terms.map_constraints (abbrev_term abbrev_table) c
 
 (* Return a new rule and an association table where the names are abbreviated *)
 
-let abbreviate_rule id_thread ((hyp, concl, hist, constra)) =
+let abbreviate_rule ((hyp, concl, hist, constra)) =
   let abbrev_table = ref [] in
-  let rule' = (List.map (abbrev_fact id_thread abbrev_table) hyp, abbrev_fact id_thread abbrev_table concl,
-               hist, abbrev_constra id_thread abbrev_table constra)  in
+  let rule' = (List.map (abbrev_fact abbrev_table) hyp, abbrev_fact abbrev_table concl,
+               hist, abbrev_constra abbrev_table constra)  in
   (!abbrev_table,rule')
 
 (* Return an abbreviated derivation and an association table where the names are abbreviated *)
 
-let abbreviate_derivation id_thread tree =
+let abbreviate_derivation tree =
   let abbrev_table = ref [] in
   let rec abbrev_tree tree =
     { desc =
@@ -259,12 +258,12 @@ let abbreviate_derivation id_thread tree =
         match tree.desc with
           (FEmpty | FHAny | FRemovedBySimplification | FRemovedWithProof _) as x -> x
         | FRule(n, descr, constra, hl, added_d) ->
-            FRule(n, descr, abbrev_constra id_thread abbrev_table constra, List.map abbrev_tree hl, List.map (abbrev_added id_thread) added_d)
+            FRule(n, descr, abbrev_constra abbrev_table constra, List.map abbrev_tree hl, List.map abbrev_added added_d)
         | FEquation h -> FEquation (abbrev_tree h)
       end;
-      thefact = abbrev_fact id_thread abbrev_table tree.thefact
+      thefact = abbrev_fact abbrev_table tree.thefact
     }
-  and abbrev_added id_thread (lbl,constra,fact_l) = (lbl,abbrev_constra id_thread abbrev_table constra, List.map abbrev_tree fact_l) in
+  and abbrev_added (lbl,constra,fact_l) = (lbl,abbrev_constra abbrev_table constra, List.map abbrev_tree fact_l) in
   let tree' = abbrev_tree tree in
   (!abbrev_table, tree')
 
@@ -467,12 +466,12 @@ sig
   val display_fact_format : fact_format -> unit
   val display_constra : (term * term) list -> unit
   val display_constraints : constraints -> unit
-  val display_rule_nonewline : int -> reduction -> unit
-  val display_rule : int -> reduction -> unit
+  val display_rule_nonewline : reduction -> unit
+  val display_rule : reduction -> unit
   val display_rule_indep : reduction -> unit
-  val display_rule_abbrev : ?id_thread:int -> reduction -> unit
-  val display_rule_num_abbrev : ?id_thread:int -> reduction -> unit
-  val display_ordered_rule : ?id_thread:int -> ordered_reduction -> unit
+  val display_rule_abbrev : reduction -> unit
+  val display_rule_num_abbrev : reduction -> unit
+  val display_ordered_rule : ordered_reduction -> unit
   val display_ordered_rule_indep : ordered_reduction -> unit
   val display_ordered_rule_abbrev : ordered_reduction -> unit
   val display_inside_query : fact list -> constraints -> fact list -> fact list -> unit
@@ -508,12 +507,12 @@ sig
 
   module WithLinks :
   sig
-    val term : int -> term -> unit
+    val term : term -> unit
     val term_list : term list -> unit
     val fact : fact -> unit
     val constra : (term * term) list -> unit
     val constraints : constraints -> unit
-    val concl : ?id_thread:int -> bool -> fact -> hypspec list -> unit
+    val concl : bool -> fact -> hypspec list -> unit
   end
 
   val display_history_tree : string -> fact_tree -> unit
@@ -1017,7 +1016,7 @@ module LangDisp = functor (Lang : LangSig) ->
               (n+1,t')
           | t -> (0,t)
 
-        let rec term id_thread t =
+        let rec term t =
           Lang.wrap_if_necessary ();
           match t with
           | FunApp(f,l) ->
@@ -1025,7 +1024,7 @@ module LangDisp = functor (Lang : LangSig) ->
                 match f.f_name with
                 | Fixed "0" -> print_string "0"
                 | Fixed str when String.length str > 1 && str.[0] = '-' ->
-                    term_list id_thread l;
+                    term_list l;
                     print_string " ";
                     display_idcl CFun (Lang.convert_funname "-");
                     print_string " ";
@@ -1036,7 +1035,7 @@ module LangDisp = functor (Lang : LangSig) ->
                       | FunApp(f',[]) when f' == Terms.zero_cst ->
                           print_string (string_of_int n)
                       | _ ->
-                          term id_thread t';
+                          term t';
                           print_string " ";
                           display_idcl CFun (Lang.convert_funname "+");
                           print_string " ";
@@ -1048,11 +1047,11 @@ module LangDisp = functor (Lang : LangSig) ->
                       match l with
                       | [t1;t2] ->
                           print_string "(";
-                          term id_thread t1;
+                          term t1;
                           print_string " ";
                           display_idcl CFun (Lang.convert_funname s);
                           print_string " ";
-                          term id_thread t2;
+                          term t2;
                           print_string ")"
                       | _ -> Parsing_helper.internal_error __POS__ "infix operators should have 2 arguments"
                     end
@@ -1063,15 +1062,15 @@ module LangDisp = functor (Lang : LangSig) ->
                           print_string "(";
                           display_idcl CKeyword "if";
                           print_string " ";
-                          term id_thread t1;
+                          term t1;
                           print_string " ";
                           display_idcl CKeyword "then";
                           print_string " ";
-                          term id_thread t2;
+                          term t2;
                           print_string " ";
                           display_idcl CKeyword "else";
                           print_string " ";
-                          term id_thread t3;
+                          term t3;
                           print_string ")"
                       | _ -> Parsing_helper.internal_error __POS__ "if-then-else should have 3 arguments"
                     end
@@ -1082,13 +1081,13 @@ module LangDisp = functor (Lang : LangSig) ->
                         if Link.name_args then
                           begin
                             print_string "[";
-                            if (sl = []) || (!Param.tulafale = 1) then term_list id_thread l else name_list id_thread l sl;
+                            if (sl = []) || (!Param.tulafale = 1) then term_list l else name_list l sl;
                             print_string "]"
                           end
                     | Choice ->
                         display_idcl CKeyword (string_of_fsymb f);
                         print_string "[";
-                        term_list id_thread l;
+                        term_list l;
                         print_string "]"
                     | General_var | General_mayfail_var ->
                         display_idcl CFun (string_of_fsymb f)
@@ -1098,15 +1097,15 @@ module LangDisp = functor (Lang : LangSig) ->
                         if (l != []) || (name = "") || not (!Param.typed_frontend) then
                         begin
                           print_string "(";
-                          term_list id_thread l;
+                          term_list l;
                           print_string ")"
                         end
               end
           | Var v ->
               if Link.follow then
                 begin
-                  match v.link.(id_thread) with
-                  | TLink t -> term id_thread t;
+                  match v.link.(0) with
+                  | TLink t -> term t;
                   | VLink b -> display_var b;
                   | NoLink -> display_var v
                   | _ -> Parsing_helper.internal_error __POS__ "unexpected link in display_term_with_links"
@@ -1114,32 +1113,32 @@ module LangDisp = functor (Lang : LangSig) ->
               else
                 display_var v
 
-        and term_list id_thread l = display_list (term id_thread) "," l
+        and term_list l = display_list term "," l
 
-        and name_list id_thread l sl = match (l,sl) with
+        and name_list l sl = match (l,sl) with
           | [],[] -> ()
           | [a],[sa] ->
               if sa <> MUnknown then
                 begin
                   print_string (meaning sa); print_string " = "
                 end;
-              term id_thread a
+              term a
           | (a::l),(sa::sl) ->
               if sa <> MUnknown then
                 begin
                   print_string (meaning sa); print_string " = "
                 end;
-              term id_thread a;
+              term a;
               print_string ",";
-              name_list id_thread l sl
+              name_list l sl
           | _ ->
               Printf.printf "\nPrev meaning:\n";
               display_list (fun s -> print_string (meaning s)) "; " sl;
               Printf.printf "\nArgument:\n";
-              display_list (term id_thread) "; " l;
+              display_list term "; " l;
               Parsing_helper.internal_error __POS__ "prev_inputs_meaning should have the same length as the arguments of the name 2"
 
-        let fact id_thread f =
+        let fact f =
           Lang.wrap_if_necessary ();
           let flist = Terms.fact_list_of_conclusion f in
           display_list_and (function
@@ -1149,55 +1148,55 @@ module LangDisp = functor (Lang : LangSig) ->
                 if t != [] then
                   begin
                     if !Param.typed_frontend then print_string "(";
-                    term_list id_thread t;
+                    term_list t;
                   if !Param.typed_frontend then print_string ")"
                   end) flist
 
-        let ordered_fact id_thread (f,temp_v_op) =
-          fact id_thread f;
+        let ordered_fact (f,temp_v_op) =
+          fact f;
           match temp_v_op with
             | None -> ()
             | Some v ->
                 display_connective (Lang.at_connective);
-                term id_thread (Var v)
+                term (Var v)
 
         (* Collect existential variables in a term, in order to display it *)
 
-        let simple_neq id_thread (t1,t2) =
-          term id_thread t1;
+        let simple_neq (t1,t2) =
+          term t1;
           display_connective Lang.diff_connective;
-          term id_thread t2
+          term t2
 
-        let simple_geq id_thread (t1,n,t2) =
+        let simple_geq (t1,n,t2) =
           let (t1',t2') =
             if n >= 0
             then (Terms.sum_nat_term t1 n), t2
             else t1, Terms.sum_nat_term t2 (-n)
           in
 
-          term id_thread t1';
+          term t1';
           display_connective Lang.geq_connective;
-          term id_thread t2'
+          term t2'
 
-        let simple_is_nat id_thread t =
+        let simple_is_nat t =
           display_idcl CFun "is_nat";
           print_string "(";
-          term id_thread t;
+          term t;
           print_string ")"
 
-        let simple_is_not_nat id_thread t =
+        let simple_is_not_nat t =
           display_idcl CFun "is_not_nat";
           print_string "(";
-          term id_thread t;
+          term t;
           print_string ")"
 
-        let rec constra_neq_rec id_thread = function
+        let rec constra_neq_rec = function
             [] -> print_string "F"
-          | [a] -> simple_neq id_thread a
+          | [a] -> simple_neq a
           | (a::l) ->
-              simple_neq id_thread a;
+              simple_neq a;
               print_string " | ";
-              constra_neq_rec id_thread l
+              constra_neq_rec l
 
         (* Collect general variables in a term, in order to display it *)
 
@@ -1213,7 +1212,7 @@ module LangDisp = functor (Lang : LangSig) ->
             collect_gen_vars accu t1;
             collect_gen_vars accu t2) constra
 
-        let constra id_thread a =
+        let constra a =
           let gen_vars = ref [] in
           collect_gen_vars_constra gen_vars a;
           if (!gen_vars <> []) then
@@ -1225,15 +1224,15 @@ module LangDisp = functor (Lang : LangSig) ->
           if List.length a > 1 then
             begin
               print_string "(";
-              constra_neq_rec id_thread a;
+              constra_neq_rec a;
               print_string ")"
             end
           else
-            constra_neq_rec id_thread a;
+            constra_neq_rec a;
           if (!gen_vars <> []) then
             print_string ")"
 
-        let constraints id_thread c =
+        let constraints c =
           let prev = ref (c.neq <> []) in
           let and_connect l =
             if !prev && l <> []
@@ -1241,43 +1240,43 @@ module LangDisp = functor (Lang : LangSig) ->
             else prev := !prev || l <> []
           in
 
-          display_list_and (constra id_thread) c.neq;
+          display_list_and constra c.neq;
           and_connect c.is_nat;
-          display_list_and (simple_is_nat id_thread) c.is_nat;
+          display_list_and simple_is_nat c.is_nat;
           and_connect c.is_not_nat;
-          display_list_and (simple_is_not_nat id_thread) c.is_not_nat;
+          display_list_and simple_is_not_nat c.is_not_nat;
           and_connect c.geq;
-          display_list_and (simple_geq id_thread) c.geq
+          display_list_and simple_geq c.geq
 
-        let concl ?(id_thread=0) upper concl tag =
+        let concl upper concl tag =
           match tag with
             OutputTag occ :: _ ->
               print_string_opt_cap upper "the message ";
               begin
                 match concl with
                   Pred({p_info = Attacker(n,_)} as p, [v]) ->
-                    term id_thread v;
+                    term v;
                     print_string " may be sent to the attacker";
                     display_phase p
                 | Pred({p_info = Mess(n,_)} as p, [vc;v]) ->
-                    term id_thread v;
+                    term v;
                     print_string " may be sent on channel ";
-                    term id_thread vc;
+                    term vc;
                     display_phase p
                 | Pred({p_info = AttackerBin(n,_)} as p, [v;v']) ->
-                    term id_thread v;
+                    term v;
                     print_string " (resp. ";
-                    term id_thread v';
+                    term v';
                     print_string ") may be sent to the attacker";
                     display_phase p
                 | Pred({p_info = MessBin(n,_)} as p, [vc;v;vc';v']) ->
-                    term id_thread v;
+                    term v;
                     print_string " may be sent on channel ";
-                    term id_thread vc;
+                    term vc;
                     print_string " (resp. message ";
-                    term id_thread v';
+                    term v';
                     print_string " on channel ";
-                    term id_thread vc';
+                    term vc';
                     print_string ")";
                     display_phase p
                 | _ -> Parsing_helper.internal_error __POS__ "Unexpected conclusion for OutputTag"
@@ -1294,24 +1293,24 @@ module LangDisp = functor (Lang : LangSig) ->
               begin
                 match concl with
                   Pred(_, [e]) ->
-                    term id_thread e;
+                    term e;
                     print_string " may be executed at ";
                     Lang.display_occ occ
                 | Pred(p, [e;e']) when p == Param.inj_event_pred ->
-                    term id_thread e;
+                    term e;
                     print_string " may be executed at ";
                     Lang.display_occ occ;
-                    begin match get_session_id id_thread e' with
+                    begin match get_session_id e' with
                       | None -> ()
                       | Some i ->
                           print_string " in session ";
-                          term id_thread i
+                          term i
                       | exception e -> Parsing_helper.internal_error __POS__ "get_session_id failed"
                     end
                 | Pred(p, [e1;e2]) when p == Param.event2_pred ->
-                    term id_thread e1;
+                    term e1;
                     print_string " (resp. ";
-                    term id_thread e2;
+                    term e2;
                     print_string ") may be executed at ";
                     Lang.display_occ occ
                 | _ -> Parsing_helper.internal_error __POS__ "Unexpected conclusion for EventTag"
@@ -1321,14 +1320,14 @@ module LangDisp = functor (Lang : LangSig) ->
               begin
                 match concl with
                   Pred({p_info = InputP(n)} as p, [e]) ->
-                    term id_thread e;
+                    term e;
                     print_string " may be triggered at ";
                     Lang.display_occ occ;
                     display_phase p
                 | Pred({p_info = InputPBin(n)} as p, [e;e']) ->
-                    term id_thread e;
+                    term e;
                     print_string " (resp. ";
-                    term id_thread e';
+                    term e';
                     print_string ") may be triggered at ";
                     Lang.display_occ occ;
                     display_phase p
@@ -1339,14 +1338,14 @@ module LangDisp = functor (Lang : LangSig) ->
               begin
                 match concl with
                 | Pred({p_info = OutputP(n)} as p, [e]) ->
-                    term id_thread e;
+                    term e;
                     print_string " may be triggered at ";
                     Lang.display_occ occ;
                     display_phase p
                 |  Pred({p_info = OutputPBin(n)} as p, [e;e']) ->
-                    term id_thread e;
+                    term e;
                     print_string " (resp. ";
-                    term id_thread e';
+                    term e';
                     print_string ") may be triggered at ";
                     Lang.display_occ occ;
                     display_phase p
@@ -1357,13 +1356,13 @@ module LangDisp = functor (Lang : LangSig) ->
               begin
                 match concl with
                   Pred({p_info = Table(n)} as p, [v]) ->
-                    term id_thread v;
+                    term v;
                     print_string " may be inserted in a table";
                     display_phase p
                 | Pred({p_info = TableBin(n)} as p, [v;v']) ->
-                    term id_thread v;
+                    term v;
                     print_string " (resp. ";
-                    term id_thread v';
+                    term v';
                     print_string ") may be inserted in a table";
                     display_phase p
                 | _ -> Parsing_helper.internal_error __POS__ "Unexpected conclusion for InsertTag"
@@ -1474,31 +1473,31 @@ module LangDisp = functor (Lang : LangSig) ->
             if !Param.typed_frontend then print_string ")"
           end)
 
-    let display_hyp id_thread h = display_list_and (display_fact id_thread) h
+    let display_hyp h = display_list_and display_fact h
 
     let display_constraints c = Std.constraints c
 
-    let display_rule_nonewline id_thread (hyp, concl, hist, constra) =
-      display_constraints id_thread constra;
+    let display_rule_nonewline (hyp, concl, hist, constra) =
+      display_constraints constra;
       if  (not (Terms.is_true_constraints constra)) && (hyp != []) then
         display_connective (Lang.and_connective());
-      display_hyp id_thread hyp;
+      display_hyp hyp;
       if (not (Terms.is_true_constraints constra)) || (hyp != []) then
         display_connective Lang.impl_connective;
       display_fact concl
 
-    let display_rule id_thread r =
-      display_rule_nonewline id_thread r;
+    let display_rule r =
+      display_rule_nonewline r;
       newline()
 
-    let display_rule_indep id_thread r = auto_cleanup_display (fun () -> display_rule id_thread r)
+    let display_rule_indep r = auto_cleanup_display (fun () -> display_rule r)
 
     let display_order = function
       | Less -> "strictly before"
       | Leq -> "before"
 
-    let display_ordered_rule id_thread r =
-      display_rule id_thread r.rule;
+    let display_ordered_rule r =
+      display_rule r.rule;
       let (lmax_less,lmax_leq,l_spec,_) = 
         List.fold_left (fun (acc_less,acc_leq,acc_spec,i) (ord_fun,_) -> match ord_fun with
           | CONone -> (acc_less,acc_leq,acc_spec,i+1)
@@ -1569,9 +1568,9 @@ module LangDisp = functor (Lang : LangSig) ->
 
     let display_ordered_rule_indep r = auto_cleanup_display (fun () -> display_ordered_rule r)
 
-    let display_inside_query id_thread hyp1_preds' constr1' hyp2_preds_block' hyp2_preds' =
+    let display_inside_query hyp1_preds' constr1' hyp2_preds_block' hyp2_preds' =
       print_string "Inside query: trying to prove ";
-      display_hyp id_thread hyp1_preds';
+      display_hyp hyp1_preds';
       if (not (Terms.is_true_constraints constr1')) && (hyp1_preds' != []) then
         display_connective (Lang.and_connective());
       display_constraints constr1';
@@ -1579,16 +1578,16 @@ module LangDisp = functor (Lang : LangSig) ->
       if hyp2_preds_normal_block != [] then
         begin
           print_string " from ";
-          display_hyp id_thread hyp2_preds_normal_block
+          display_hyp hyp2_preds_normal_block
         end;
       newline()
 
-    let display_inside_query_success id_thread constr1'' =
+    let display_inside_query_success constr1'' =
       print_string "Inside query: proof succeeded";
       if not (Terms.is_true_constraints constr1'') then
         begin
           print_string " provided ";
-          WithLinks.constraints id_thread constr1''
+          WithLinks.constraints constr1''
         end;
       newline()
 
@@ -1907,11 +1906,11 @@ module LangDisp = functor (Lang : LangSig) ->
           display_item_list display_eq (List.rev l)
         end
 
-    let display_rule_abbrev id_thread rule =
+    let display_rule_abbrev rule =
       auto_cleanup_display (fun () ->
         if !Param.abbreviate_clauses then
           begin
-            let abbrev_table,rule' = abbreviate_rule id_thread rule in
+            let abbrev_table,rule' = abbreviate_rule rule in
             current_abbrev_table := abbrev_table;
             display_rule rule';
             current_abbrev_table := [];
@@ -1920,11 +1919,11 @@ module LangDisp = functor (Lang : LangSig) ->
         else display_rule rule
       )
 
-    let display_ordered_rule_abbrev id_thread rule =
+    let display_ordered_rule_abbrev rule =
       auto_cleanup_display (fun () ->
         if !Param.abbreviate_clauses then
           begin
-            let abbrev_table,rule' = abbreviate_rule id_thread rule.rule in
+            let abbrev_table,rule' = abbreviate_rule rule.rule in
             current_abbrev_table := abbrev_table;
             display_ordered_rule { rule with rule = rule' };
             current_abbrev_table := [];
@@ -1933,11 +1932,11 @@ module LangDisp = functor (Lang : LangSig) ->
         else display_ordered_rule rule
       )
 
-    let display_rule_num_abbrev id_thread rule =
+    let display_rule_num_abbrev rule =
       auto_cleanup_display (fun () ->
         if !Param.abbreviate_clauses then
           begin
-            let abbrev_table,rule' = abbreviate_rule id_thread rule in
+            let abbrev_table,rule' = abbreviate_rule rule in
             current_abbrev_table := abbrev_table;
             display_rule_num rule';
             current_abbrev_table := [];
@@ -3409,16 +3408,16 @@ module LangDisp = functor (Lang : LangSig) ->
           newline();
           Parsing_helper.internal_error __POS__ "Unexpected hypothesis 2"
 
-    let display_constraints id_thread c =
+    let display_constraints c =
       if not (Terms.is_true_constraints c) then
         begin
           print_string "We have ";
-          WithLinks.constraints id_thread c;
+          WithLinks.constraints c;
           print_string ".";
           newline()
         end
 
-    let display_clause_explain id_thread n lbl hyp_num_list hl constra concl =
+    let display_clause_explain n lbl hyp_num_list hl constra concl =
       match lbl with
         Rn _ ->
           print_string "The attacker creates the new name ";
@@ -3452,28 +3451,28 @@ module LangDisp = functor (Lang : LangSig) ->
           newline()
       | TestDeterministic(f) ->
           display_attacker_hyp hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string "Test whether ";
           display_function_name f;
           print_string " is deterministic.";
           newline()
       | TestTotal(f) ->
           display_attacker_hyp hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string "Test whether ";
           display_function_name f;
           print_string " is total.";
           newline()
       | TestApply(f,p) ->
           display_attacker_hyp hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string "The attacker tests whether ";
           display_function_name f;
           print_string " is applicable, which may allow it to distinguish cases.";
           newline()
       | TestEq(p) ->
           display_attacker_hyp hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string "The attacker tests equality between the two terms he knows, which may allow it to distinguish cases.";
           newline()
       | Rl(p,p') ->
@@ -3552,7 +3551,7 @@ module LangDisp = functor (Lang : LangSig) ->
                       newline()
                   | _ -> Parsing_helper.internal_error __POS__ "Unexpected hypothesis for TestComm (2)"
                 end;
-                display_constraints id_thread constra;
+                display_constraints constra;
                 print_string "So the attacker may know whether the communication succeeds, which may allow it to distinguish cases.";
                 newline()
             | _ -> Parsing_helper.internal_error __POS__ "Unexpected hypothesis for TestComm"
@@ -3571,7 +3570,7 @@ module LangDisp = functor (Lang : LangSig) ->
           end
       | LblEquiv ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string "Using a clause coming from a";
           display_connective Lang.eq1_connective;
           print_string "or";
@@ -3580,7 +3579,7 @@ module LangDisp = functor (Lang : LangSig) ->
           newline()
       | LblClause ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string "Using a clause given in the input file,";
           newline()
       | LblEq ->
@@ -3594,7 +3593,7 @@ module LangDisp = functor (Lang : LangSig) ->
           else
             begin
               display_hyp (List.map (fun t -> t.thefact) hl) hyp_num_list tags;
-              display_constraints id_thread constra;
+              display_constraints constra;
               print_string "So ";
               WithLinks.concl false concl tags
             end;
@@ -3602,27 +3601,27 @@ module LangDisp = functor (Lang : LangSig) ->
           newline()
       | LblNone ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string ("Using the clause number " ^ (string_of_int n) ^ ",");
           newline()
       | Goal ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string ("The goal is reached, represented in the following fact:");
           newline()
       | GoalCombined ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string ("The goals are reached, combined in the following fact:");
           newline()
       | GoalInjective ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string ("The goals for injectivity are reached, combined in the following fact:");
           newline()
       | GenerationNested ->
           display_hyp_basic hyp_num_list hl;
-          display_constraints id_thread constra;
+          display_constraints constra;
           print_string ("Generating a clause for testing the nested query,");
           newline()
 
