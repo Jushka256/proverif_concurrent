@@ -694,6 +694,7 @@ let new_name p s t =
   Terms.create_name ~orig:false s ([], t) p
 
 let rec get_name_charac t =
+  let is_TLink lst = match lst.(0) with TLink _ -> true | _ -> false in
   match t with
     FunApp({f_cat = Name { prev_inputs_meaning = sl}} as f,l) ->
       let rec find_first_sid sl l =
@@ -703,7 +704,7 @@ let rec get_name_charac t =
 	    begin
 	      match sid with
 		FunApp(fsid,[]) -> [f;fsid]
-	      | Var {link = TLink t} -> find_first_sid [sid_meaning] [t]
+	      | Var {link = lst} when is_TLink lst -> let TLink t = lst.(0) in find_first_sid [sid_meaning] [t]
 	      | _ -> Parsing_helper.internal_error __POS__ "a session identifier should be a function symbol without argument"
 	    end
 	| (_::sl', _::l') ->
@@ -711,12 +712,12 @@ let rec get_name_charac t =
 	| _ -> Parsing_helper.internal_error __POS__ "different length in find_first_sid"
       in
       find_first_sid sl l
-  | Var { link = TLink t } -> get_name_charac t
+  | Var { link = lst } when is_TLink lst -> let TLink t = lst.(0) in get_name_charac t
   | _ -> Parsing_helper.internal_error __POS__ "unexpected term in get_name_charac"
 
 module Rev_name_tab = Hashtbl.Make (struct
   type t = Types.term
-  let equal = equal_terms_modulo
+  let equal  = equal_terms_modulo
   let hash p =  Hashtbl.hash (get_name_charac p)
 end)
 
@@ -733,7 +734,7 @@ let add_name_for_pat t =
   with Not_found ->
     let n = new_name true (
       match t with
-	FunApp(f,_) -> Terms.get_fsymb_basename f
+	      FunApp(f,_) -> Terms.get_fsymb_basename f
       |	_ -> "a") (Terms.get_term_type t)
     in
     (*
@@ -852,55 +853,55 @@ let rec process_subst p n1 n2 =
 
 (* Copy a process *)
 
-let copy_binder b =
+let copy_binder id_thread b =
   let b' = Terms.copy_var ~rename:false b in
-  match b.link with
+  match b.link.(id_thread) with
     NoLink ->
       Terms.link b (VLink b');
       b'
   | _ -> Parsing_helper.internal_error __POS__ "unexpected link in copy_binder"
 
-let update_env env =
+let update_env id_thread env =
   Stringmap.StringMap.map (function
       (EVar b) as x ->
 	begin
-	match b.link with
+	match b.link.(id_thread) with
 	  VLink b' -> EVar b'
 	| _ -> x
 	end
     | x -> x) env
 
-let update_args_opt lopt =
+let update_args_opt id_thread lopt =
   match lopt with
     None -> None
   | Some l -> Some (List.map (fun b ->
 	begin
-	match b.link with
+	match b.link.(id_thread) with
 	  VLink b' -> b'
 	| _ -> b
 	end) l)
 
-let rec copy_pat = function
-    PatVar b -> PatVar (copy_binder b)
-  | PatTuple(f,l) -> PatTuple(f, List.map copy_pat l)
+let rec copy_pat id_thread = function
+    PatVar b -> PatVar (copy_binder id_thread b)
+  | PatTuple(f,l) -> PatTuple(f, List.map (copy_pat id_thread) l)
   | PatEqual(t) -> PatEqual (copy_term2 t)
 
-let rec copy_process = function
+let rec copy_process ?(id_thread=0) = function
     Nil -> Nil
   | NamedProcess(s, tl, p) ->
-      NamedProcess(s, List.map (fun t -> copy_term2 t) tl, copy_process p)
-  | Par(p1,p2) -> Par(copy_process p1, copy_process p2)
-  | Restr(n,(args,env),p,occ) -> Restr(n, (update_args_opt args,update_env env), copy_process p,occ)
-  | Repl(p,occ) -> Repl(copy_process p, occ)
-  | Let(pat, t, p, q, occ) -> let pat' = copy_pat pat in Let(pat', copy_term2 t, copy_process p, copy_process q, occ)
-  | Input(t, pat, p, occ) -> let pat' = copy_pat pat in Input(copy_term2 t, pat', copy_process p, occ)
-  | Output(tc,t,p, occ) -> Output(copy_term2 tc, copy_term2 t, copy_process p, occ)
-  | Test(t,p,q,occ) -> Test(copy_term2 t, copy_process p, copy_process q,occ)
-  | Event(t, (args, env), p, occ) -> Event(copy_term2 t, (update_args_opt args,update_env env), copy_process p, occ)
-  | Insert(t, p, occ) -> Insert(copy_term2 t, copy_process p, occ)
-  | Get(pat, t, p, q, occ) -> let pat' = copy_pat pat in Get(pat', copy_term2 t, copy_process p, copy_process q, occ)
-  | Phase(n,p,occ) -> Phase(n, copy_process p,occ)
-  | LetFilter(bl, f, p, q, occ) -> let bl' = List.map copy_binder bl in LetFilter(bl', copy_fact2 f, copy_process p, copy_process q, occ)
+      NamedProcess(s, List.map (fun t -> copy_term2 t) tl, copy_process ~id_thread p)
+  | Par(p1,p2) -> Par(copy_process ~id_thread p1, copy_process ~id_thread p2)
+  | Restr(n,(args,env),p,occ) -> Restr(n, (update_args_opt id_thread args,update_env id_thread env), copy_process ~id_thread p,occ)
+  | Repl(p,occ) -> Repl(copy_process ~id_thread p, occ)
+  | Let(pat, t, p, q, occ) -> let pat' = copy_pat id_thread pat in Let(pat', copy_term2 t, copy_process ~id_thread p, copy_process ~id_thread q, occ)
+  | Input(t, pat, p, occ) -> let pat' = copy_pat id_thread pat in Input(copy_term2 t, pat', copy_process ~id_thread p, occ)
+  | Output(tc,t,p, occ) -> Output(copy_term2 tc, copy_term2 t, copy_process ~id_thread p, occ)
+  | Test(t,p,q,occ) -> Test(copy_term2 t, copy_process ~id_thread p, copy_process ~id_thread q,occ)
+  | Event(t, (args, env), p, occ) -> Event(copy_term2 t, (update_args_opt id_thread args,update_env id_thread env), copy_process ~id_thread p, occ)
+  | Insert(t, p, occ) -> Insert(copy_term2 t, copy_process ~id_thread p, occ)
+  | Get(pat, t, p, q, occ) -> let pat' = copy_pat id_thread pat in Get(pat', copy_term2 t, copy_process ~id_thread p, copy_process ~id_thread q, occ)
+  | Phase(n,p,occ) -> Phase(n, copy_process ~id_thread p,occ)
+  | LetFilter(bl, f, p, q, occ) -> let bl' = List.map (copy_binder id_thread) bl in LetFilter(bl', copy_fact2 f, copy_process ~id_thread p, copy_process ~id_thread q, occ)
   | Barrier _ | AnnBarrier _ ->
      Parsing_helper.internal_error __POS__ "Barriers should not appear here (15)"
 
@@ -912,51 +913,51 @@ let rec copy_process = function
    in their left/right-hand sides.
    Also close facts of the derivation tree. *)
 
-let rec close_term = function
+let rec close_term ?(id_thread=0) = function
     Var v ->
       begin
-        match v.link with
+        match v.link.(id_thread) with
           NoLink ->
             let name = add_new_name v.btype in
             let valname = FunApp(name, []) in
             Terms.link v (TLink valname)
-        | TLink t -> close_term t
+        | TLink t -> close_term ~id_thread t
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in close_term (1)"
       end
-  | FunApp(f,l) -> List.iter close_term l
+  | FunApp(f,l) -> List.iter (close_term ~id_thread) l
 
-let close_fact = function
-    Pred(p,l) -> List.iter close_term l
+let close_fact id_thread = function
+    Pred(p,l) -> List.iter (close_term ~id_thread) l
 
 (* We assume here that natural number variables have already been closed.
    Thus we don't need to go through is_nat and geq predicates. *)
-let close_constraints constra =
-  List.iter (List.iter (fun (t1,t2) -> close_term t1; close_term t2)) constra.neq;
-  List.iter close_term constra.is_not_nat
+let close_constraints ?(id_thread=0) constra =
+  List.iter (List.iter (fun (t1,t2) -> close_term ~id_thread t1; close_term ~id_thread t2)) constra.neq;
+  List.iter (close_term ~id_thread) constra.is_not_nat
 
 
-let close_destr_constraints constra =
-  Terms.iter_constraints close_term constra
+let close_destr_constraints ?(id_thread=0) constra =
+  Terms.iter_constraints (close_term ~id_thread) constra
 
 
 (* [close_tree] should be applied after instantiation of natural variables. *)
-let rec close_tree tree =
-  close_fact tree.thefact;
+let rec close_tree ?(id_thread=0) tree =
+  close_fact id_thread tree.thefact;
 
   (* Close description s*)
   match tree.desc with
     FHAny | FEmpty | FRemovedBySimplification | FRemovedWithProof _ -> ()
-  | FEquation son -> close_tree son
+  | FEquation son -> close_tree ~id_thread son
   | FRule(_,tags,constra,sons,added_dl) ->
-      List.iter close_tree sons;
-      close_constraints constra;
+      List.iter (close_tree ~id_thread) sons;
+      close_constraints ~id_thread constra;
       List.iter (fun (_,a_constra,fact_l) ->
-        close_constraints a_constra;
-        List.iter close_tree fact_l
+        close_constraints ~id_thread a_constra;
+        List.iter (close_tree ~id_thread) fact_l
       ) added_dl;
       
       match tags with
-        ProcessRule (hsl,nl) -> List.iter close_term nl
+        ProcessRule (hsl,nl) -> List.iter (close_term ~id_thread) nl
       | _ -> ()
 
 (* Close terms for testing equality modulo of open terms
@@ -964,27 +965,27 @@ let rec close_tree tree =
    in rev_name_tab since these names will be immediately forgotten
    after the equality test. *)
 
-let rec close_term_tmp = function
+let rec close_term_tmp id_thread = function
     Var v ->
       begin
-         match v.link with
+         match v.link.(id_thread) with
            NoLink ->
             let name = new_name false "a" v.btype in
             let valname = FunApp(name, []) in
             Terms.link v (TLink valname)
-         | TLink t -> close_term_tmp t
+         | TLink t -> close_term_tmp id_thread t
          | _ -> Parsing_helper.internal_error __POS__ "unexpected link in close_term (2)"
       end
-  | FunApp(f,l) -> List.iter close_term_tmp l
+  | FunApp(f,l) -> List.iter (close_term_tmp id_thread) l
 
 (* Equality of terms modulo the equational theory
    Works for terms that may not be closed.  *)
-let equal_open_terms_modulo t1 t2 =
+let equal_open_terms_modulo ?(id_thread=0) t1 t2 =
   if TermsEq.hasEquations() then
     try
       auto_cleanup (fun () ->
-        close_term_tmp t1;
-        close_term_tmp t2;
+        close_term_tmp id_thread t1;
+        close_term_tmp id_thread t2;
         TermsEq.unify_modulo (fun () -> ()) t1 t2);
       true
     with Unify ->
@@ -995,16 +996,16 @@ let equal_open_terms_modulo t1 t2 =
 (* Equality of facts modulo the equational theory
    Works for facts that may not be closed. Note that the equality
    of environments for Out facts is not verified *)
-let equal_facts_modulo f1 f2 =
+let equal_facts_modulo ?(id_thread=0) f1 f2 =
   match f1, f2 with
-    | Pred(p1,[t1;_]), Pred(p2,[t2;_]) when p1 == p2 && Param.inj_event_pred_block == p1 -> equal_open_terms_modulo t1 t2
-    | Pred(p1,l1), Pred(p2,l2) -> (p1 == p2) && (List.for_all2 equal_open_terms_modulo l1 l2)
+    | Pred(p1,[t1;_]), Pred(p2,[t2;_]) when p1 == p2 && Param.inj_event_pred_block == p1 -> equal_open_terms_modulo ~id_thread t1 t2
+    | Pred(p1,l1), Pred(p2,l2) -> (p1 == p2) && (List.for_all2 (equal_open_terms_modulo ~id_thread) l1 l2)
 
 (* Close constraints. Also uses close_term_tmp since the
    names do not need to be registered in Rev_name_tab.
    *)
 
-let close_constraints = Terms.iter_constraints close_term_tmp
+let close_constraints ?(id_thread=0) = Terms.iter_constraints (close_term_tmp id_thread)
 
 (* Collect constraints that occur in a derivation tree *)
 
@@ -1035,10 +1036,10 @@ let instantiate_natural_predicates f_next tree =
 
 (* Copy a closed term *)
 
-let rec copy_closed = function
-    FunApp(f,l) -> FunApp(f, List.map copy_closed l)
-  | Var v -> match v.link with
-      TLink l -> copy_closed l
+let rec copy_closed ?(id_thread=0) = function
+    FunApp(f,l) -> FunApp(f, List.map (copy_closed ~id_thread) l)
+  | Var v -> match v.link.(id_thread) with
+      TLink l -> copy_closed ~id_thread l
     | _ -> Parsing_helper.internal_error __POS__ "unexpected link in copy_closed"
 
 let non_syntactic f =
@@ -1046,23 +1047,23 @@ let non_syntactic f =
     Syntactic f' -> f'
   | _ -> f
 
-let rec copy_closed_remove_syntactic = function
- | FunApp(f,l) -> FunApp(non_syntactic f, List.map copy_closed_remove_syntactic l)
+let rec copy_closed_remove_syntactic ?(id_thread=0) = function
+ | FunApp(f,l) -> FunApp(non_syntactic f, List.map (copy_closed_remove_syntactic ~id_thread) l)
  | Var v ->
-     match v.link with
-       TLink l -> copy_closed_remove_syntactic l
+     match v.link.(id_thread) with
+       TLink l -> copy_closed_remove_syntactic ~id_thread l
      | _ -> Parsing_helper.internal_error __POS__ "unexpected link in copy_closed"
 
 (* Reverse-apply a name substitution
    The pattern must be closed. *)
 
-let rec rev_name_subst = function
+let rec rev_name_subst ?(id_thread=0 )= function
     Var v ->
       begin
-        match v.link with
+        match v.link.(id_thread) with
           TLink t ->
-            let t' = rev_name_subst t in
-            v.link <- TLink2 t'; (* Store the image of the translated term, to avoid redoing work *)
+            let t' = rev_name_subst ~id_thread t in
+            v.link.(id_thread) <- TLink2 t'; (* Store the image of the translated term, to avoid redoing work *)
             t'
         | TLink2 t' -> t'
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in rev_name_subst"
@@ -1071,71 +1072,74 @@ let rec rev_name_subst = function
       let f = non_syntactic f in
       match f.f_cat with
         Name _ ->
-          let t' = FunApp(f, rev_name_subst_list l) in
+          let t' = FunApp(f, rev_name_subst_list ~id_thread l) in
           FunApp(add_name_for_pat t',[])
-      | _ -> (*hash_cons*) (FunApp(f, rev_name_subst_list l))
+      | _ -> (*hash_cons*) (FunApp(f, rev_name_subst_list ~id_thread l))
 
-and rev_name_subst_list l = List.map rev_name_subst l
+and rev_name_subst_list ?(id_thread=0) l = List.map (rev_name_subst ~id_thread) l
 
 (* let rev_name_subst = Profile.f1 "rev_name_subst" rev_name_subst *)
 
 (* let rev_name_subst_list = Profile.f1 "rev_name_subst_list" rev_name_subst_list *)
 
-let rev_name_subst_fact = function
-    Pred(p,l) -> Pred(p, rev_name_subst_list l)
+let rev_name_subst_fact ?(id_thread=0)= function
+    Pred(p,l) -> Pred(p, rev_name_subst_list ~id_thread l)
 
 (* Check if a term is an allowed channel *)
 
-let rec follow_link = function
-    Var { link = TLink t } -> follow_link t
-  | Var { link = TLink2 t } -> t
+let rec follow_link ?(id_thread=0) = 
+  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
+  let is_TLink2 lst = match lst.(id_thread) with TLink2 _ -> true | _ -> false in
+  function
+    Var { link = lst } when is_TLink lst -> let TLink t = lst.(id_thread) in follow_link ~id_thread t
+  | Var { link = lst } when is_TLink2 lst -> let TLink2 t = lst.(id_thread) in t
   | t -> t
 
-let rec close_term_collect_links links = function
+let rec close_term_collect_links id_thread links = function
     Var v ->
       begin
-        match v.link with
+        match v.link.(id_thread) with
           NoLink ->
             let name = add_new_name v.btype in
             let valname = FunApp(name, []) in
             Terms.link v (TLink valname);
-            links := (v,v.link) :: (!links);
+            links := (v,v.link.(id_thread)) :: (!links);
         | TLink t ->
             if not (List.exists (fun (v',_) -> v == v') (!links)) then
                (* If v is in links, we have already done this, so no need to redo it *)
               begin
-                links := (v,v.link) :: (!links);
-                close_term_collect_links links t
+                links := (v,v.link.(id_thread)) :: (!links);
+                close_term_collect_links id_thread links t
               end
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in close_term (3)"
       end
-  | FunApp(f,l) -> List.iter (close_term_collect_links links) l
+  | FunApp(f,l) -> List.iter (close_term_collect_links id_thread links) l
 
-let close_fact_collect_links links = function
-    Pred(p,l) -> List.iter (close_term_collect_links links) l
+let close_fact_collect_links id_thread links = function
+    Pred(p,l) -> List.iter (close_term_collect_links id_thread links) l
 
 (* We assume here that natural number variables have already been closed.
    However we still need to go through the natural number predicates to collect them. *)
-let close_constraints_collect_links link constra =
-  Terms.iter_constraints (close_term_collect_links link) constra
+let close_constraints_collect_links id_thread link constra =
+  Terms.iter_constraints (close_term_collect_links id_thread link) constra
 
-let rec close_tree_collect_links links tree =
-  close_fact_collect_links links tree.thefact;
+let rec close_tree_collect_links ?(id_thread=0) links tree =
+  close_fact_collect_links id_thread links tree.thefact;
 
   match tree.desc with
     FHAny | FEmpty | FRemovedWithProof _ | FRemovedBySimplification -> ()
-  | FEquation son -> close_tree_collect_links links son
+  | FEquation son -> close_tree_collect_links ~id_thread links son
   | FRule(_,tags,constra,sons,added_dl) ->
-      List.iter (close_tree_collect_links links) sons;
-      close_constraints_collect_links links constra;
+      List.iter (close_tree_collect_links ~id_thread links) sons;
+      close_constraints_collect_links id_thread links constra;
 
       List.iter (fun (_,a_constra,factl) ->
-        close_constraints_collect_links links a_constra;
-        List.iter (close_tree_collect_links links) factl
+        close_constraints_collect_links id_thread links a_constra;
+        List.iter (close_tree_collect_links ~id_thread links) factl
       ) added_dl;
       
       match tags with
-        ProcessRule (hsl,nl) -> List.iter (close_term_collect_links links) nl
+        ProcessRule (hsl,nl) -> List.iter (close_term_collect_links id_thread links) nl
       |        _ -> ()
 
 (* Compute the phase number of a predicate *)
@@ -1218,61 +1222,61 @@ let reduction_check_several_patterns occ =
    on original queries meaning they can contain time variables.
 *)
 
-let rec check_delayed_names_t = function
+let rec check_delayed_names_t id_thread = function
     Var v ->
       begin
-	match v.link with
+	match v.link.(id_thread) with
 	  PGLink f ->
 	    let t' = f() in
-	    v.link <- TLink t';
+	    v.link.(id_thread) <- TLink t';
 	    t'
 	| TLink t -> t
 	| NoLink -> Var v
 	| _ -> Parsing_helper.internal_error __POS__ "unexpected link in check_delayed_names_t"
       end
-  | FunApp(f,l) -> FunApp(f, List.map check_delayed_names_t l)
+  | FunApp(f,l) -> FunApp(f, List.map (check_delayed_names_t id_thread) l)
 
-let check_delayed_names_te (t,ext) = (check_delayed_names_t t, ext)
+let check_delayed_names_te id_thread (t,ext) = (check_delayed_names_t id_thread t, ext)
 
-let check_delayed_names_t_op = function
+let check_delayed_names_t_op id_thread = function
   | None -> None
-  | Some t -> Some (check_delayed_names_t t)
+  | Some t -> Some (check_delayed_names_t id_thread t)
 
-let check_delayed_names_te_op = function
+let check_delayed_names_te_op id_thread = function
   | None -> None
-  | Some t -> Some (check_delayed_names_te t)
+  | Some t -> Some (check_delayed_names_te id_thread t)
 
-let check_delayed_names_e = function
-    QSEvent(b,ord_data,occ,t) -> QSEvent(b,ord_data,check_delayed_names_t_op occ,check_delayed_names_t t)
-  | QSEvent2(ord_data,t1,t2) -> QSEvent2(ord_data,check_delayed_names_t t1, check_delayed_names_t t2)
-  | QFact(p,ord_data,tl) -> QFact(p,ord_data, List.map check_delayed_names_t tl)
-  | QNeq(t1,t2) -> QNeq(check_delayed_names_te t1, check_delayed_names_te t2)
-  | QEq(t1,t2) -> QEq(check_delayed_names_te t1, check_delayed_names_te t2)
-  | QGeq(t1,t2) -> QGeq(check_delayed_names_te t1, check_delayed_names_te t2)
-  | QGr(t1,t2) -> QGr(check_delayed_names_te t1, check_delayed_names_te t2)
-  | QIsNat(t) -> QIsNat(check_delayed_names_t t)
-  | QMax(t,args) -> QMax(check_delayed_names_t t,List.map check_delayed_names_t args)
-  | QMaxq(t,args) -> QMaxq(check_delayed_names_t t,List.map check_delayed_names_t args)
+let check_delayed_names_e id_thread = function
+    QSEvent(b,ord_data,occ,t) -> QSEvent(b,ord_data,check_delayed_names_t_op id_thread occ,check_delayed_names_t id_thread t)
+  | QSEvent2(ord_data,t1,t2) -> QSEvent2(ord_data,check_delayed_names_t id_thread t1, check_delayed_names_t id_thread t2)
+  | QFact(p,ord_data,tl) -> QFact(p,ord_data, List.map (check_delayed_names_t id_thread) tl)
+  | QNeq(t1,t2) -> QNeq(check_delayed_names_te id_thread t1, check_delayed_names_te id_thread t2)
+  | QEq(t1,t2) -> QEq(check_delayed_names_te id_thread t1, check_delayed_names_te id_thread t2)
+  | QGeq(t1,t2) -> QGeq(check_delayed_names_te id_thread t1, check_delayed_names_te id_thread t2)
+  | QGr(t1,t2) -> QGr(check_delayed_names_te id_thread t1, check_delayed_names_te id_thread t2)
+  | QIsNat(t) -> QIsNat(check_delayed_names_t id_thread t)
+  | QMax(t,args) -> QMax(check_delayed_names_t id_thread t,List.map (check_delayed_names_t id_thread) args)
+  | QMaxq(t,args) -> QMaxq(check_delayed_names_t id_thread t,List.map (check_delayed_names_t id_thread) args)
   
 
-let rec check_delayed_names_r = function
+let rec check_delayed_names_r id_thread = function
     Before(evl,concl_q) ->
-      Before(List.map check_delayed_names_e evl, check_delayed_names_c concl_q)
+      Before(List.map (check_delayed_names_e id_thread) evl, check_delayed_names_c id_thread concl_q)
 
-and check_delayed_names_c = function
+and check_delayed_names_c id_thread = function
   | QTrue -> QTrue
   | QFalse -> QFalse
-  | QEvent ev -> QEvent(check_delayed_names_e ev)
-  | NestedQuery q -> NestedQuery(check_delayed_names_r q)
-  | QAnd(concl1,concl2) -> QAnd(check_delayed_names_c concl1, check_delayed_names_c concl2)
-  | QOr(concl1,concl2) -> QOr(check_delayed_names_c concl1, check_delayed_names_c concl2)
-  | QConstraints q -> QConstraints(Terms.map_constraints check_delayed_names_t q)
+  | QEvent ev -> QEvent(check_delayed_names_e id_thread ev)
+  | NestedQuery q -> NestedQuery(check_delayed_names_r id_thread q)
+  | QAnd(concl1,concl2) -> QAnd(check_delayed_names_c id_thread concl1, check_delayed_names_c id_thread concl2)
+  | QOr(concl1,concl2) -> QOr(check_delayed_names_c id_thread concl1, check_delayed_names_c id_thread concl2)
+  | QConstraints q -> QConstraints(Terms.map_constraints (check_delayed_names_t id_thread) q)
   
-let check_delayed_names = function
+let check_delayed_names ?(id_thread=0) = function
     ((PutBegin _ | QSecret _), _) as q -> q
-  | RealQuery (q,l), ext -> RealQuery(check_delayed_names_r q,l), ext
+  | RealQuery (q,l), ext -> RealQuery(check_delayed_names_r id_thread q,l), ext
 
-let check_delayed_names_ax (ax,ext) = (check_delayed_names_r ax, ext)
+let check_delayed_names_ax ?(id_thread=0) (ax,ext) = (check_delayed_names_r id_thread ax, ext)
 
 (* Occurence name *)
 

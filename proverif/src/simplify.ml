@@ -250,7 +250,7 @@ type copy_info_t =
     { add_in_glob_table : ((string, funsymb) Hashtbl.t * (string, term) Hashtbl.t) option;
       barrier_add_prefix : string }
     
-let copy_binder copy_info b =
+let copy_binder id_thread copy_info b =
   let b' = Terms.copy_var b in
   begin
     match copy_info.add_in_glob_table with
@@ -259,23 +259,23 @@ let copy_binder copy_info b =
 	  Hashtbl.add glob_table_var_name b.vname.orig_name (Var b')
     | None -> ()
   end;
-  match b.link with
+  match b.link.(id_thread) with
     NoLink ->
       Terms.link b (TLink (Var b'));
       b'
   | _ -> Parsing_helper.internal_error __POS__ ("unexpected link in copy_binder " ^ (Display.string_of_binder b))
 
-let update_env env =
+let update_env id_thread env =
   Stringmap.StringMap.map (function
       (EVar b) as x ->
 	begin
-	match b.link with
+	match b.link.(id_thread) with
 	  TLink (Var b') -> EVar b'
 	| _ -> x
 	end
     | x -> x) env
 
-let update_args_opt lopt =
+let update_args_opt id_thread lopt =
   match lopt with
     None -> None, []
   | Some l ->
@@ -283,7 +283,7 @@ let update_args_opt lopt =
       let new_args_opt =
 	Some (List.map (fun b ->
 	begin
-	match b.link with
+	match b.link.(id_thread) with
 	  TLink (Var b') -> b'
 	| TLink (FunApp(f, [Var b'])) when Terms.is_undo_catch_fail f -> b'
 	| NoLink -> b
@@ -297,19 +297,19 @@ let update_args_opt lopt =
       in
       (new_args_opt, !lets)
 
-let rec copy_pat copy_info = function
-    PatVar b -> PatVar (copy_binder copy_info b)
-  | PatTuple(f,l) -> PatTuple(f, List.map (copy_pat copy_info) l)
+let rec copy_pat id_thread copy_info = function
+    PatVar b -> PatVar (copy_binder id_thread copy_info b)
+  | PatTuple(f,l) -> PatTuple(f, List.map (copy_pat id_thread copy_info) l)
   | PatEqual(t) -> PatEqual (Terms.copy_term3 t)
 
-let rec copy_process copy_info = function
+let rec copy_process id_thread copy_info = function
     Nil -> Nil
   | Par(p1,p2) ->
-      let p1' = copy_process copy_info p1 in
-      let p2' = copy_process copy_info p2 in
+      let p1' = copy_process id_thread  copy_info p1 in
+      let p2' = copy_process id_thread  copy_info p2 in
       Par(p1', p2')
   | Restr(n,(args,env),p,occ) ->
-      let (new_args,lets) = update_args_opt args in
+      let (new_args,lets) = update_args_opt id_thread args in
       let n' = rename_private_name n in
       begin
 	match copy_info.add_in_glob_table with
@@ -328,80 +328,80 @@ let rec copy_process copy_info = function
       end;
       Terms.put_lets (fun () -> 
 	let occ' = new_occurrence() in
-        Restr(n', (new_args,update_env env),
-	      Reduction_helper.process_subst (copy_process copy_info p) n (FunApp(n',[])), occ')
+        Restr(n', (new_args,update_env id_thread env),
+	      Reduction_helper.process_subst (copy_process id_thread  copy_info p) n (FunApp(n',[])), occ')
 	  ) lets
   | Repl(p,occ) ->
       let occ' = new_occurrence() in
-      Repl(copy_process copy_info p, occ')
+      Repl(copy_process id_thread  copy_info p, occ')
   | Let(pat, t, p, q, occ) ->
       Terms.auto_cleanup (fun () ->
-	let pat' = copy_pat copy_info pat in
+	let pat' = copy_pat id_thread copy_info pat in
 	let occ' = new_occurrence() in
-	let p' = copy_process copy_info p in
-	let q' = copy_process copy_info q in
+	let p' = copy_process id_thread  copy_info p in
+	let q' = copy_process id_thread  copy_info q in
 	Let(pat', Terms.copy_term3 t, p', q', occ'))
   | Input(t, pat, p, occ) ->
       Terms.auto_cleanup (fun () ->
-	let pat' = copy_pat copy_info pat in
+	let pat' = copy_pat id_thread copy_info pat in
 	let occ' = new_occurrence ~precise:occ.precise () in
 	Input(Terms.copy_term3 t, pat',
-	      copy_process copy_info p, occ'))
+	      copy_process id_thread  copy_info p, occ'))
   | Output(tc,t,p, occ) ->
       let occ' = new_occurrence() in
       Output(Terms.copy_term3 tc,
 	     Terms.copy_term3 t,
-	     copy_process copy_info p, occ')
+	     copy_process id_thread  copy_info p, occ')
   | Test(t,p,q,occ) ->
       let occ' = new_occurrence() in
-      let p' = copy_process copy_info p in
-      let q' = copy_process copy_info q in
+      let p' = copy_process id_thread  copy_info p in
+      let q' = copy_process id_thread  copy_info q in
       Test(Terms.copy_term3 t, p', q', occ')
   | Event(t, (args, env), p, occ) ->
-      let (new_args,lets) = update_args_opt args in
+      let (new_args,lets) = update_args_opt id_thread args in
       Terms.put_lets
 	(fun () ->
 	  let occ' = new_occurrence() in
-	  Event(Terms.copy_term3 t, (new_args,update_env env),
-		copy_process copy_info p, occ')) lets
+	  Event(Terms.copy_term3 t, (new_args,update_env id_thread env),
+		copy_process id_thread  copy_info p, occ')) lets
   | Insert(t, p, occ) ->
       let occ' = new_occurrence() in
       Insert(Terms.copy_term3 t,
-	     copy_process copy_info p, occ')
+	     copy_process id_thread  copy_info p, occ')
   | Get(pat, t, p, q, occ) ->
       Terms.auto_cleanup (fun () ->
-	let pat' = copy_pat copy_info pat in
+	let pat' = copy_pat id_thread copy_info pat in
 	let occ' = new_occurrence ~precise:occ.precise () in
-	let p' = copy_process copy_info p in
-	let q' = copy_process copy_info q in
+	let p' = copy_process id_thread  copy_info p in
+	let q' = copy_process id_thread  copy_info q in
 	Get(pat', Terms.copy_term3 t, p', q', occ'))
   | Phase(n,p,occ) ->
       let occ' = new_occurrence() in
-      Phase(n, copy_process copy_info p, occ')
+      Phase(n, copy_process id_thread  copy_info p, occ')
   | Barrier(n,(tag, ext),p,occ) ->
       let occ' = new_occurrence() in
-      Barrier(n, (copy_info.barrier_add_prefix^tag, ext), copy_process copy_info p, occ')
+      Barrier(n, (copy_info.barrier_add_prefix^tag, ext), copy_process id_thread  copy_info p, occ')
   | AnnBarrier _ ->
       Parsing_helper.internal_error __POS__ "Annotated barriers should not occur in the initial process"
   | LetFilter(bl, f, p, q, occ) ->
       Terms.auto_cleanup (fun () ->
-	let bl' = List.map (copy_binder copy_info) bl in
+	let bl' = List.map (copy_binder id_thread copy_info) bl in
 	let occ' = new_occurrence ~precise:occ.precise () in
-	let p' = copy_process copy_info p in
-	let q' = copy_process copy_info q in
+	let p' = copy_process id_thread  copy_info p in
+	let q' = copy_process id_thread  copy_info q in
 	LetFilter(bl', Terms.copy_fact3 f, p', q', occ'))
   | NamedProcess(s, tl, p) ->
       Terms.auto_cleanup (fun () ->
-	let p' = copy_process copy_info p in
+	let p' = copy_process id_thread  copy_info p in
 	NamedProcess(s, List.map Terms.copy_term3 tl, p'))
 
 
-let copy_process_desc copy_info p =
-  { p with proc = copy_process copy_info p.proc; display_num = None }
+let copy_process_desc id_thread copy_info p =
+  { p with proc = copy_process id_thread  copy_info p.proc; display_num = None }
 
 (* Prepare a process by choosing new identifiers for names, variables... *)
 
-let prepare_process pi_state =
+let prepare_process ?(id_thread=0) pi_state =
   begin
     match pi_state.pi_need_vars_in_names with
       Computed (_ :: _) ->
@@ -419,14 +419,14 @@ let prepare_process pi_state =
       Terms.reset_occurrence();
       match pi_state.pi_process_query with
 	SingleProcess(p,ql) ->
-	  let p' = copy_process_desc copy_info p in
+	  let p' = copy_process_desc id_thread copy_info p in
 	  SingleProcess(p',ql)
       | SingleProcessSingleQuery(p,q) ->
-	  let p' = copy_process_desc copy_info p in
+	  let p' = copy_process_desc id_thread copy_info p in
 	  SingleProcessSingleQuery(p',q)
       | Equivalence(p1,p2) ->
-	  let p1' = copy_process_desc copy_info p1 in
-	  let p2' = copy_process_desc copy_info p2 in
+	  let p1' = copy_process_desc id_thread copy_info p1 in
+	  let p2' = copy_process_desc id_thread copy_info p2 in
 	  Equivalence(p1',p2')
 	    )
   in
@@ -436,8 +436,8 @@ let prepare_process pi_state =
     pi_glob_table_var_name = Set glob_table_var_name;
     pi_terms_to_add_in_name_params = Unset }
 
-let copy_process barrier_add_prefix p =
-  copy_process { add_in_glob_table = None;
+let copy_process ?(id_thread=0)  barrier_add_prefix p =
+  copy_process id_thread  { add_in_glob_table = None;
 		 barrier_add_prefix = barrier_add_prefix } p
 
 (*********************************************************************

@@ -274,12 +274,12 @@ let rec retrieve_rw_rules_at_pos acc_c acc_e pos = function
       retrieve_rw_rules_at_pos acc_c (rw::acc_e) pos q
   | q -> acc_c, acc_e, q
 
-let rec transl_rewrite_rules_one_side next_f cur_state do_left check_c transl_t to_transl pos rules =
+let rec transl_rewrite_rules_one_side id_thread next_f cur_state do_left check_c transl_t to_transl pos rules =
   if List.for_all (function
     ToExecute i, _ when pos < i -> true
     | _ -> false
     ) rules
-  then transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c transl_t to_transl pos rules
+  then transl_rewrite_rules_one_side_execute id_thread next_f cur_state do_left check_c transl_t to_transl pos rules
   else
     match rules with
       | [] -> ()
@@ -289,8 +289,8 @@ let rec transl_rewrite_rules_one_side next_f cur_state do_left check_c transl_t 
       | (ToExecute i,_)::_ when pos < i ->
           (* All rules require to translate the next argument *)
           let t = List.hd to_transl in
-          transl_term_one_side (fun cur_state1 t1 ->
-            transl_rewrite_rules_one_side next_f cur_state1 do_left check_c (transl_t@[t1]) (List.tl to_transl) (pos+1) rules
+          transl_term_one_side id_thread (fun cur_state1 t1 ->
+            transl_rewrite_rules_one_side id_thread next_f cur_state1 do_left check_c (transl_t@[t1]) (List.tl to_transl) (pos+1) rules
           ) cur_state do_left t
       | _ ->
           let check, execute, others = retrieve_rw_rules_at_pos [] [] pos rules in
@@ -340,9 +340,9 @@ let rec transl_rewrite_rules_one_side next_f cur_state do_left check_c transl_t 
           ) execute;
 
           (* Translate the next position *)
-          transl_rewrite_rules_one_side next_f cur_state do_left check_c transl_t to_transl pos !others1
+          transl_rewrite_rules_one_side id_thread next_f cur_state do_left check_c transl_t to_transl pos !others1
 
-and transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c transl_t to_transl pos rules = match rules with
+and transl_rewrite_rules_one_side_execute id_thread next_f cur_state do_left check_c transl_t to_transl pos rules = match rules with
   | [] -> ()
   | (ToExecute i,_)::q ->
       let check, execute, other = retrieve_rw_rules_at_pos [] [] i rules in
@@ -350,7 +350,7 @@ and transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c trans
       then Parsing_helper.internal_error __POS__ "[Pitranslweak.transl_rewrite_rules_one_side_execute] The list should not contain ToCheck.";
 
       let t_to_translate = List.nth to_transl (i-pos-1) in
-      transl_term_one_side (fun cur_state1 t1 ->
+      transl_term_one_side id_thread (fun cur_state1 t1 ->
         List.iter (fun (left_list,right,side_c) ->
           let left_list_to_check = Reduction_helper.get_until_pos pos left_list in
           Terms.auto_cleanup (fun () ->
@@ -366,7 +366,7 @@ and transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c trans
         ) execute
       ) cur_state do_left t_to_translate;
 
-      transl_rewrite_rules_one_side_execute next_f cur_state do_left check_c transl_t to_transl pos other
+      transl_rewrite_rules_one_side_execute id_thread next_f cur_state do_left check_c transl_t to_transl pos other
   | _ -> Parsing_helper.internal_error __POS__ "[Pitranslweak.transl_rewrite_rules_one_side_execute] Unexpected case."
 
 and transl_term_one_side id_thread next_f cur_state do_left = function
@@ -384,7 +384,7 @@ and transl_term_one_side id_thread next_f cur_state do_left = function
           (* In such a case, all rules are of the form f -> a *)
           let red_rules = Terms.red_rules_fun f in
           List.iter (fun (_,t,_) -> next_f cur_state t) red_rules
-        else transl_rewrite_rules_one_side next_f cur_state do_left check [] args 0 (Terms.get_all_rewrite_rules_status f)
+        else transl_rewrite_rules_one_side id_thread next_f cur_state do_left check [] args 0 (Terms.get_all_rewrite_rules_status f)
       in
       match f.f_cat with
         Name n ->
@@ -399,7 +399,7 @@ and transl_term_one_side id_thread next_f cur_state do_left = function
           begin
             match args with
               | [t1;t2] ->
-                  transl_term_one_side next_f cur_state do_left
+                  transl_term_one_side id_thread next_f cur_state do_left
 		    (if do_left then t1 else t2)
               | _ -> Parsing_helper.internal_error __POS__ "Choice should have two arguments"
           end
@@ -407,14 +407,14 @@ and transl_term_one_side id_thread next_f cur_state do_left = function
           begin
             match args with
               | [t] ->
-                  transl_term_one_side next_f cur_state true t
+                  transl_term_one_side id_thread next_f cur_state true t
               | _ -> Parsing_helper.internal_error __POS__ "Choice-fst should have one argument"
           end
       | ChoiceSnd ->
           begin
             match args with
               | [t] ->
-                  transl_term_one_side next_f cur_state false t
+                  transl_term_one_side id_thread next_f cur_state false t
               | _ -> Parsing_helper.internal_error __POS__ "Choice-snd should have one argument"
           end
       | _ -> Parsing_helper.internal_error __POS__ "function symbols of these categories should not appear in input terms (pitranslweak)"
@@ -427,32 +427,32 @@ on open term on the left part and right part of [t].
 
 Invariant : All variables should be linked with two closed terms when applied on the translation (due to closed processes)
 *)
-let transl_term next_f cur_state term =
+let transl_term id_thread next_f cur_state term =
   if cur_state.record_fun_opt = None
   then next_f cur_state term term
   else
     if cur_state.cur_phase < !min_choice_phase
     then
-      transl_term_one_side (fun cur_state1 t ->
+      transl_term_one_side id_thread (fun cur_state1 t ->
         next_f cur_state1 t t
         ) cur_state true term
     else
-      transl_term_one_side (fun cur_state1 t_left ->
-        transl_term_one_side (fun cur_state2 t_right ->
+      transl_term_one_side id_thread (fun cur_state1 t_left ->
+        transl_term_one_side id_thread (fun cur_state2 t_right ->
           next_f cur_state2 t_left t_right
         ) cur_state1 false term
       ) cur_state true term
 
 (* next_f takes a state and two lists of patterns as parameter *)
-let rec transl_term_list next_f cur_state = function
+let rec transl_term_list id_thread next_f cur_state = function
     [] -> next_f cur_state [] []
   | (a::l) ->
-      transl_term (fun cur_state1 p1 p2 ->
-        transl_term_list (fun cur_state2 patlist1 patlist2 ->
+      transl_term id_thread (fun cur_state1 p1 p2 ->
+        transl_term_list id_thread (fun cur_state2 patlist1 patlist2 ->
           next_f cur_state2 (p1::patlist1) (p2::patlist2)) cur_state1 l) cur_state a
 
-let get_var_link cur_state v =
-  match v.link with
+let get_var_link id_thread cur_state v =
+  match v.link.(id_thread) with
   | TLink t ->
       if cur_state.cur_phase < !min_choice_phase then
 	match t with
@@ -472,9 +472,9 @@ let make_name_param_entry cur_state t1 t2 =
   in
   (MUnknown, t, Always)
 
-let transl_term_incl_destructor next_f cur_state occ term =
+let transl_term_incl_destructor id_thread next_f cur_state occ term =
   let may_have_several_patterns = Reduction_helper.transl_check_several_patterns terms_to_add_in_name_params occ term in
-  transl_term (fun cur_state1 term1 term2 ->
+  transl_term id_thread (fun cur_state1 term1 term2 ->
     if may_have_several_patterns
     then
       next_f { cur_state1 with
@@ -488,9 +488,9 @@ let transl_term_incl_destructor next_f cur_state occ term =
       next_f cur_state1 term1 term2
   ) cur_state term
 
-let transl_term_list_incl_destructor next_f cur_state occ tl =
+let transl_term_list_incl_destructor id_thread next_f cur_state occ tl =
   let may_have_several_patterns = List.exists (Reduction_helper.transl_check_several_patterns terms_to_add_in_name_params occ) tl in
-  transl_term_list (fun cur_state1 tl_left tl_right ->
+  transl_term_list id_thread (fun cur_state1 tl_left tl_right ->
     if may_have_several_patterns
     then
       next_f { cur_state1 with
@@ -504,9 +504,9 @@ let transl_term_list_incl_destructor next_f cur_state occ tl =
               Translate Facts
 **********************************************)
 
-let transl_fact next_f cur_state occ = function
+let transl_fact id_thread next_f cur_state occ = function
   | Pred(p,args) ->
-      transl_term_list_incl_destructor (fun cur_state1 args_left args_right ->
+      transl_term_list_incl_destructor id_thread (fun cur_state1 args_left args_right ->
         next_f cur_state1 (Pred(p,args_left)) (Pred(p,args_right))
       ) cur_state occ args
 
@@ -514,7 +514,7 @@ let transl_fact next_f cur_state occ = function
               Translate Patterns
 **********************************************)
 
-let rec transl_pat next_f cur_state under_choice pattern =
+let rec transl_pat id_thread next_f cur_state under_choice pattern =
   match pattern with
   | PatVar b ->
       let x_pair =
@@ -524,9 +524,9 @@ let rec transl_pat next_f cur_state under_choice pattern =
 	else
 	  [Var (Terms.copy_var b); Var (Terms.copy_var b)]
       in
-      b.link <- TLink (FunApp(Param.choice_fun b.btype, x_pair));
+      b.link.(id_thread) <- TLink (FunApp(Param.choice_fun b.btype, x_pair));
       next_f cur_state (Var b) [b];
-      b.link <- NoLink
+      b.link.(id_thread) <- NoLink
   | PatTuple(fsymb,pat_list) when fsymb.f_cat = Choice ->
       (* Nested choice patterns are forbidden *)
       assert (under_choice = false);
@@ -535,26 +535,26 @@ let rec transl_pat next_f cur_state under_choice pattern =
 				   if !min_choice_phase = max_int && cur_state.tr_pi_state.pi_max_used_phase < max_int
 				   then " but there are no diff/choice terms"
 				   else " but diff/choice terms occur only in phase at least "^(string_of_int (!min_choice_phase)));
-      transl_pat_list (fun cur_state2 term_list binder_list ->
+      transl_pat_list id_thread (fun cur_state2 term_list binder_list ->
         next_f cur_state2 (FunApp(fsymb,term_list)) binder_list
       ) cur_state true pat_list
   | PatTuple(fsymb,pat_list) ->
-      transl_pat_list (fun cur_state2 term_list binder_list ->
+      transl_pat_list id_thread (fun cur_state2 term_list binder_list ->
         next_f cur_state2 (FunApp(fsymb,term_list)) binder_list
       ) cur_state under_choice pat_list
   | PatEqual t -> next_f cur_state t []
 
-and transl_pat_list next_f cur_state under_choice = function
+and transl_pat_list id_thread next_f cur_state under_choice = function
   | [] -> next_f cur_state [] []
   | pat::q ->
-      transl_pat (fun cur_state2 term binders2 ->
-        transl_pat_list (fun cur_state3 term_list binders3  ->
+      transl_pat id_thread (fun cur_state2 term binders2 ->
+        transl_pat_list id_thread (fun cur_state3 term_list binders3  ->
           next_f cur_state3 (term::term_list) (binders2@binders3)
         ) cur_state2 under_choice q
       ) cur_state under_choice pat
 
-let transl_pat next_f cur_state pattern =
-  transl_pat next_f cur_state false pattern
+let transl_pat id_thread next_f cur_state pattern =
+  transl_pat id_thread next_f cur_state false pattern
 
 (*********************************************
         Equation of success or failure
@@ -632,11 +632,11 @@ let transl_one_side_fails nextf cur_state list_failure list_success  =
         Generation of pattern with universal variables
 ***********************************************************)
 
-let generate_pattern_with_uni_var binders_list term_pat_left term_pat_right =
+let generate_pattern_with_uni_var id_thread binders_list term_pat_left term_pat_right =
   let var_pat_l,var_pat_r =
     List.split (
       List.map (fun b ->
-        match b.link with
+        match b.link.(id_thread) with
           | TLink(FunApp(_,[Var(x1);Var(x2)])) -> (x1,x2)
           | _ -> internal_error __POS__ "unexpected link in translate_term (2)"
       ) binders_list
@@ -778,7 +778,7 @@ let rec transl_process id_thread cur_state process =
           (* We optimize the case q == Nil.
              In this case, the adversary cannot distinguish the situation
              in which t fails from the situation in which t is false. *)
-          transl_term_incl_destructor (fun cur_state1 term1_left term1_right ->
+          transl_term_incl_destructor id_thread (fun cur_state1 term1_left term1_right ->
               (* Branch THEN (both sides are true) *)
               unify_list (fun () ->
                 transl_process id_thread { cur_state1 with hyp_tags = (TestTag occ)::cur_state1.hyp_tags } proc_then
@@ -819,7 +819,7 @@ let rec transl_process id_thread cur_state process =
                 end
           ) cur_state (OTest(occ)) term1
         else
-          transl_term_incl_destructor (fun cur_state1 term1_left term1_right ->
+          transl_term_incl_destructor id_thread (fun cur_state1 term1_left term1_right ->
             (* Case both sides succeed *)
             transl_both_side_succeed (fun cur_state2 ->
               (* Branch THEN *)
@@ -878,11 +878,11 @@ let rec transl_process id_thread cur_state process =
           ) cur_state (OTest(occ)) term1
     | Let(pat,term,proc_then,proc_else, occ) ->
 
-        transl_term_incl_destructor (fun cur_state1 term_left term_right ->
-          transl_pat (fun cur_state2 term_pattern binders_list ->
-            transl_term (fun cur_state3 term_pat_left term_pat_right ->
+        transl_term_incl_destructor id_thread (fun cur_state1 term_left term_right ->
+          transl_pat id_thread (fun cur_state2 term_pattern binders_list ->
+            transl_term id_thread (fun cur_state3 term_pat_left term_pat_right ->
               (* Generate the pattern with universal_variable *)
-              let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var binders_list term_pat_left term_pat_right in
+              let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var id_thread  binders_list term_pat_left term_pat_right in
 
               (* Case both sides succeed *)
               transl_both_side_succeed (fun cur_state4 ->
@@ -890,7 +890,7 @@ let rec transl_process id_thread cur_state process =
                 unify_list (fun () ->
                   transl_process id_thread { cur_state4 with
                     name_params = (List.rev_map
-                        (fun b -> (MVar(b, None), get_var_link cur_state4 b, IfQueryNeedsIt)
+                        (fun b -> (MVar(b, None), get_var_link id_thread  cur_state4 b, IfQueryNeedsIt)
                             ) binders_list) @ cur_state4.name_params;
                     name_params_types = (List.rev_map (fun b -> b.btype) binders_list)@cur_state4.name_params_types;
                     hyp_tags = (LetTag occ)::cur_state4.hyp_tags
@@ -973,14 +973,14 @@ let rec transl_process id_thread cur_state process =
     | Input(tc,pat,proc,occ) ->
         if optimize_mess id_thread cur_state tc then
           begin
-            transl_pat (fun cur_state1 term_pattern binders ->
-              transl_term (fun cur_state2 term_pat_left term_pat_right ->
+            transl_pat id_thread (fun cur_state1 term_pattern binders ->
+              transl_term id_thread (fun cur_state2 term_pat_left term_pat_right ->
                 (* Generate the basic pattern variables *)
                 let x_right = Terms.new_var_def_term (Terms.get_term_type term_pat_right)
                 and x_left = Terms.new_var_def_term (Terms.get_term_type term_pat_left) in
 
                 (* Generate the pattern with universal_variable *)
-                let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var binders term_pat_left term_pat_right in
+                let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var id_thread  binders term_pat_left term_pat_right in
 
 		let precise_ev_name =
 		  if occ.precise || Param.get_precise()
@@ -1016,7 +1016,7 @@ let rec transl_process id_thread cur_state process =
                     (* Pattern satisfied in both sides *)
                     transl_process id_thread { cur_state3 with
                       name_params = (List.rev_map
-                        (fun b -> (MVar(b,None), get_var_link cur_state3 b, Always)
+                        (fun b -> (MVar(b,None), get_var_link id_thread  cur_state3 b, Always)
                             ) binders) @ cur_state3.name_params;
                       name_params_types = (List.rev_map (fun b -> b.btype) binders)@cur_state3.name_params_types;
                       hypothesis = hypothesis;
@@ -1071,17 +1071,17 @@ let rec transl_process id_thread cur_state process =
         else
           begin
 
-            transl_term_incl_destructor (fun cur_state1 channel_left channel_right ->
+            transl_term_incl_destructor id_thread (fun cur_state1 channel_left channel_right ->
               (* Case both channel succeed *)
               transl_both_side_succeed (fun cur_state2 ->
-                transl_pat (fun cur_state3 term_pattern binders ->
-                  transl_term (fun cur_state4 term_pat_left term_pat_right ->
+                transl_pat id_thread (fun cur_state3 term_pattern binders ->
+                  transl_term id_thread (fun cur_state4 term_pat_left term_pat_right ->
                     (* Generate the basic pattern variables *)
                     let x_right = Terms.new_var_def_term (Terms.get_term_type term_pat_right)
                     and x_left = Terms.new_var_def_term (Terms.get_term_type term_pat_left) in
 
                     (* Generate the pattern with universal_variable *)
-                    let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var binders term_pat_left term_pat_right in
+                    let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var id_thread  binders term_pat_left term_pat_right in
 
 		    let precise_ev_name =
 		      if occ.precise || Param.get_precise()
@@ -1118,7 +1118,7 @@ let rec transl_process id_thread cur_state process =
                       (* Pattern satisfied in both sides *)
                       transl_process id_thread { cur_state5 with
                         name_params = (List.rev_map
-                          (fun b -> (MVar(b, None), get_var_link cur_state5 b, Always)
+                          (fun b -> (MVar(b, None), get_var_link id_thread  cur_state5 b, Always)
                               ) binders) @ cur_state5.name_params;
                         name_params_types = (List.rev_map (fun b -> b.btype) binders)@cur_state5.name_params_types;
                         hypothesis = hypothesis;
@@ -1200,7 +1200,7 @@ let rec transl_process id_thread cur_state process =
     | Output(term_ch, term, proc, occ) ->
         if optimize_mess id_thread cur_state term_ch then
           begin
-               transl_term (fun cur_state1 term_left term_right ->
+               transl_term id_thread (fun cur_state1 term_left term_right ->
                   (* Case both sides succeed *)
                   transl_both_side_succeed (fun cur_state2 ->
                     transl_process id_thread { cur_state2 with
@@ -1233,8 +1233,8 @@ let rec transl_process id_thread cur_state process =
           end
         else
           begin
-                transl_term (fun cur_state1 channel_left channel_right ->
-                  transl_term (fun cur_state2 term_left term_right ->
+                transl_term id_thread (fun cur_state1 channel_left channel_right ->
+                  transl_term id_thread (fun cur_state2 term_left term_right ->
                     (* Case both sides succeed *)
                     transl_both_side_succeed (fun cur_state3 ->
                       transl_process id_thread { cur_state3 with
@@ -1276,7 +1276,7 @@ let rec transl_process id_thread cur_state process =
         let fstatus = Pievent.get_event_status cur_state.tr_pi_state f in
 
         (* Even if the event does nothing, the term t is evaluated *)
-        transl_term (fun cur_state1 term_left term_right ->
+        transl_term id_thread (fun cur_state1 term_left term_right ->
           (* Case both sides succeed *)
           begin match fstatus.begin_status with
             | No ->
@@ -1336,7 +1336,7 @@ let rec transl_process id_thread cur_state process =
         ) cur_state t
     | Event(_,_,_,_) -> user_error ("Events should be function applications")
     | Insert(term,proc,occ) ->
-        transl_term (fun cur_state1 term_left term_right ->
+        transl_term id_thread (fun cur_state1 term_left term_right ->
           (* Case both sides succeed *)
           transl_both_side_succeed (fun cur_state2 ->
             output_rule { cur_state2 with
@@ -1367,16 +1367,16 @@ let rec transl_process id_thread cur_state process =
             end
         ) cur_state term
     | Get(pat,term,proc,proc_else,occ) ->
-        transl_pat (fun cur_state1 term_pattern binders ->
-          transl_term (fun cur_state2 term_pat_left term_pat_right ->
+        transl_pat id_thread (fun cur_state1 term_pattern binders ->
+          transl_term id_thread (fun cur_state2 term_pat_left term_pat_right ->
 
             let x_right = Terms.new_var_def_term (Terms.get_term_type term_pat_right)
             and x_left = Terms.new_var_def_term (Terms.get_term_type term_pat_right) in
 
             (* Generate the pattern with universal_variable *)
-            let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var binders term_pat_left term_pat_right in
+            let gen_pat_l, gen_pat_r = generate_pattern_with_uni_var id_thread  binders term_pat_left term_pat_right in
 
-            transl_term (fun cur_state3 term_left term_right ->
+            transl_term id_thread (fun cur_state3 term_left term_right ->
 
 	      let precise_ev_name =
 		if occ.precise || Param.get_precise()
@@ -1412,7 +1412,7 @@ let rec transl_process id_thread cur_state process =
                 unify_list (fun () ->
                   transl_process id_thread { cur_state4 with
                     name_params = (List.rev_map
-                      (fun b -> (MVar(b,None), get_var_link cur_state4 b, Always)
+                      (fun b -> (MVar(b,None), get_var_link id_thread  cur_state4 b, Always)
                           ) binders) @ cur_state4.name_params;
                     name_params_types = (List.rev_map (fun b -> b.btype) binders)@cur_state4.name_params_types;
                     hypothesis = hypothesis;
@@ -1632,17 +1632,17 @@ let transl_attacker pi_state my_types phase =
    You need to cleanup links after calling convert_to_1 and
    convert_to_2. *)
 
-let rec convert_to_2 = function
+let rec convert_to_2 id_thread = function
     Var x ->
       begin
-	match x.link with
+	match x.link.(id_thread) with
 	  TLink (FunApp(_,[t1;t2])) -> (t1,t2)
 	| NoLink -> (Var x, Var x)
 	| _ -> assert false
       end
   | FunApp(f, [t1;t2]) when f.f_cat == Choice ->
-      let (t1',_) = convert_to_2 t1 in
-      let (_,t2') = convert_to_2 t2 in
+      let (t1',_) = convert_to_2 id_thread t1 in
+      let (_,t2') = convert_to_2 id_thread t2 in
       (t1', t2')
   | FunApp(f, l) ->
       match f.f_cat with
@@ -1652,35 +1652,35 @@ let rec convert_to_2 = function
 	      MSid _ | MCompSid | MAttSid ->
 		begin
 		try
-		  convert_to_1 t
+		  convert_to_2 id_thread t
 		with Terms.Unify ->
 		  user_error "In not declarations, session identifiers should be variables."
 		end
 	    | _ ->
 	        (* The arguments of names are always choice, except for session identifiers *)
-		let (t1,t2) = convert_to_2 t in
+		let (t1,t2) = convert_to_2 id_thread t in
 		FunApp(Param.choice_fun (Terms.get_term_type t1), [t1;t2])
 	      ) l pim
 	  in
 	  (FunApp(f, l'), FunApp(f, l'))
       |	_ ->
-	  let (l1, l2) = List.split (List.map convert_to_2 l) in
+	  let (l1, l2) = List.split (List.map (convert_to_2 id_thread) l) in
 	  (FunApp(f, l1), FunApp(f, l2))
 
 (* convert_to_1 raises Terms.Unify when there is a choice
    that cannot be unified into one term. *)
 
-and convert_to_1 t =
-  let (t1, t2) = convert_to_2 t in
+and convert_to_1 id_thread t =
+  let (t1, t2) = convert_to_2 id_thread t in
   Terms.unify t1 t2;
   t1
 
-let convert_to_2 t =
-  let (t1, t2) = convert_to_2 t in
+let convert_to_2 id_thread t =
+  let (t1, t2) = convert_to_2 id_thread t in
   (Terms.copy_term2 t1, Terms.copy_term2 t2)
 
-let convert_to_1 t =
-  Terms.copy_term2 (convert_to_1 t)
+let convert_to_1 id_thread t =
+  Terms.copy_term2 (convert_to_1 id_thread t)
 
 (* Convert formats (possibly with choice) to one format or to
    a pair of formats.
@@ -1747,7 +1747,7 @@ let rec convertformat_to_2 = function
 
 (* Take into account "not fact" declarations (secrecy assumptions) *)
 
-let get_not pi_state =
+let get_not id_thread pi_state =
   let not_set = ref [] in
   let add_not f =
     not_set := f ::(!not_set)
@@ -1763,12 +1763,12 @@ let get_not pi_state =
 	     (* Phase coded by unary predicate, since it does not use choice *)
 	     let att_j = Param.get_pred (Attacker(j,ty)) in
 	     try
-	       add_not(Pred(att_j,[Terms.auto_cleanup (fun () -> convert_to_1 t)]))
+	       add_not(Pred(att_j,[Terms.auto_cleanup (fun () -> convert_to_2 id_thread t)]))
 	     with Terms.Unify -> ()
 	   else
 	     (* Phase coded by binary predicate *)
 	     let att2_j = Param.get_pred (AttackerBin(j,ty)) in
-	     let (t',t'') = Terms.auto_cleanup (fun () -> convert_to_2 t) in
+	     let (t',t'') = Terms.auto_cleanup (fun () -> convert_to_2 id_thread t) in
 	     add_not(Pred(att2_j,[t';t'']))
 	 done
      | QFact({ p_info = Mess(i,ty) } as p,_,[t1;t2]) ->
@@ -1777,7 +1777,7 @@ let get_not pi_state =
 	   (* Phase coded by unary predicate, since it does not use choice *)
 	   try
 	     let t1', t2' = Terms.auto_cleanup (fun () ->
-	       convert_to_1 t1, convert_to_1 t2)
+	       convert_to_2 id_thread t1, convert_to_2 id_thread t2)
 	     in
 	     add_not(Pred(p, [t1'; t2']))
 	   with Terms.Unify -> ()
@@ -1785,7 +1785,7 @@ let get_not pi_state =
 	   (* Phase coded by binary predicate *)
 	   let mess2_i = Param.get_pred (MessBin(i,ty)) in
 	   let (t1', t1''), (t2', t2'') = Terms.auto_cleanup (fun () ->
-	     convert_to_2 t1, convert_to_2 t2)
+	     convert_to_2 id_thread t1, convert_to_2 id_thread t2)
 	   in
 	   add_not(Pred(mess2_i,[t1';t2';t1'';t2'']))
      | QFact({ p_info = Table(i) },_,[t]) ->
@@ -1798,12 +1798,12 @@ let get_not pi_state =
 	     (* Phase coded by unary predicate, since it does not use choice *)
 	     let table_j = Param.get_pred (Table(j)) in
 	     try
-	       add_not(Pred(table_j,[Terms.auto_cleanup (fun () -> convert_to_1 t)]))
+	       add_not(Pred(table_j,[Terms.auto_cleanup (fun () -> convert_to_2 id_thread t)]))
 	     with Terms.Unify -> ()
 	   else
 	     (* Phase coded by binary predicate *)
 	     let table2_j = Param.get_pred (TableBin(j)) in
-	     let (t',t'') = Terms.auto_cleanup (fun () -> convert_to_2 t) in
+	     let (t',t'') = Terms.auto_cleanup (fun () -> convert_to_2 id_thread t) in
 	     add_not(Pred(table2_j,[t';t'']))
 	 done
      | _ -> Parsing_helper.user_error "The only allowed facts in \"not\" declarations are attacker, mess, and table predicates (for process equivalences, user-defined predicates are forbidden)."
@@ -2069,7 +2069,7 @@ let transl ?(id_thread=0) pi_state =
     { h_clauses = ToGenerate (List.rev (!red_rules),generate_process_clauses);
       h_equations = pi_state.pi_equations;
       h_close_with_equations = false;
-      h_not = get_not pi_state;
+      h_not = get_not id_thread pi_state;
       h_elimtrue = [];
       h_memberOptim = [];
       h_equiv = pi_state.pi_equivalence_clauses;
