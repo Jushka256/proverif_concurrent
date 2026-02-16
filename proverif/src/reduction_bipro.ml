@@ -412,8 +412,8 @@ let term_evaluation_fail ?(id_thread=0) t side =
     raise Unify
   else
     r
-
-let fact_evaluation_fail id_thread fact side = match fact with
+(*
+let fact_evaluation_fail fact side = match fact with
   | Pred(p,args) ->
       let args' =
         List.map (fun t ->
@@ -423,7 +423,7 @@ let fact_evaluation_fail id_thread fact side = match fact with
           else r
         ) args
       in
-      Pred(p,args')
+      Pred(p,args') *)
 
 let term_evaluation_fail2 id_thread t1 t2 side =
   (term_evaluation_fail ~id_thread t1 side, term_evaluation_fail ~id_thread t2 side)

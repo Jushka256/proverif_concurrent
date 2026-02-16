@@ -68,12 +68,14 @@ let auto_assign_abbrev_table f_next abbrev_table =
     raise e
 
 let rec get_session_id id_thread t =
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
   match t with
-  | Var { link = lst } when is_TLink lst -> let TLink t' = lst.(id_thread) in get_session_id id_thread t'
-  | Var _ ->
-      let _,occ = List.find (fun (t',_) -> Terms.equal_terms t t') !current_abbrev_table in
-      Terms.get_session_id_from_occurrence occ
+  | Var v ->
+      begin match v.link.(id_thread) with
+      | TLink t' -> get_session_id id_thread t'
+      | _ -> 
+          let _,occ = List.find (fun (t',_) -> Terms.equal_terms t t') !current_abbrev_table in
+          Terms.get_session_id_from_occurrence occ
+      end
   | _ -> Terms.get_session_id_from_occurrence t
 
 

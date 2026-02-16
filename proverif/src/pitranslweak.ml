@@ -501,16 +501,6 @@ let transl_term_list_incl_destructor id_thread next_f cur_state occ tl =
   ) cur_state tl
 
 (*********************************************
-              Translate Facts
-**********************************************)
-
-let transl_fact id_thread next_f cur_state occ = function
-  | Pred(p,args) ->
-      transl_term_list_incl_destructor id_thread (fun cur_state1 args_left args_right ->
-        next_f cur_state1 (Pred(p,args_left)) (Pred(p,args_right))
-      ) cur_state occ args
-
-(*********************************************
               Translate Patterns
 **********************************************)
 
