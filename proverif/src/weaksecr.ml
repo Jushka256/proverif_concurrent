@@ -30,28 +30,44 @@ let initialize = function
    This is sound even in the presence of equational theories: 
    if [t2] unifies with  [f(x1...xn)] modulo the equational theory,
    then there is a clause for which it unifies syntactically. *)
-let rec match_data_symbol ?(id_thread=0) t1 t2 =
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  match t1, t2 with
-    | Var { link = lst }, _ when (is_TLink lst) ->
-        let TLink t1' = lst.(id_thread) in
-        match_data_symbol ~id_thread:id_thread t1' t2
-    | _, Var { link = lst } when (is_TLink lst) ->
-        let TLink t2' = lst.(id_thread) in
-        match_data_symbol ~id_thread:id_thread t1 t2'
-    | FunApp({ f_cat = Tuple; _ } as f1,args1), FunApp(f2,args2)
-    | FunApp(f1,args1), FunApp({ f_cat = Tuple; _ } as f2,args2) ->
-        if f1 != f2 then raise Unify
-    | FunApp({ f_cat = Tuple; _ } as f,_), Var v
-    | Var v, FunApp({ f_cat = Tuple; _ } as f,_) ->
-        (* By the first 2 cases, v has no link *)
-        (* Printf.printf "FOUND ONE !!!\n";
-        Display.Text.display_rule_indep r;
-        flush_all (); *)
-        let vars = Terms.var_gen (fst f.f_type) in
-        Terms.link ~id_thread:id_thread v (TLink (FunApp(f,vars))) 
-    | _ -> ()
-
+let rec match_data_symbol t1 t2 = match t1 with
+  | Var v1 ->
+      begin match Terms.get_link v1 with
+      | TLink t1' -> match_data_symbol t1' t2
+      | _ ->
+          match t2 with 
+          | Var v2 -> 
+              begin match Terms.get_link v2 with
+              | TLink t2' -> match_data_symbol t1 t2'
+              | _ -> ()
+              end
+          | FunApp({ f_cat = Tuple; _ } as f,_) ->
+              (* By the first 2 cases, v has no link *)
+              (* Printf.printf "FOUND ONE !!!\n";
+              Display.Text.display_rule_indep r;
+              flush_all (); *)
+              let vars = Terms.var_gen (fst f.f_type) in
+              Terms.link v1 (TLink (FunApp(f,vars))) 
+          | _ -> ()
+      end
+  | FunApp(f1,_) ->
+      match t2 with 
+      | Var v2 -> 
+          begin match Terms.get_link v2 with 
+          | TLink t2' -> match_data_symbol t1 t2'
+          | _ -> 
+              if f1.f_cat = Tuple
+              then 
+                (* By the first 2 cases, v has no link *)
+                (* Printf.printf "FOUND ONE !!!\n";
+                Display.Text.display_rule_indep r;
+                flush_all (); *)
+                let vars = Terms.var_gen (fst f1.f_type) in
+                Terms.link v2 (TLink (FunApp(f1,vars))) 
+              else ()
+          end
+      | FunApp(f2,_) ->
+          if (f1.f_cat = Tuple || f2.f_cat = Tuple) && f1 != f2 then raise Unify
 
 module type WeakSecrSig =
 sig
@@ -60,7 +76,7 @@ sig
   (** [is_standard_clause r] returns true when the clause [r] 
       must be preserved from transformations *)
   val is_standard_clause : clause -> bool
-  val simplify : ?id_thread:int -> (clause -> unit) -> (clause -> unit) -> clause -> unit
+  val simplify : (clause -> unit) -> (clause -> unit) -> clause -> unit
   val selfun : clause -> int
   val remove_equiv_events : (clause -> unit) -> clause -> unit
 
@@ -184,7 +200,7 @@ struct
 
   (** Calls to [simplify] are prevented on standard clauses (clauses such that
       [is_standard_clause] returns true) in rules.ml *)
-  let simplify ?(id_thread=0) next_stage repeat_next_stage cl =
+  let simplify next_stage repeat_next_stage cl =
     if not (!weaksecret_mode)
     then
       next_stage cl
@@ -253,7 +269,7 @@ struct
                         match find_left t2 t1 qr with
                           Some t1' -> Terms.unify t1' t1
                         | None ->
-                            match_data_symbol ~id_thread:id_thread t1 t2
+                            match_data_symbol t1 t2
                 end
             | _ -> ()
             end;
