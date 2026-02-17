@@ -197,7 +197,9 @@ val copy_realquery : Pitypes.realquery -> Pitypes.realquery
  *)
 val current_bound_vars : binder list ref
 val cleanup : unit -> unit
+val get_link : ?id_thread:int -> binder -> linktype
 val link : ?id_thread:int -> binder -> linktype -> unit
+val link_unsafe : ?id_thread:int -> binder -> linktype -> unit
 val link_var : term -> linktype -> unit
 val auto_cleanup : (unit -> 'a) -> 'a
 val auto_cleanup_noexception : (unit -> 'a) -> 'a

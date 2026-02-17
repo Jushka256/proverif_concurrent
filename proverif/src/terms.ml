@@ -493,6 +493,10 @@ let equal_facts f1 f2 =
 (*********************)
 (* Copy and cleanup *)
 
+let get_default_link v = v.link.(0) [@@inline]
+
+let get_link v i = v.link.(i) [@@inline]
+
 let current_bound_vars = ref []
 
 let link ?(id_thread=0) v l =
@@ -526,6 +530,8 @@ let link ?(id_thread=0) v l =
   end;
   current_bound_vars := v :: (!current_bound_vars);
   v.link <- l
+
+let link_unsafe ?(id_thread=0) v l = v.link.(id_thread) <- l [@@inline]
 
 let link_var t l = match t with
   |Var(v) -> link v l
