@@ -11,7 +11,7 @@ open Pitypes
    restrictions [Restr] can only be linked to variables via
    [TLink (Var b)], not to other terms. 
    * [barrier_add_prefix] is added as prefix to the tags of "sync" barriers *)
-val copy_process : ?id_thread:int -> string -> process -> process
+val copy_process : string -> process -> process
 
 (* [reset_occurrence p] creates a copy of the process [p]
    with occurrences nicely numbered. *)
@@ -26,7 +26,7 @@ val reset_occurrence : process -> process
    in the returned state);
    * new occurrences are created at each program point in the process,
    starting from 1. *)
-val prepare_process : ?id_thread:int -> t_pi_state -> t_pi_state
+val prepare_process : t_pi_state -> t_pi_state
 
 (* [verify_process l p] verifies that all free variables of 
    [p] are in the list [l]. 

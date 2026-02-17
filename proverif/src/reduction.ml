@@ -48,12 +48,12 @@ exception Reduced of term reduc_state
    must be kept.
 *)
 
-let auto_cleanup_red id_thread f =
+let auto_cleanup_red f =
   let tmp_bound_vars = !current_bound_vars in
   current_bound_vars := [];
   try
     let r = f () in
-    List.iter (fun v -> (v.link).(id_thread) <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> Terms.link_unsafe v NoLink) (!current_bound_vars);
     current_bound_vars := tmp_bound_vars;
     r
   with
@@ -63,7 +63,7 @@ let auto_cleanup_red id_thread f =
       current_bound_vars := List.rev_append tmp_bound_vars (!current_bound_vars);
       raise (Reduced s)
   | x ->
-    List.iter (fun v -> (v.link).(id_thread) <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> Terms.link_unsafe v NoLink) (!current_bound_vars);
     current_bound_vars := tmp_bound_vars;
     raise x
 
@@ -155,7 +155,7 @@ let display_trace final_state =
       end
 (* Find a clause *)
 
-let find_io_rule id_thread next_f hypspeclist hyplist name_params1 var_list io_rules =
+let find_io_rule next_f hypspeclist hyplist name_params1 var_list io_rules =
   let name_params = extract_name_params_noneed name_params1 in
   let l = List.length hypspeclist in
   let lnp = List.length name_params in
@@ -205,7 +205,7 @@ let find_io_rule id_thread next_f hypspeclist hyplist name_params1 var_list io_r
             if not (Param.get_ignore_types()) &&
               (List.exists2 (fun t1 t2 -> Terms.get_term_type t1 != Terms.get_term_type t2) name_params name_params') then
               raise Unify;
-            auto_cleanup_red id_thread (fun () ->
+            auto_cleanup_red (fun () ->
               match_modulo_list (fun () ->
                 match_equiv_list (fun () ->
                   let new_found = List.map copy_closed_remove_syntactic var_list in
@@ -334,7 +334,7 @@ let get_occurrence_name_for_precise occ name_params =
    Otherwise, raises an exception No_result.
 *)
 
-let rec do_red_nointeract id_thread f prev_state n =
+let rec do_red_nointeract f prev_state n =
   let (proc, name_params, occs, facts, cache_info) =
     List.nth prev_state.subprocess n in
   let new_goal_opt =
@@ -370,8 +370,8 @@ let rec do_red_nointeract id_thread f prev_state n =
     | Par(p,q) ->
       debug_print "Doing Par";
       made_forward_step := true;
-      do_red_nointeract id_thread (fun new_att_know cur_state2 ->
-        do_red_nointeract id_thread (fun new_att_know2 cur_state3 ->
+      do_red_nointeract (fun new_att_know cur_state2 ->
+        do_red_nointeract (fun new_att_know2 cur_state3 ->
           f (new_att_know || new_att_know2) cur_state3)
           cur_state2 n
       ) { prev_state with
@@ -389,7 +389,7 @@ let rec do_red_nointeract id_thread f prev_state n =
       let n' = FunApp(add_name_for_pat nt,[]) in
       let p' = process_subst p na n' in
       begin
-        do_red_nointeract id_thread f { prev_state with
+        do_red_nointeract f { prev_state with
           subprocess = replace_at n (p', name_params, occs, facts, Nothing) prev_state.subprocess;
           comment = RRestr(n, na, n');
           previous_state = Some prev_state } n
@@ -400,18 +400,18 @@ let rec do_red_nointeract id_thread f prev_state n =
       let new_occs = (LetTag occ) :: occs in
       begin
         try
-          auto_cleanup_red id_thread (fun () ->
+          auto_cleanup_red (fun () ->
             let (t', name_params') = term_evaluation_name_params (OLet(occ)) t name_params in
             match_pattern pat t';
             let p' = copy_process p in
             let name_params'' = update_name_params IfQueryNeedsIt name_params' pat in
-            do_red_nointeract id_thread f { prev_state with
+            do_red_nointeract f { prev_state with
               subprocess = replace_at n (p', name_params'', new_occs, facts, Nothing) prev_state.subprocess;
               comment = RLet_In(n, pat, t');
               previous_state = Some prev_state } n
           )
         with Unify ->
-          do_red_nointeract id_thread f { prev_state with
+          do_red_nointeract f { prev_state with
             subprocess = replace_at n (q, name_params, new_occs, facts, Nothing) prev_state.subprocess;
             comment = RLet_Else(n, pat, t);
             previous_state = Some prev_state } n
@@ -421,17 +421,17 @@ let rec do_red_nointeract id_thread f prev_state n =
       made_forward_step := true;
       begin
         try
-          auto_cleanup_red id_thread (fun () ->
+          auto_cleanup_red (fun () ->
             let new_occs = (TestTag occ) :: occs in
             let (t', name_params') = term_evaluation_name_params (OTest(occ)) t name_params in
             if equal_terms_modulo t' Terms.true_term then
-              do_red_nointeract id_thread f
+              do_red_nointeract f
                 { prev_state with
                   subprocess = replace_at n (p, name_params', new_occs, facts, Nothing) prev_state.subprocess;
                   comment = RTest_Then(n, t);
                   previous_state = Some prev_state } n
             else
-              do_red_nointeract id_thread f
+              do_red_nointeract f
                 { prev_state with
                   subprocess = replace_at n (q, name_params', new_occs, facts, Nothing) prev_state.subprocess;
                   comment = RTest_Else(n, t);
@@ -483,7 +483,7 @@ let rec do_red_nointeract id_thread f prev_state n =
             | OutputInfo _ -> f false prev_state (* Arguments already evaluated *)
             | Nothing ->
               try
-                auto_cleanup_red id_thread (fun () ->
+                auto_cleanup_red (fun () ->
                   let tc' = term_evaluation_fail tc in
                   let tclist = decompose_term_rev (new_var ~orig:false "Useless" (Terms.get_term_type t), tc') in
                   let t' = term_evaluation_fail t in
@@ -509,7 +509,7 @@ let rec do_red_nointeract id_thread f prev_state n =
                   begin
                     made_forward_step := true;
                     let (new_recipe, prev_state') = add_public prev_state t in
-                    do_red_nointeract id_thread (if prev_state.public == prev_state'.public then f else
+                    do_red_nointeract (if prev_state.public == prev_state'.public then f else
                         (fun mod_public cur_state -> f true cur_state))
                              { prev_state' with
                         subprocess = replace_at n (p, name_params, new_occs, facts, Nothing) prev_state.subprocess;
@@ -523,7 +523,7 @@ let rec do_red_nointeract id_thread f prev_state n =
                       prev_state.subprocess }
               | Nothing ->
                 try
-                  auto_cleanup_red id_thread (fun () ->
+                  auto_cleanup_red (fun () ->
                     let tc' = term_evaluation_fail tc in
                     let tclist = decompose_term_rev (new_var ~orig:false "Useless" (get_term_type tc'), tc') in
                     let tclist' = remove_first_in_public prev_state.public tclist in
@@ -532,7 +532,7 @@ let rec do_red_nointeract id_thread f prev_state n =
                       begin
                         made_forward_step := true;
                         let (new_recipe, prev_state') = add_public prev_state t' in
-                        do_red_nointeract id_thread (if prev_state.public == prev_state'.public then f else
+                        do_red_nointeract (if prev_state.public == prev_state'.public then f else
                             (fun mod_public cur_state -> f true cur_state))
                           { prev_state' with
                             subprocess = replace_at n (p, name_params, new_occs, facts, Nothing) prev_state.subprocess;
@@ -588,7 +588,7 @@ let rec do_red_nointeract id_thread f prev_state n =
         if success then
           new_state
         else
-          do_red_nointeract id_thread f new_state n
+          do_red_nointeract f new_state n
       in
       begin
         try
@@ -599,17 +599,17 @@ let rec do_red_nointeract id_thread f prev_state n =
               let new_occs = (EventTag (occ)) :: occs in
               do_end prev_state name_params new_occs facts t'
           | NoOcc ->
-              auto_cleanup_red id_thread (fun () ->
+              auto_cleanup_red (fun () ->
                 let (t', name_params') = term_evaluation_name_params (OEvent(occ)) t name_params in
                 let new_occs' = (EventTag (occ)) :: occs in
                 let new_occs = BeginFact :: new_occs' in
                 let new_facts = (Pred(Param.event_pred_block,[t'])) :: facts in
-                find_io_rule id_thread (fun _ ->
+                find_io_rule (fun _ ->
                   do_end prev_state name_params' new_occs new_facts t'
                 ) new_occs' facts name_params' [] prev_state.io_rule
               )
           | WithOcc ->
-              auto_cleanup_red id_thread (fun () ->
+              auto_cleanup_red (fun () ->
                 let occ_n = get_occ_name occ in
                 let include_info = prepare_include_info env env_args [] in
                 let nt = FunApp(occ_n,extract_name_params occ_n include_info name_params) in
@@ -619,7 +619,7 @@ let rec do_red_nointeract id_thread f prev_state n =
                 let new_occs = BeginFact :: new_occs' in
                 let new_facts = (Pred(Param.inj_event_pred_block,[t';n'])) :: facts in
                 try
-                  find_io_rule id_thread (fun _ ->
+                  find_io_rule (fun _ ->
                     do_end prev_state name_params' new_occs new_facts t'
                       ) new_occs' facts name_params' [] prev_state.io_rule
                 with Unify -> raise DerivBlocks
@@ -643,7 +643,7 @@ let rec do_red_nointeract id_thread f prev_state n =
         try
           let vars_types = List.map (fun v -> v.btype) bl in
           let vars_bl = List.map (fun b -> Var b) bl in
-          auto_cleanup_red id_thread (fun () ->
+          auto_cleanup_red (fun () ->
             let (l', name_params') = term_evaluation_letfilter (OLetFilter(occ)) l
               ((List.map2 (fun v v' -> (MVar(v, None), v', Always)) bl vars_bl) @ name_params)
             in
@@ -661,7 +661,7 @@ let rec do_red_nointeract id_thread f prev_state n =
               | _ -> (LetFilterTag occ) :: occs, [Pred(pr,l')]
             in
             try
-              find_io_rule id_thread (fun terms_bl ->
+              find_io_rule (fun terms_bl ->
                 let new_facts' = (List.map TermsEq.copy_remove_syntactic_fact new_facts) @ facts in
                 List.iter2 (fun b term_b ->
                   Terms.link b (TLink term_b)) bl terms_bl;
@@ -672,7 +672,7 @@ let rec do_red_nointeract id_thread f prev_state n =
                 letfilter_succeeds := true;
                     (* Allow choosing a different result for letfilter when search fails *)
                 try
-                  do_red_nointeract id_thread f { prev_state with
+                  do_red_nointeract f { prev_state with
                     subprocess = replace_at n (p', name_params'', new_occs, new_facts', Nothing) prev_state.subprocess;
                     comment = RLetFilter_In(n, bl, terms_bl, Pred(pr,l));
                     previous_state = Some prev_state } n
@@ -716,7 +716,7 @@ let rec do_red_nointeract id_thread f prev_state n =
                   filtered_hyp
                   ) letfilterclauses
               in
-              do_red_nointeract id_thread f { prev_state with
+              do_red_nointeract f { prev_state with
                 subprocess = replace_at n (q, name_params, (LetFilterTagElse occ) :: occs, facts, Nothing) prev_state.subprocess;
                 comment = RLetFilter_Else(n, bl, Pred(pr,l));
                 assumed_false = add_assumed_false false_required_for_else_branch prev_state.assumed_false;
@@ -748,7 +748,7 @@ let rec do_red_nointeract id_thread f prev_state n =
       begin
         try
           auto_cleanup (fun () ->
-            find_io_rule id_thread (function
+            find_io_rule (function
           [sid_pat] ->
                     (* TO DO this assumes no key compromise
                        (which is coherent with the current usage of this module)
@@ -772,7 +772,7 @@ let rec do_red_nointeract id_thread f prev_state n =
             if ncopies < 0 then
               f b state
             else
-              do_red_nointeract id_thread (fun b' s -> do_red_copies (b||b') (ncopies-1) s) state (n+ncopies)
+              do_red_nointeract (fun b' s -> do_red_copies (b||b') (ncopies-1) s) state (n+ncopies)
           in
           do_red_copies false ((!copy_number)-1)
             { !new_state with
@@ -813,7 +813,7 @@ let rec do_red_nointeract id_thread f prev_state n =
       let new_element_inserted = ref false in
       begin
         try
-          auto_cleanup_red id_thread (fun () ->
+          auto_cleanup_red (fun () ->
             let t' = term_evaluation_fail t in
             let already_in = List.exists (equal_terms_modulo t') prev_state.tables in
             new_element_inserted := not already_in;
@@ -833,7 +833,7 @@ let rec do_red_nointeract id_thread f prev_state n =
             if success then
               new_state
             else
-              do_red_nointeract id_thread f new_state n
+              do_red_nointeract f new_state n
           )
         with Unify ->
           f false { prev_state with
@@ -850,7 +850,7 @@ let rec do_red_nointeract id_thread f prev_state n =
       end
     | NamedProcess(name,l,p) ->
       debug_print "Doing NamedProcess";
-      do_red_nointeract id_thread f { prev_state with
+      do_red_nointeract f { prev_state with
         subprocess = replace_at n (p, name_params, occs, facts, Nothing) prev_state.subprocess;
         comment = RNamedProcess(n, name, l);
         previous_state = Some prev_state } n
@@ -961,8 +961,8 @@ let end_if_success next_f cur_state =
 
 (* Normalize the state after a reduction *)
 
-let rec find_possible_outputs id_thread f cur_state n seen_list = function
-  [] -> f cur_state
+let rec find_possible_outputs f cur_state n seen_list = function
+[] -> f cur_state
   | (Output(tc,t,p,out_occ) as proc, name_params, occs, facts, cache_info)::rest_subprocess when (!Param.active_attacker) ->
     let tclist' =
       match cache_info with
@@ -975,51 +975,51 @@ let rec find_possible_outputs id_thread f cur_state n seen_list = function
     in
     let seen_list' = (proc, name_params, occs, facts, OutputInfo(tclist', cur_state.public)) :: seen_list in
     if tclist' = [] then
-      do_red_nointeract id_thread (fun change_pub cur_state2 ->
+      do_red_nointeract (fun change_pub cur_state2 ->
         if change_pub then
-          end_if_success (find_possible_outputs_rec id_thread f) cur_state2
+          end_if_success (find_possible_outputs_rec f) cur_state2
         else
-          find_possible_outputs id_thread f cur_state2 0 [] cur_state2.subprocess
+          find_possible_outputs f cur_state2 0 [] cur_state2.subprocess
       ) { cur_state with subprocess = List.rev_append seen_list' rest_subprocess } n
     else
-      find_possible_outputs id_thread f cur_state (n+1) seen_list' rest_subprocess
-  | sub_proc::rest_subprocess -> find_possible_outputs id_thread f cur_state (n+1) (sub_proc::seen_list) rest_subprocess
+      find_possible_outputs f cur_state (n+1) seen_list' rest_subprocess
+  | sub_proc::rest_subprocess -> find_possible_outputs f cur_state (n+1) (sub_proc::seen_list) rest_subprocess
 
-and find_possible_outputs_rec id_thread f cur_state3 =
-  find_possible_outputs id_thread f cur_state3 0 [] cur_state3.subprocess
+and find_possible_outputs_rec f cur_state3 =
+  find_possible_outputs f cur_state3 0 [] cur_state3.subprocess
 
 (*      When the process number n has been changed *)
 
-let normal_state id_thread f change_pub cur_state n =
-  do_red_nointeract id_thread (fun change_pub2 cur_state2 ->
+let normal_state f change_pub cur_state n =
+  do_red_nointeract (fun change_pub2 cur_state2 ->
     if change_pub || change_pub2 then
-      end_if_success (find_possible_outputs_rec id_thread f) cur_state2
+      end_if_success (find_possible_outputs_rec f) cur_state2
     else f cur_state2
   ) cur_state n
 
 (*      When two processes have been changed, numbers n1 and n2 *)
 
-let normal_state2 id_thread f change_pub cur_state n1 n2 =
+let normal_state2 f change_pub cur_state n1 n2 =
   let n1',n2' = if n1 < n2 then n1,n2 else n2,n1 in
-  do_red_nointeract id_thread (fun change_pub2 cur_state2 ->
-    do_red_nointeract id_thread (fun change_pub3 cur_state3 ->
+  do_red_nointeract (fun change_pub2 cur_state2 ->
+    do_red_nointeract (fun change_pub3 cur_state3 ->
       if change_pub || change_pub2 || change_pub3 then
-        end_if_success (find_possible_outputs_rec id_thread f) cur_state3
+        end_if_success (find_possible_outputs_rec f) cur_state3
       else f cur_state3
     ) cur_state2 n1'
   ) cur_state n2'
 
 (*      When all processes have been changed *)
 
-let normal_state_all id_thread f change_pub cur_state =
+let normal_state_all f change_pub cur_state =
   let rec do_red_all change_pub2 cur_state2 n =
     if n < 0 then
       if change_pub2 then
-        end_if_success (find_possible_outputs_rec id_thread f) cur_state2
+        end_if_success (find_possible_outputs_rec f) cur_state2
       else
         f cur_state2
     else
-      do_red_nointeract id_thread (fun change_pub3 cur_state3 ->
+      do_red_nointeract (fun change_pub3 cur_state3 ->
         do_red_all (change_pub2 || change_pub3) cur_state3 (n-1)
       ) cur_state2 n
   in
@@ -1155,7 +1155,7 @@ let success_input cur_state n new_occs name_params' mess_term output_loc =
   | _ -> None
 
 
-let do_res_in id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' (mess_term: term) public_status next_f =
+let do_res_in cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' (mess_term: term) public_status next_f =
       (* The real list of processes is (List.rev_append seen_list (InputProcess :: rest_subprocess)) *)
   let (recipe, mess_list, oldpub) =
     match public_status with
@@ -1179,7 +1179,7 @@ let do_res_in id_thread cur_state seen_list rest_subprocess n current_cache_list
     match new_goal_opt with
       Some new_goal -> (* SUCCESS! *) { cur_state with goal = new_goal }
     | None ->
-      auto_cleanup_red id_thread (fun () ->
+      auto_cleanup_red (fun () ->
         match_pattern pat mess_term;
         let name_params'' = update_name_params Always name_params' pat in
         let p' = auto_cleanup (fun () -> copy_process p) in
@@ -1194,7 +1194,7 @@ let do_res_in id_thread cur_state seen_list rest_subprocess n current_cache_list
               fact' :: facts
           | _ -> Parsing_helper.internal_error __POS__ "[Reduction.do_res_in] First element of new_occs should be an input tag."
         in
-        normal_state id_thread next_f false
+        normal_state next_f false
           { cur_state with
             subprocess = List.rev_append seen_list ((p', name_params'', new_occs, new_facts, Nothing) :: rest_subprocess);
             comment = RInput_Success(n, tc', pat, recipe', mess_term);
@@ -1219,7 +1219,7 @@ let optional_eavesdrop state public_channel mess_term =
 
 (* Perform a (Red I/O) reduction between an input and an asynchronous output *)
 
-let do_async_res_io id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_channel next_f =
+let do_async_res_io cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_channel next_f =
   (* The real list of processes is (List.rev_append seen_list (InputProcess :: rest_subprocess))
      It differs from cur_state.subprocess only by the cache of input processes, so when
      looking for an output process, we can use cur_state.subprocess instead. *)
@@ -1243,7 +1243,7 @@ let do_async_res_io id_thread cur_state seen_list rest_subprocess n current_cach
         Some new_goal -> (* SUCCESS! *) { cur_state with goal = new_goal }
       | None ->
         try
-          auto_cleanup_red id_thread(fun () ->
+          auto_cleanup_red (fun () ->
             match_pattern pat mess_term;
             let name_params'' = update_name_params Always name_params' pat in
             let p' = auto_cleanup (fun () -> copy_process p) in
@@ -1281,7 +1281,7 @@ let do_async_res_io id_thread cur_state seen_list rest_subprocess n current_cach
                 (* SUCCESS! *)
               cur_state'
             else
-              normal_state id_thread next_f (cur_state'.public != cur_state.public) cur_state' ninput
+              normal_state next_f (cur_state'.public != cur_state.public) cur_state' ninput
           )
         with Unify ->
           (* The pattern does not match *)
@@ -1317,7 +1317,7 @@ let do_async_res_io id_thread cur_state seen_list rest_subprocess n current_cach
 
 (* Perform a (Res I/O) reduction with a synchronous output *)
 
-let do_sync_res_io id_thread cur_state seen_list rest_subprocess n name_params' new_occs facts tc pat p tc' public_channel next_f   =
+let do_sync_res_io cur_state seen_list rest_subprocess n name_params' new_occs facts tc pat p tc' public_channel next_f   =
   (* The real list of processes is (List.rev_append seen_list (InputProcess :: rest_subprocess))
      It differs from cur_state.subprocess only by the cache of input processes, so when
      looking for an output process, we can use cur_state.subprocess instead. *)
@@ -1361,7 +1361,7 @@ let do_sync_res_io id_thread cur_state seen_list rest_subprocess n name_params' 
             | _ -> Parsing_helper.internal_error __POS__ "[Reduction.do_sync_res_io] First element of new_occs should be an input tag."
           in
           try
-            auto_cleanup_red id_thread (fun () ->
+            auto_cleanup_red (fun () ->
               match_pattern pat t2;
               let name_params'' = update_name_params Always name_params' pat in
               let p' = auto_cleanup (fun () -> copy_process p) in
@@ -1380,7 +1380,7 @@ let do_sync_res_io id_thread cur_state seen_list rest_subprocess n name_params' 
               if attack_found then
                 cur_state2
               else
-                normal_state2 id_thread next_f (cur_state2.public != cur_state.public) cur_state2 noutput n
+                normal_state2 next_f (cur_state2.public != cur_state.public) cur_state2 noutput n
                   )
           with Unify -> (* The pattern does not match *)
             let noutput' = if n > noutput then noutput else noutput-1 in
@@ -1399,7 +1399,7 @@ let do_sync_res_io id_thread cur_state seen_list rest_subprocess n name_params' 
               (* SUCCESS! *)
               cur_state'
             else
-              normal_state id_thread next_f (cur_state'.public != cur_state.public) cur_state' noutput'
+              normal_state next_f (cur_state'.public != cur_state.public) cur_state' noutput'
         with Unify | No_result ->
           find_synchronous_output (noutput+1) rest_subprocess2
       end
@@ -1416,7 +1416,7 @@ let rec find_term stop_l t l =
     | (a::r) ->
       if equal_terms_modulo t a then true else find_term stop_l t r
 
-let do_res_get id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts pat t p mess_term old_tables next_f =
+let do_res_get cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts pat t p mess_term old_tables next_f =
   (* The real list of processes is (List.rev_append seen_list (GetProcess :: rest_subprocess)) *)
   current_cache_list := mess_term :: (!current_cache_list);
   debug_print "Get";
@@ -1424,7 +1424,7 @@ let do_res_get id_thread cur_state seen_list rest_subprocess n current_cache_lis
   debug_print "Ok, the entry is present";
   try
     made_forward_step := true;
-    auto_cleanup_red id_thread (fun () ->
+    auto_cleanup_red (fun () ->
       match_pattern pat mess_term;
       let name_params'' = update_name_params Always name_params' pat in
       let t' = term_evaluation_fail t in
@@ -1440,7 +1440,7 @@ let do_res_get id_thread cur_state seen_list rest_subprocess n current_cache_lis
           | (GetTag _) :: _ -> [fact']
           | _ -> Parsing_helper.internal_error __POS__ "[Reduction.do_res_get] First element of new_occs should be a Get tag."
         in
-        normal_state id_thread next_f false
+        normal_state next_f false
           { cur_state with
             subprocess = List.rev_append seen_list ((p', name_params'', new_occs, new_facts @ facts, Nothing) :: rest_subprocess);
             comment = RGet_In(n, pat, t, mess_term);
@@ -1463,7 +1463,7 @@ exception Backtrack_get
    else of Get and I cannot because an element that
    makes Get succeed already occurs. *)
 
-let rec find_in_out id_thread next_f cur_state n seen_list = function
+let rec find_in_out next_f cur_state n seen_list = function
   | [] -> raise No_result
   | ((Input(tc,pat,p,occ) as proc ,name_params,occs, facts, cache_info)::rest_subprocess) ->
     debug_print ("Trying Input on process " ^ (string_of_int n));
@@ -1481,10 +1481,10 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
               |        [] ->
               let seen_list' = (proc ,name_params,occs, facts,
                                 InputInfo(tc_list', cur_state.public, tc', name_params', new_occs, !current_cache_list)) :: seen_list in
-              find_in_out id_thread next_f cur_state (n+1) seen_list' rest_subprocess
+              find_in_out next_f cur_state (n+1) seen_list' rest_subprocess
               | (mess_term, public_status)::l ->
                 try
-                  do_res_in id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_status next_f
+                  do_res_in cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_status next_f
                 with Unify ->
                   do_l l
             in
@@ -1503,13 +1503,13 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
               begin
                 debug_print "Input on private channel (cached); trying synchronous output";
                 try
-                  do_sync_res_io id_thread cur_state seen_list rest_subprocess n name_params' new_occs facts tc pat p tc' public_channel next_f
+                  do_sync_res_io cur_state seen_list rest_subprocess n name_params' new_occs facts tc pat p tc' public_channel next_f
                 with Unify | No_result ->
-                  find_in_out id_thread next_f cur_state (n+1) seen_list' rest_subprocess
+                  find_in_out next_f cur_state (n+1) seen_list' rest_subprocess
               end
               | (mess_term,_)::l ->
                 try
-                  do_async_res_io id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_channel next_f
+                  do_async_res_io cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_channel next_f
                 with Unify ->
                   do_l l
             in
@@ -1518,7 +1518,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
       | Nothing ->
         let seen_list' = ref ((proc, name_params, occs, facts, cache_info) :: seen_list) in
         try
-          auto_cleanup_red id_thread (fun () ->
+          auto_cleanup_red (fun () ->
             let (tc', name_params') = term_evaluation_name_params (OInChannel(occ)) tc name_params in
             let m = Reduction_helper.new_var_pat1 pat in
             let fact = Pred(Param.get_pred(Mess(cur_state.current_phase, m.btype)), [tc'; Var m]) in
@@ -1540,9 +1540,9 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
                 debug_print "Input on public channel";
                 let current_cache_list = ref [] in
                 try
-                  find_io_rule id_thread (function
+                  find_io_rule (function
                     | [mess_term] ->
-                        do_res_in id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term None next_f
+                        do_res_in cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term None next_f
                     | _ -> Parsing_helper.internal_error __POS__ "input case; reduction.ml"
                   ) new_occs (new_facts @ facts) name_params' [Var m] cur_state.io_rule
                 with Unify ->
@@ -1558,9 +1558,9 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
                 let current_cache_list = ref [] in
                 let public_channel = (not (!Param.active_attacker)) && (tc_list' = []) in
                 try
-                  find_io_rule id_thread (function
+                  find_io_rule (function
                     | [mess_term] ->
-                        do_async_res_io id_thread cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_channel next_f
+                        do_async_res_io cur_state seen_list rest_subprocess n current_cache_list name_params' new_occs facts tc pat p tc' mess_term public_channel next_f
                     | _ -> Parsing_helper.internal_error __POS__ "input case; reduction.ml"
                   ) new_occs (new_facts @ facts) name_params' [Var m] cur_state.io_rule
                 with Unify ->
@@ -1568,11 +1568,11 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
                                  InputInfo(tc_list', cur_state.public, tc', name_params', new_occs, !current_cache_list)) :: seen_list;
                     (* Try a synchronous output *)
                   debug_print "Input on private channel; trying synchronous output";
-                  do_sync_res_io id_thread cur_state seen_list rest_subprocess n name_params' new_occs facts tc pat p tc' public_channel next_f
+                  do_sync_res_io cur_state seen_list rest_subprocess n name_params' new_occs facts tc pat p tc' public_channel next_f
               end
           )
         with Unify | No_result ->
-          find_in_out id_thread next_f cur_state (n+1) (!seen_list') rest_subprocess
+          find_in_out next_f cur_state (n+1) (!seen_list') rest_subprocess
     end
   | ((Get(pat,t,p,p_else, occ) as proc ,name_params,occs, facts, cache_info)::rest_subprocess) ->
     (* TO DO optimize the case with else branch *)
@@ -1593,10 +1593,10 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
             | [] ->
                 let seen_list' = (proc ,name_params,occs, facts,
                                   GetInfo(cur_state.tables, !current_cache_list)) :: seen_list in
-                find_in_out id_thread next_f cur_state (n+1) seen_list' rest_subprocess
+                find_in_out next_f cur_state (n+1) seen_list' rest_subprocess
             | mess_term::l ->
                 try
-                  do_res_get id_thread cur_state seen_list rest_subprocess n current_cache_list name_params new_occs facts pat t p mess_term old_tables next_f
+                  do_res_get cur_state seen_list rest_subprocess n current_cache_list name_params new_occs facts pat t p mess_term old_tables next_f
                 with Unify ->
                   do_l l
         in
@@ -1604,7 +1604,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
       | Nothing ->
         let seen_list' = ref ((proc, name_params, occs, facts, cache_info) :: seen_list) in
         try
-          auto_cleanup_red id_thread (fun () ->
+          auto_cleanup_red (fun () ->
             let m = Reduction_helper.new_var_pat1 pat in
             let fact = Pred(Param.get_pred(Table(cur_state.current_phase)), [Var m]) in
             let (new_occs,new_facts) =
@@ -1618,9 +1618,9 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
 
             let current_cache_list = ref [] in
             try
-              find_io_rule id_thread (function
+              find_io_rule (function
             [mess_term] ->
-              do_res_get id_thread cur_state seen_list rest_subprocess n current_cache_list name_params new_occs facts pat t p mess_term [] next_f
+              do_res_get cur_state seen_list rest_subprocess n current_cache_list name_params new_occs facts pat t p mess_term [] next_f
               | _ -> Parsing_helper.internal_error __POS__ "get case; reduction.ml"
               ) new_occs (new_facts @ facts) name_params [Var m] cur_state.io_rule
             with Unify ->
@@ -1629,7 +1629,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
                 begin
                   try
                     let new_occs = (GetTagElse occ) :: occs in
-                    find_io_rule id_thread (function
+                    find_io_rule (function
                   [] ->
                             (* We should take the else branch, since a clause uses that branch *)
                     debug_print "Get: else branch should be taken";
@@ -1654,7 +1654,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
                     else
                       begin
                         debug_print "Get: taking the else branch";
-                        normal_state id_thread next_f false
+                        normal_state next_f false
                           { cur_state with
                             subprocess = List.rev_append seen_list ((p_else, name_params, new_occs, facts, Nothing) :: rest_subprocess);
                                     (*pat*)
@@ -1676,7 +1676,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
                 end
           )
         with Unify | No_result ->
-          find_in_out id_thread next_f cur_state (n+1) (!seen_list') rest_subprocess
+          find_in_out next_f cur_state (n+1) (!seen_list') rest_subprocess
         | Backtrack_get -> raise No_result
     end
   | ((Insert(t,p,occ), name_params, occs, facts, cache_info) as sub_proc)::rest_subprocess ->
@@ -1685,7 +1685,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
       let new_occs = (InsertTag occ) :: occs in
       let new_element_inserted = ref false in
       try
-        auto_cleanup_red id_thread (fun () ->
+        auto_cleanup_red (fun () ->
           let t' = term_evaluation_fail t in
           let already_in = List.exists (equal_terms_modulo t') cur_state.tables in
           new_element_inserted := not already_in;
@@ -1707,7 +1707,7 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
           if success then
             new_state
           else
-            normal_state id_thread next_f false new_state n
+            normal_state next_f false new_state n
         )
       with Unify ->
         Parsing_helper.internal_error __POS__ "Insert: Unify/FailOneSideOnly should have been detected on the first try of that insert"
@@ -1715,12 +1715,12 @@ let rec find_in_out id_thread next_f cur_state n seen_list = function
            (* The attack reconstruction failed after doing the insert.
               Try not doing it, in case that allows executing the else branch of a Get. *)
         if (!has_backtrack_get) && (!new_element_inserted) then
-          find_in_out id_thread next_f cur_state (n+1) (sub_proc :: seen_list) rest_subprocess
+          find_in_out next_f cur_state (n+1) (sub_proc :: seen_list) rest_subprocess
         else
           raise No_result
     end
   | sub_proc::rest_subprocess ->
-    find_in_out id_thread next_f cur_state (n+1) (sub_proc :: seen_list) rest_subprocess
+    find_in_out next_f cur_state (n+1) (sub_proc :: seen_list) rest_subprocess
 
 (* Handle phases *)
 
@@ -1820,7 +1820,7 @@ let update_hyp_not_matched old_phase new_phase cur_state =
              hyp_not_matched = hyp::state.hyp_not_matched }
       ) cur_state' hyp_list
 
-let do_phase id_thread next_f cur_state =
+let do_phase next_f cur_state =
   match find_phase2 cur_state with
     None ->
       if !made_forward_step then
@@ -1851,32 +1851,32 @@ let do_phase id_thread next_f cur_state =
           current_phase = n;
           comment = RPhase(n) }
       in
-      normal_state_all id_thread next_f (cur_state3.public != cur_state.public) cur_state3
+      normal_state_all next_f (cur_state3.public != cur_state.public) cur_state3
 
 (* Put all reductions together *)
 
-let reduction_step id_thread next_f state =
+let reduction_step next_f state =
   try
-    find_in_out id_thread next_f state 0 [] state.subprocess
+    find_in_out next_f state 0 [] state.subprocess
   with No_result ->
-    do_phase id_thread next_f state
+    do_phase next_f state
 
-let rec reduction_backtrack id_thread state =
-  reduction_step id_thread (reduction_backtrack id_thread) state
+let rec reduction_backtrack state =
+  reduction_step reduction_backtrack state
 
-let rec reduction_nobacktrack id_thread state =
+let rec reduction_nobacktrack state =
   try
-    reduction_step id_thread (fun state' -> raise (Reduced state')) state
+    reduction_step (fun state' -> raise (Reduced state')) state
   with Reduced one_red_state ->
     display_trace one_red_state;
     Param.display_init_state := false;
-    reduction_nobacktrack id_thread (Display.forget_trace_info one_red_state)
+    reduction_nobacktrack (Display.forget_trace_info one_red_state)
 
-let reduction id_thread state =
+let reduction state =
   if !Param.trace_backtracking then
-    reduction_backtrack id_thread state
+    reduction_backtrack state
   else
-    reduction_nobacktrack id_thread state
+    reduction_nobacktrack state
 
 (* Build the goal for weak secrets *)
 
@@ -2026,22 +2026,14 @@ let new_sid() =
 let add_sid (v,f) l =
   if not (List.exists (fun (v',f') -> f == f') (!l)) then l := (v,f) :: (!l)
 
-let rec get_sid id_thread = 
-  let is_TLink_FunApp lst = match lst.(id_thread) with TLink (FunApp(sid,[])) -> true | _ -> false in
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  function
-    Var { link = lst } when is_TLink_FunApp lst ->
-      let TLink (FunApp(sid,[])) = lst.(id_thread) in
-      (lst.(id_thread), sid)
-  | Var { link = lst } when is_TLink lst -> let TLink t = lst.(id_thread) in get_sid id_thread t
-  | t ->
-    Display.Text.display_term t;
+let get_sid_error t = 
+  Display.Text.display_term t;
     begin
       match t with
         Var v ->
           begin
             print_string " Var ";
-            match v.link.(id_thread) with
+            match Terms.get_link v with
               NoLink -> print_string " NoLink "
             | TLink _ -> print_string " TLink "
             | VLink _ -> print_string " VLink "
@@ -2052,38 +2044,47 @@ let rec get_sid id_thread =
     end;
     Parsing_helper.internal_error __POS__ "Constant session ids should be function applications with no arguments stored as links of variables"
 
-let rec has_sid_term id_thread sid = 
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  function
-  | Var { link = lst } when is_TLink lst -> let TLink t = lst.(id_thread) in has_sid_term id_thread sid t
-  | Var _ -> false
-  | FunApp(f,l) ->
-    (f == sid) || (List.exists (has_sid_term id_thread sid) l)
+let rec get_sid = function
+  | Var v as t->
+      begin match Terms.get_link v with
+      | TLink (FunApp(sid,[])) -> (v, sid)
+      | TLink t' -> get_sid t'
+      | _ -> get_sid_error t
+      end
+  | t -> get_sid_error t
+    
+let rec has_sid_term sid = function
+  | Var v ->
+      begin match Terms.get_link v with
+      | TLink t -> has_sid_term sid t
+      | _ -> false
+      end
+  | FunApp(f,l) -> (f == sid) || (List.exists (has_sid_term sid) l)
 
-let find_sid_fact id_thread end_sid no_dup_begin_sids = function
+let find_sid_fact end_sid no_dup_begin_sids = function
   | Pred(p,[_;occ]) when p == Param.inj_event_pred_block ->
-      if not (has_sid_term id_thread end_sid occ)
+      if not (has_sid_term end_sid occ)
       then
         begin match occ with
           | FunApp({ f_cat = Name info; _},args) ->
               List.iter2 (fun t -> function
-                | MSid _ -> add_sid (get_sid id_thread t) no_dup_begin_sids
+                | MSid _ -> add_sid (get_sid t) no_dup_begin_sids
                 | _ -> ()
               ) args info.prev_inputs_meaning
           | _ -> Parsing_helper.internal_error __POS__ "[Reduction.find_sid_fact] Expecting a name."
         end
   | _ -> ()
 
-(* let rec find_sid_tree id_thread end_sid all_sids no_dup_begin_sids t =
-  find_sid_fact id_thread end_sid no_dup_begin_sids t.thefact;
+let rec find_sid_tree end_sid all_sids no_dup_begin_sids t =
+  find_sid_fact end_sid no_dup_begin_sids t.thefact;
   match t.desc with
   | FHAny | FEmpty -> ()
   | FRemovedWithProof _ | FRemovedBySimplification -> ()
-  | FEquation t -> find_sid_tree id_thread end_sid all_sids no_dup_begin_sids t
+  | FEquation t -> find_sid_tree end_sid all_sids no_dup_begin_sids t
   | FRule(_,tags,constra,tl,added_dl) ->
-      List.iter (find_sid_tree id_thread end_sid all_sids no_dup_begin_sids) tl;
+      List.iter (find_sid_tree end_sid all_sids no_dup_begin_sids) tl;
       List.iter (fun (_,_,factl) ->
-        List.iter (find_sid_tree id_thread end_sid all_sids no_dup_begin_sids) factl
+        List.iter (find_sid_tree end_sid all_sids no_dup_begin_sids) factl
       ) added_dl;
 
       match tags with
@@ -2092,10 +2093,10 @@ let find_sid_fact id_thread end_sid no_dup_begin_sids = function
           if hsl contains ReplTag(_,count_params), then the count_params-th element of nlrev is a session id. *)
           let nlrev = List.rev nl in
           List.iter (function
-            | ReplTag(_,count_params) -> add_sid (get_sid id_thread (List.nth nlrev count_params)) all_sids
+            | ReplTag(_,count_params) -> add_sid (get_sid (List.nth nlrev count_params)) all_sids
             | _ -> ()
           ) hsl
-      |	_ -> () *)
+      |	_ -> ()
 
 
 (* For injectivity: [check_query_falsified q final_state] checks
@@ -2196,44 +2197,46 @@ let build_goal_index_and_event_table final_state =
      have been executed. *)
   List.rev !event_step_table, List.map (fun (_,step) -> step) (List.sort (fun (i,_) (i',_) -> compare i i') !id_goal_step_mapping)
 
-let rec unify_occurrence_term id_thread t1 t2 = 
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  let is_SLink lst = match lst.(id_thread) with SLink _ -> true | _ -> false in
-  match t1, t2 with
+let rec unify_occurrence_term t1 t2 = match t1, t2 with
   | Var v1, Var v2 when v1 == v2 -> ()
-  | Var { link = lst; _ }, t when is_TLink lst -> let TLink t' = lst.(id_thread) in unify_occurrence_term id_thread t t'
-  | t, Var { link = lst; _ } when is_TLink lst -> let TLink t' = lst.(id_thread) in unify_occurrence_term id_thread t t'
-  | Var { link = lst; _ }, Var { link = lst'; _ } when (is_SLink lst && is_SLink lst') -> 
-      let SLink i = lst.(id_thread) in
-      let SLink j = lst'.(id_thread) in
-      if i <> j then raise Unify
-  | Var { link = lst; _ }, Var v when is_SLink lst -> let SLink i = lst.(id_thread) in Terms.link v (SLink i)
-  | Var v, Var { link = lst; _ } when is_SLink lst -> let SLink i = lst.(id_thread) in Terms.link v (SLink i)
-  | Var v, _ -> Terms.link ~id_thread:id_thread v (TLink t2) (* In this case, none have link. *)
+  | Var v1, Var v2 ->
+      begin match Terms.get_link v1, Terms.get_link v2 with
+      | TLink t', _  -> unify_occurrence_term t2 t'
+      | _, TLink t' -> unify_occurrence_term t1 t'
+      | SLink i, SLink j -> if i <> j then raise Unify
+      | SLink i, _ -> Terms.link v2 (SLink i)
+      | _, SLink i -> Terms.link v1 (SLink i)
+      | _ -> Terms.link v1 (TLink t2) (* In this case, none have link. *)
+      end
+  | Var v, _ ->
+      begin match Terms.get_link v with
+      | TLink t' -> unify_occurrence_term t2 t'
+      | _ -> Terms.link v (TLink t2)
+      end
   | _ -> Parsing_helper.internal_error __POS__ "[Reduction.unify_occurrence_term] Occurrence variables should only be variables"
 
-let rec link_occurrence id_thread occ step = 
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  let is_SLink lst = match lst.(id_thread) with SLink _ -> true | _ -> false in
-  let is_NoLink lst = match lst.(id_thread) with NoLink -> true | _ -> false in
-  match occ with
-  | Var ({ link = lst; _ } as v) when is_NoLink lst -> Terms.link ~id_thread:id_thread v (SLink step)
-  | Var ({ link = lst; _}) when is_TLink lst -> let TLink occ' = lst.(id_thread) in link_occurrence id_thread occ' step
-  | Var ({ link = lst; _}) when is_SLink lst -> Parsing_helper.internal_error __POS__ "[Reduction.link_occurrence] the occurrence term is already linked to a step."
+let rec link_occurrence occ step = match occ with
+  | Var v ->
+      begin match Terms.get_link v with
+      | NoLink -> Terms.link v (SLink step)
+      | TLink occ' -> link_occurrence occ' step
+      | SLink _ ->  Parsing_helper.internal_error __POS__ "[Reduction.link_occurrence] the occurrence term is already linked to a step."
+      | _ -> Parsing_helper.internal_error __POS__ "[Reduction.link_occurrence] unexpected term."
+      end
   | _ -> Parsing_helper.internal_error __POS__ "[Reduction.link_occurrence] unexpected term."
 
-let rec get_step_from_occurrence_term id_thread = 
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  let is_SLink lst = match lst.(id_thread) with SLink _ -> true | _ -> false in
-  let is_NoLink lst = match lst.(id_thread) with NoLink -> true | _ -> false in
-  function
-  | Var { link = lst; _ } when is_NoLink lst -> None
-  | Var ({ link = lst; _}) when is_TLink lst -> let TLink occ = lst.(id_thread) in get_step_from_occurrence_term id_thread occ
-  | Var ({ link = lst; _}) when is_SLink lst -> let SLink i = lst.(id_thread) in Some i
+let rec get_step_from_occurrence_term = function
+  | Var v ->
+      begin match Terms.get_link v with 
+      | NoLink -> None
+      | TLink occ -> get_step_from_occurrence_term occ
+      | SLink i -> Some i
+      | _ -> Parsing_helper.internal_error __POS__ "[Reduction.get_step_from_occurrence_term] unexpected term."
+      end
   | _ -> Parsing_helper.internal_error __POS__ "[Reduction.get_step_from_occurrence_term] unexpected term."
 
-let get_step_from_query_event id_thread = function
-  | QSEvent(_,_,Some occ,_) -> get_step_from_occurrence_term id_thread occ
+let get_step_from_query_event = function
+  | QSEvent(_,_,Some occ,_) -> get_step_from_occurrence_term occ
   | _ -> Parsing_helper.internal_error __POS__ "[Reduction.get_step_from_query_event] unexpected query event"
 
 (* We are looking for an event that occurs before [max_step]
@@ -2267,7 +2270,7 @@ let update_max_step_with_ord_fun max_step eord_fun prem_steps = match eord_fun w
    with the various possibilities until one succeeds, that is,
    does not raise [Unify].
 *)
-let rec extract_conclusion_query id_thread restwork nested_op = function
+let rec extract_conclusion_query restwork nested_op = function
   | QTrue -> restwork ([],[],Terms.true_constraints,[])
   | QFalse -> raise Unify
   | QConstraints q -> restwork ([],[],q,[])
@@ -2283,7 +2286,7 @@ let rec extract_conclusion_query id_thread restwork nested_op = function
       if Terms.get_term_type t1 = Param.occurrence_type
       then
         Terms.auto_cleanup (fun () ->
-          unify_occurrence_term id_thread t1 t2;
+          unify_occurrence_term t1 t2;
           restwork ([],[],Terms.true_constraints,[])
         )
       else
@@ -2294,24 +2297,24 @@ let rec extract_conclusion_query id_thread restwork nested_op = function
   | QEvent (QSEvent2 _) -> Parsing_helper.internal_error __POS__ "[Reduction.extract_conclusion_query] QSEvent2 should only occur in query for biprocesses."
   | QEvent (QMax _ | QMaxq _) -> Parsing_helper.internal_error __POS__ "[Reduction.extract_conclusion_query] QMax and QMaxq shoud not occur in the query for biprocesses."
   | NestedQuery(Before([ev],concl)) ->
-      extract_conclusion_query id_thread (fun (evl,facts,constra,occ_neq) ->
+      extract_conclusion_query  (fun (evl,facts,constra,occ_neq) ->
         restwork (((nested_op,ev)::evl),facts,constra,occ_neq)
       ) (Some ev) concl
   | NestedQuery _ -> Parsing_helper.internal_error __POS__ "[Reduction.extract_conclusion_query] Nested queries should have only one event as premise."
   | QAnd(concl1,concl2) ->
-      extract_conclusion_query id_thread (fun (evl1, facts1, constra1, occ_neq1) ->
-        extract_conclusion_query id_thread (fun (evl2, facts2, constra2, occ_neq2) ->
+      extract_conclusion_query (fun (evl1, facts1, constra1, occ_neq1) ->
+        extract_conclusion_query (fun (evl2, facts2, constra2, occ_neq2) ->
           restwork (evl1@evl2, facts1@facts2, Terms.wedge_constraints constra1 constra2, occ_neq1@occ_neq2)
         ) nested_op concl2
       ) nested_op concl1
   | QOr(concl1,concl2) ->
       try
-        extract_conclusion_query id_thread restwork nested_op concl1
+        extract_conclusion_query restwork nested_op concl1
       with Unify ->
-        extract_conclusion_query id_thread restwork nested_op concl2
+        extract_conclusion_query restwork nested_op concl2
 
 (* We assume here that the occurrence variable of ev0 is not linked to a step *)
-let match_inj_event id_thread restwork max_step ev0 occ0 k inj_steps b event_table =
+let match_inj_event restwork max_step ev0 occ0 k inj_steps b event_table =
   (* We first look whether there exists an event in the table with same (k,inj_steps,b) *)
   try
     let (ev,step,_) = List.find (fun (_,_,usage_list) -> List.mem (k,inj_steps,b) usage_list) event_table in
@@ -2319,7 +2322,7 @@ let match_inj_event id_thread restwork max_step ev0 occ0 k inj_steps b event_tab
     then
       TermsEq.unify_modulo (fun () ->
         Terms.auto_cleanup (fun () ->
-          link_occurrence id_thread occ0 step;
+          link_occurrence occ0 step;
           (* The event table does not need modification since (k,inj_steps,b) is already in it. *)
           restwork event_table
         )
@@ -2341,7 +2344,7 @@ let match_inj_event id_thread restwork max_step ev0 occ0 k inj_steps b event_tab
               let usage_list' = (k,inj_steps,b) :: usage_list in
               TermsEq.unify_modulo (fun () ->
                 Terms.auto_cleanup (fun () ->
-                  link_occurrence id_thread occ0 step;
+                  link_occurrence occ0 step;
                   restwork (List.rev_append seen_event_table ((ev,step,usage_list')::rest))
                 )
               ) ev0 ev
@@ -2379,7 +2382,7 @@ let match_one_inj_event restwork ev0 step0 k inj_steps b event_table =
     explore [] event_table
 
 (* We assume here that the occurrence variable of ev0 is not linked to a step *)
-let match_non_inj_event id_thread restwork max_step ev0 occ0 event_table =
+let match_non_inj_event restwork max_step ev0 occ0 event_table =
   let rec explore = function
     | [] -> raise Unify
     | (_,step,_)::_ when step > max_step ->
@@ -2390,7 +2393,7 @@ let match_non_inj_event id_thread restwork max_step ev0 occ0 event_table =
         try
           TermsEq.unify_modulo (fun () ->
             Terms.auto_cleanup (fun () ->
-              link_occurrence id_thread occ0 step;
+              link_occurrence occ0 step;
               restwork event_table
             )
           ) ev0 ev
@@ -2405,13 +2408,13 @@ let match_one_non_inj_event restwork ev0 step0 event_table =
     restwork event_table
   ) ev0 ev
 
-let match_query_event id_thread restwork max_step prem_steps inj_steps b event_table = function
+let match_query_event restwork max_step prem_steps inj_steps b event_table = function
   | QSEvent(inj,ord_data,Some occ,ev) ->
       let max_step' = update_max_step_with_ord_fun max_step ord_data.ord_target prem_steps in
-      begin match get_step_from_occurrence_term id_thread occ, inj with
+      begin match get_step_from_occurrence_term occ, inj with
         | None, None ->
             (* Non injective with occurrence variable not linked *)
-            match_non_inj_event id_thread restwork max_step' ev occ event_table
+            match_non_inj_event restwork max_step' ev occ event_table
         | Some step, None ->
             (* Non injective with occurrence variable linked *)
             if step <= max_step'
@@ -2419,7 +2422,7 @@ let match_query_event id_thread restwork max_step prem_steps inj_steps b event_t
             else raise Unify
         | None, Some k ->
             (* Injective with occurrence variable not linked *)
-            match_inj_event id_thread restwork max_step' ev occ k inj_steps b event_table
+            match_inj_event restwork max_step' ev occ k inj_steps b event_table
         | Some step, Some k ->
             (* Injective with occurrence variable linked *)
             if step <= max_step'
@@ -2435,37 +2438,37 @@ let match_query_event id_thread restwork max_step prem_steps inj_steps b event_t
    however, it may happen that the step is already set by an equality
    between time variables, so we rematch the event below in function [match_query_event_list].
    We return the event to match and the list of remaining events. *)
-let rec search_next_event id_thread = function
+let rec search_next_event = function
   | [] -> Parsing_helper.internal_error __POS__ "[Reduction.search_next_event] We should find an event"
   | ((None,_) as head)::q -> head, q
-  | ((Some(QSEvent(_,_,Some occ,_)),_) as head)::q when get_step_from_occurrence_term id_thread occ <> None -> head,q
+  | ((Some(QSEvent(_,_,Some occ,_)),_) as head)::q when get_step_from_occurrence_term occ <> None -> head,q
   | head::q ->
-      let (elt,q') = search_next_event id_thread q in
+      let (elt,q') = search_next_event q in
       (elt,head::q')
 
-let rec match_query_event_list id_thread restwork max_step prem_steps inj_steps b event_table evl =
+let rec match_query_event_list restwork max_step prem_steps inj_steps b event_table evl =
   if evl = []
   then restwork event_table
   else
-    let ((nested_ev_op,ev),evl') = search_next_event id_thread evl in
+    let ((nested_ev_op,ev),evl') = search_next_event evl in
     match nested_ev_op with
       | None ->
-          match_query_event id_thread (fun event_table1 ->
-            match_query_event_list id_thread restwork max_step prem_steps inj_steps b event_table1 evl'
+          match_query_event (fun event_table1 ->
+            match_query_event_list restwork max_step prem_steps inj_steps b event_table1 evl'
           ) max_step prem_steps inj_steps b event_table ev
       | Some nested_ev ->
-          match_query_event id_thread (fun event_table1 ->
-            match get_step_from_query_event id_thread nested_ev with
+          match_query_event (fun event_table1 ->
+            match get_step_from_query_event nested_ev with
               | Some step ->
                   let max_step' = min step max_step in
-                  match_query_event id_thread (fun event_table2 ->
-                    match_query_event_list id_thread restwork max_step prem_steps inj_steps b event_table2 evl'
+                  match_query_event (fun event_table2 ->
+                    match_query_event_list restwork max_step prem_steps inj_steps b event_table2 evl'
                   ) max_step' prem_steps inj_steps b event_table1 ev
               | None -> Parsing_helper.internal_error __POS__ "[Reduction.match_query_event_list] The occurrence term should have been linked by now."
           ) max_step prem_steps inj_steps b event_table nested_ev
 
-let check_occurrence_neq id_thread occ_neq_l =
-  List.iter (fun (i,j) -> match get_step_from_occurrence_term id_thread i, get_step_from_occurrence_term id_thread j with
+let check_occurrence_neq occ_neq_l =
+  List.iter (fun (i,j) -> match get_step_from_occurrence_term i, get_step_from_occurrence_term j with
     | Some step, Some step' ->
         if step = step'
         then raise Unify
@@ -2474,10 +2477,10 @@ let check_occurrence_neq id_thread occ_neq_l =
 
 let bad_fact = Pred(Param.bad_pred, [])
 
-let check_conclusion_query id_thread restwork max_step prem_steps inj_steps b event_table concl_q =
-  extract_conclusion_query id_thread (fun (evlist, facts, constra, occ_neq) ->
-    match_query_event_list id_thread (fun event_table' ->
-      check_occurrence_neq id_thread occ_neq;
+let check_conclusion_query restwork max_step prem_steps inj_steps b event_table concl_q =
+  extract_conclusion_query (fun (evlist, facts, constra, occ_neq) ->
+    match_query_event_list (fun event_table' ->
+      check_occurrence_neq occ_neq;
 
       (* I filter out blocking predicates.
          I will never be able to prove that they are false,
@@ -2599,7 +2602,7 @@ let all_events_to_check concl_q_accu concl_q occ_step goal_step evl event_table 
 
   search_event_list [] occ_step ev_term_occ_l event_table
 
-let rec check_all_conclusion_query id_thread restwork max_step b event_table = function
+let rec check_all_conclusion_query restwork max_step b event_table = function
   | [] -> restwork event_table
   | (inj_steps,prem_steps,occ_steps,concl_q)::rest_concl ->
       Terms.auto_cleanup (fun () ->
@@ -2607,8 +2610,8 @@ let rec check_all_conclusion_query id_thread restwork max_step b event_table = f
           | (Var v,i) -> Terms.link v (SLink i)
           | _ -> Parsing_helper.internal_error __POS__ "[Reduction.check_query_falsified_rec] Unexpected term."
         ) occ_steps;
-        check_conclusion_query id_thread (fun event_table1 ->
-          check_all_conclusion_query id_thread restwork max_step b event_table1 rest_concl
+        check_conclusion_query (fun event_table1 ->
+          check_all_conclusion_query restwork max_step b event_table1 rest_concl
         ) max_step prem_steps inj_steps b event_table concl_q
       )
 
@@ -2668,7 +2671,7 @@ let rec are_non_inj_event_and_facts_equal ev_query goall1 goall2 step_goall1 ste
       else false
   | _ -> Parsing_helper.internal_error __POS__ "[Reduction.are_non_inj_event_and_facts_equal] The goal of the trace does not match the query"
 
-let rec check_query_falsified_rec id_thread restwork max_step b event_table constra_prem concl_q gen_occ_step gen_goal_step evl goall goal_stepl =
+let rec check_query_falsified_rec restwork max_step b event_table constra_prem concl_q gen_occ_step gen_goal_step evl goall goal_stepl =
   match (evl, goall, goal_stepl) with
     [], [], [] ->
       (* The query does not contain any injective event. *)
@@ -2687,7 +2690,7 @@ let rec check_query_falsified_rec id_thread restwork max_step b event_table cons
             | (Var v,i) -> Terms.link v (SLink i)
             | _ -> Parsing_helper.internal_error __POS__ "[Reduction.check_query_falsified_rec] Unexpected term."
           ) gen_occ_step';
-          check_conclusion_query id_thread restwork max_step gen_goal_step [] b event_table concl_q'
+          check_conclusion_query restwork max_step gen_goal_step [] b event_table concl_q'
         )
   | QSEvent(Some _,_,_,_)::_, _, _ ->
       (* The injective events always appear first before ==> in the query.
@@ -2695,16 +2698,16 @@ let rec check_query_falsified_rec id_thread restwork max_step b event_table cons
          they always appear last here. *)
       let gen_occ_step_concl_q_accu = ref [] in
       all_events_to_check gen_occ_step_concl_q_accu concl_q gen_occ_step gen_goal_step evl event_table constra_prem;
-      check_all_conclusion_query id_thread restwork max_step b event_table !gen_occ_step_concl_q_accu
+      check_all_conclusion_query restwork max_step b event_table !gen_occ_step_concl_q_accu
   | QNeq ((t1,_),(t2,_))::rest_evl, _, _ -> 
       let constra_prem' = Terms.wedge_constraints (Terms.constraints_of_neq t1 t2) constra_prem in
-      check_query_falsified_rec id_thread restwork max_step b event_table constra_prem' concl_q gen_occ_step gen_goal_step rest_evl goall goal_stepl
+      check_query_falsified_rec restwork max_step b event_table constra_prem' concl_q gen_occ_step gen_goal_step rest_evl goall goal_stepl
   | QGeq ((t1,_),(t2,_))::rest_evl, _, _ -> 
       let constra_prem' = Terms.wedge_constraints (Terms.constraints_of_geq t1 t2) constra_prem in
-      check_query_falsified_rec id_thread restwork max_step b event_table constra_prem' concl_q gen_occ_step gen_goal_step rest_evl goall goal_stepl
+      check_query_falsified_rec restwork max_step b event_table constra_prem' concl_q gen_occ_step gen_goal_step rest_evl goall goal_stepl
   | QIsNat t ::rest_evl, _, _ -> 
       let constra_prem' = Terms.wedge_constraints (Terms.constraints_of_is_nat t) constra_prem in
-      check_query_falsified_rec id_thread restwork max_step b event_table constra_prem' concl_q gen_occ_step gen_goal_step rest_evl goall goal_stepl
+      check_query_falsified_rec restwork max_step b event_table constra_prem' concl_q gen_occ_step gen_goal_step rest_evl goall goal_stepl
   | ev::rest_evl, (Fact(goal,_,_) | EventGoal(goal,_))::rest_goall, step::rest_goal_stepl ->
       let (l,l',new_gen_occ_step) =
         match ev, goal with
@@ -2720,7 +2723,7 @@ let rec check_query_falsified_rec id_thread restwork max_step b event_table cons
         try
           TermsEq.unify_modulo_list (fun () ->
             try
-              check_query_falsified_rec id_thread restwork max_step b event_table constra_prem concl_q new_gen_occ_step (step::gen_goal_step) rest_evl rest_goall rest_goal_stepl
+              check_query_falsified_rec restwork max_step b event_table constra_prem concl_q new_gen_occ_step (step::gen_goal_step) rest_evl rest_goall rest_goal_stepl
             with Unify -> raise FalseQuery
           ) l l'
         with
@@ -2733,7 +2736,7 @@ let rec check_query_falsified_rec id_thread restwork max_step b event_table cons
   | _ ->
       Parsing_helper.internal_error __POS__ "The goal of the trace does not match the query (3)"
 
-let check_query_falsified id_thread q final_state =
+let check_query_falsified q final_state =
   (* Include in [event_table] the executed events *)
   if has_name_q q then
     begin
@@ -2789,8 +2792,8 @@ let check_query_falsified id_thread q final_state =
 
             try
               Parsing_helper.debug_msg "Trace reconstruction on injective trace";
-              check_query_falsified_rec id_thread (fun event_table1 ->
-                check_query_falsified_rec id_thread (fun _ ->
+              check_query_falsified_rec (fun event_table1 ->
+                check_query_falsified_rec (fun _ ->
                   (* The trace may not falsify the query *)
                   Display.Def.print_line "I could not confirm that the previous trace falsifies the query.";
                   false
@@ -2801,7 +2804,7 @@ let check_query_falsified id_thread q final_state =
             (* The trace corresponds to a standard clause *)
             try
               Parsing_helper.debug_msg "Trace reconstruction on normal trace";
-              check_query_falsified_rec id_thread (fun _ ->
+              check_query_falsified_rec (fun _ ->
                 (* The trace may not falsify the query *)
                 Display.Def.print_line "I could not confirm that the previous trace falsifies the query.";
                 false
@@ -2813,7 +2816,7 @@ let check_query_falsified id_thread q final_state =
 
 (* Main trace reconstruction function *)
 
-let build_trace id_thread state =
+let build_trace state =
   if !debug_find_io_rule then
     begin
       auto_cleanup (fun () ->
@@ -2821,7 +2824,7 @@ let build_trace id_thread state =
         List.iter display_rule state.io_rule)
     end;
   (* We start a new trace: empty the event table *)
-  let final_state = normal_state id_thread (reduction id_thread) true state 0 in
+  let final_state = normal_state reduction true state 0 in
   display_trace final_state;
   if !Param.html_output then
     Display.Html.display_goal Display.term_to_term noninterftest_to_string final_state true
@@ -2834,7 +2837,7 @@ let is_inj = function
       (* The injective event, if any, always appears first before ==> in the query *)
   | _ -> false
 
-let do_reduction ?(id_thread=0) opt_query axioms tree =
+let do_reduction opt_query axioms tree =
   (*  Profile.start();  *)
   made_forward_step := true;
   failed_traces := 0;
@@ -2917,7 +2920,7 @@ let do_reduction ?(id_thread=0) opt_query axioms tree =
             let state = close_public_initial state in
             (* print_string ((string_of_int (List.length state.io_rule)) ^ " io rules");
                print_newline(); *)
-            let (final_state, r) = build_trace id_thread state in
+            let (final_state, r) = build_trace state in
             let dot_err = Reduction_helper.create_pdf_trace Display.term_to_term noninterftest_to_string "" final_state in
             if !Param.html_output then
               begin
@@ -2932,7 +2935,7 @@ let do_reduction ?(id_thread=0) opt_query axioms tree =
               (match opt_query with
                 Some q ->
                   (* When the query is present, verify that the trace really falsifies the query *)
-                  check_query_falsified id_thread q final_state
+                  check_query_falsified q final_state
               | None -> true)
             in
             (* Check the validity of the trace w.r.t. axioms and restrictions *)
@@ -2965,10 +2968,10 @@ let do_reduction ?(id_thread=0) opt_query axioms tree =
       print_string "You have probably found a false attack due to the limitations\non depth of terms and/or number of hypotheses.\nI do not know if there is a real attack.\n";
       false
 
-let do_reduction ?(id_thread=0) opt_query axioms tree =
+let do_reduction opt_query axioms tree =
   let res =
     Display.auto_cleanup_display (fun () ->
-      do_reduction ~id_thread:id_thread opt_query axioms tree
+      do_reduction opt_query axioms tree
         )
   in
   cleanup ();

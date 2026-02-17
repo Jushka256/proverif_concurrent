@@ -360,30 +360,31 @@ let handle_bad_bound_names state action e =
 (** Transformation between term and enriched_term *)
 
 
-let rec term_of_enriched_term id_thread et = 
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
-  match et.et_desc with
-  | ET_Var { link = lst; _ } when is_TLink lst -> let TLink t = lst.(id_thread) in t (* follows links introduced by pattern_of_enriched_pattern, case EP_PatVar *)
-  | ET_Var v -> Var v
-  | ET_FunApp(f,args) -> FunApp(f,List.map (term_of_enriched_term id_thread) args)
+let rec term_of_enriched_term et = match et.et_desc with
+  | ET_Var v -> 
+      begin match Terms.get_link v with
+      | TLink t -> t  (* follows links introduced by pattern_of_enriched_pattern, case EP_PatVar *)
+      | _ -> Var v
+      end
+  | ET_FunApp(f,args) -> FunApp(f,List.map term_of_enriched_term args)
   | ET_Test(econd,ethen,eelse) ->
-      let cond = term_of_enriched_term id_thread econd in
+      let cond = term_of_enriched_term econd in
       if Terms.equal_terms cond Terms.true_term
-      then term_of_enriched_term id_thread ethen
+      then term_of_enriched_term ethen
       else if Terms.equal_terms cond Terms.false_term 
-      then term_of_enriched_term id_thread eelse
+      then term_of_enriched_term eelse
       else 
-        let tthen = term_of_enriched_term id_thread ethen in
-        let telse = term_of_enriched_term id_thread eelse in
+        let tthen = term_of_enriched_term ethen in
+        let telse = term_of_enriched_term eelse in
         let gtest_symb = Terms.gtest_fun ethen.et_type in
         FunApp(gtest_symb, [cond; tthen; telse])
   | ET_Let(epat,eexp,ethen,eelse) ->
-      let exp = term_of_enriched_term id_thread eexp in
-      let telse = term_of_enriched_term id_thread eelse in
+      let exp = term_of_enriched_term eexp in
+      let telse = term_of_enriched_term eelse in
 
-      pattern_of_enriched_pattern id_thread (fun cond_pat ->
+      pattern_of_enriched_pattern (fun cond_pat ->
         (* The term [cond_pat] is guaranteed to not fail by construction *)
-        let tthen = term_of_enriched_term id_thread ethen in
+        let tthen = term_of_enriched_term ethen in
         if Terms.equal_terms cond_pat Terms.true_term
         then tthen
         else if Terms.equal_terms cond_pat Terms.false_term 
@@ -394,7 +395,7 @@ let rec term_of_enriched_term id_thread et =
       ) exp epat 
   | _ -> Parsing_helper.internal_error __POS__ "This function should only be applied on simple enriched term without Restr."
 
-and pattern_of_enriched_pattern id_thread f_next exp epat = match epat.ep_desc with
+and pattern_of_enriched_pattern f_next exp epat = match epat.ep_desc with
   | EP_PatVar v -> 
       Terms.auto_cleanup (fun () ->
         Terms.link v (TLink exp);
@@ -408,22 +409,22 @@ and pattern_of_enriched_pattern id_thread f_next exp epat = match epat.ep_desc w
       let success_f = Terms.success_fun (Terms.get_term_type first_arg) in
       let cond_pat = FunApp(success_f,[first_arg]) in
 
-      pattern_of_enriched_pattern_list id_thread (fun cond_pat_args ->
+      pattern_of_enriched_pattern_list (fun cond_pat_args ->
         let cond_pat' = Terms.make_and cond_pat cond_pat_args in
         f_next cond_pat' 
       ) exp_args pargs
 
   | EP_PatEqual et ->
-      let t = term_of_enriched_term id_thread et in
+      let t = term_of_enriched_term et in
       let cond_pat = FunApp(Terms.equal_no_fail_fun et.et_type,[t;exp]) in
       f_next cond_pat
 
-and pattern_of_enriched_pattern_list id_thread f_next exp_l e_patl = match exp_l,e_patl with
+and pattern_of_enriched_pattern_list f_next exp_l e_patl = match exp_l,e_patl with
   | [],[] -> f_next Terms.true_term
   | [],_ | _,[] -> Parsing_helper.internal_error __POS__ "The expression and pattern lists should be of same size."
   | exp::eq, pat::pq ->
-      pattern_of_enriched_pattern id_thread (fun cond_pat ->
-        pattern_of_enriched_pattern_list id_thread (fun cond_pq ->
+      pattern_of_enriched_pattern (fun cond_pat ->
+        pattern_of_enriched_pattern_list (fun cond_pq ->
           let cond_pat' = Terms.make_and cond_pat cond_pq in
           f_next cond_pat'
         ) eq pq
@@ -441,12 +442,12 @@ let rec enriched_term_of_term = function
    update_type_names should be called after the translation of the
    process to update it.  *)
 
-let get_ident_any id_thread state (s, ext) =
+let get_ident_any state (s, ext) =
    try
      match StringMap.find s state.q_env with
          EVar b ->
            begin
-             match b.link.(id_thread) with
+             match Terms.get_link b with
                TLink t -> t, b.btype
              | NoLink -> Var b, b.btype
              | _ -> internal_error __POS__ "unexpected link in get_ident_any"
@@ -469,13 +470,13 @@ let get_ident_any id_thread state (s, ext) =
    with Not_found ->
      input_error ("identifier " ^ s ^ " not defined") ext
      
-let rec check_query_term id_thread state (term, ext0) = match term with
-  | PGIdent i -> get_ident_any id_thread state i
+let rec check_query_term state (term, ext0) = match term with
+  | PGIdent i -> get_ident_any state i
   | PGPhase _ -> input_error ("phase unexpected in query terms") ext0
   | PGFunApp((s,ext),l,None) ->
       if List.mem s ["="; "<>"; "<="; ">="; ">"; "<"; "is_nat"; "==>"; "&&"; "||"; "event"; "inj-event"; "table"] then
         input_error (s ^ " unexpected in query terms") ext;
-      let (l', tl') = List.split (List.map (check_query_term id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_query_term state) l) in
       begin match get_apply_symb state.q_env (s,ext) tl' with
       | (EFun f, result_type) -> 
           begin 
@@ -505,7 +506,7 @@ let rec check_query_term id_thread state (term, ext0) = match term with
           let result_eterm = encode_eterm el' in
           if not result_eterm.et_simple_no_restr
           then input_error ("To be used in a query, the declaration of the function "^s^" should only contain term, test and let constructs.") ext;
-	  let t = term_of_enriched_term id_thread result_eterm in
+	  let t = term_of_enriched_term result_eterm in
           (* choice not allowed in some contexts, which directly submit their error messages
              We must check it here in case the letfun contains choice *)
 	  if Terms.has_choice t then
@@ -519,7 +520,7 @@ let rec check_query_term id_thread state (term, ext0) = match term with
       end
   | PGFunApp(_,_,Some (s,ext)) -> input_error ("Unexpected temporal identifier "^s^" in query terms.") ext
   | PGTuple l ->
-      let (l', tl') = List.split (List.map (check_query_term id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_query_term state) l) in
       if List.exists (fun ty -> Param.time_type == ty) tl'
       then input_error "terms of time type are not authorised as arguments of a tuple." ext0;
       (FunApp(Terms.get_tuple_fun tl', l'), Param.bitstring_type)
@@ -531,13 +532,13 @@ let rec check_query_term id_thread state (term, ext0) = match term with
             Parsing_helper.input_error ("You are referring to name " ^ s ^ " in this query or secrecy assumption, but this name will never be generated") ext
           else
             let v = Terms.new_var_def (snd r.f_type) in
-            v.link.(id_thread) <- PGLink (fun () ->
+            Terms.link_unsafe v (PGLink (fun () ->
               try
-                fst (check_query_term id_thread { state with q_must_encode_names = true } (term,ext0))
+                fst (check_query_term { state with q_must_encode_names = true } (term,ext0))
               with
               | (MissingNameArg _ | BadBoundName _) as e ->
                   handle_bad_bound_names_error e
-                    );
+                    ));
             (Var v, snd r.f_type)
         end
       else
@@ -553,20 +554,20 @@ let rec check_query_term id_thread state (term, ext0) = match term with
                   List.map2 (fun m ty ->
                     match m with
                       | MCompSid -> non_compromised_session
-                      | _ -> binding_find id_thread state (Reduction_helper.meaning_encode m) ty bl
+                      | _ -> binding_find state (Reduction_helper.meaning_encode m) ty bl
                   ) sl (fst r.f_type)
                 in
                 (FunApp(r, p), snd r.f_type)
           | _ -> internal_error __POS__ "name expected here"
         end
-  | PGLet(id,t,t') -> check_query_term id_thread (add_binding id_thread state (id,t)) t'
+  | PGLet(id,t,t') -> check_query_term (add_binding state (id,t)) t'
 
-and binding_find id_thread state s ty = function
+and binding_find state s ty = function
     [] -> Terms.new_var_def_term ty
   | ((s',ext),t)::l ->
       if s' = s then
         begin
-          let (t', ty') = check_query_term id_thread state t in
+          let (t', ty') = check_query_term state t in
           if ty' != ty then
             input_error ("this variable is of type " ^ ty.tname ^ " but is given a value of type " ^ ty'.tname) ext;
           if (s <> "") && (s.[0] = '!') then
@@ -578,9 +579,9 @@ and binding_find id_thread state s ty = function
           t'
         end
       else
-        binding_find id_thread state s ty l
+        binding_find state s ty l
 
-and add_binding id_thread state ((i,ext),t) =
+and add_binding state ((i,ext),t) =
   begin
     try
       match StringMap.find i state.q_env with
@@ -588,14 +589,14 @@ and add_binding id_thread state ((i,ext),t) =
       | _ -> ()
     with Not_found -> ()
   end;
-  let (t', ty') = check_query_term id_thread state t in
+  let (t', ty') = check_query_term state t in
   if ty' == Param.time_type
   then input_error "time type not authorised in a variable binding." ext;
   let v = Terms.new_var i ty' in
-  v.link.(id_thread) <- TLink t';
+  Terms.link_unsafe v (TLink t');
   { state with q_env = StringMap.add i (EVar v) state.q_env }
 
-let check_subterm_pred id_thread state e evl =
+let check_subterm_pred state e evl =
   if not state.q_in_root_premise
   then input_error "subterm predicate should only occur in the premise of an axiom or a restriction" e;
 
@@ -607,69 +608,69 @@ let check_subterm_pred id_thread state e evl =
 
   match evl with
   | [t1;t2] ->
-      let (t1', ty1) = check_query_term id_thread state t1 in
-      let (t2', ty2) = check_query_term id_thread state t2 in
+      let (t1', ty1) = check_query_term state t1 in
+      let (t2', ty2) = check_query_term state t2 in
       check_choice t1';
       check_choice t2';
       let subterm_pred = Param.get_pred (Subterm(ty1,ty2)) in
       QFact(subterm_pred,Ordering.generate_empty_ordering_data (),[t1';t2'])
   | _ -> input_error "arity of predicate subterm should be 2" e
 
-let check_time id_thread state = function
+let check_time state = function
   | None -> None
   | Some ((_,ext) as i) ->
-      let (t,ty) = get_ident_any id_thread state i in
+      let (t,ty) = get_ident_any state i in
       if ty != Param.time_type
       then input_error "temporal variables should have type time." ext;
       Some (t,ext)
 
-let check_mess id_thread state e tl at_op n =
+let check_mess state e tl at_op n =
   match tl with
     [t1;t2] ->
-      let (t1', ty1) = check_query_term id_thread state t1 in
-      let (t2', ty2) = check_query_term id_thread state t2 in
+      let (t1', ty1) = check_query_term state t1 in
+      let (t2', ty2) = check_query_term state t2 in
       if ty1 != Param.channel_type then
         input_error ("First argument of mess is of type " ^ ty1.tname ^ " and should be of type channel") e;
       let mess_n = Param.get_pred (Mess((if n = -1 then state.q_max_phase else n),
                                         ty2))
       in
-      let at_op' = check_time id_thread state at_op in
+      let at_op' = check_time state at_op in
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = at_op' } in
       QFact(mess_n, ord_data,[t1';t2'])
   | _ ->
       input_error "arity of predicate mess should be 2" e
 
-let check_attacker id_thread state e tl at_op n =
+let check_attacker state e tl at_op n =
   match tl with
     [t1] ->
-      let (t1', ty1) = check_query_term id_thread state t1 in
+      let (t1', ty1) = check_query_term state t1 in
       let att_n = Param.get_pred (Attacker((if n = -1 then state.q_max_phase else n),
                                            ty1))
       in
-      let at_op' = check_time id_thread state at_op in
+      let at_op' = check_time state at_op in
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = at_op' } in
       QFact(att_n,ord_data,[t1'])
   | _ ->
       input_error "arity of predicate attacker should be 1" e
 
-let rec check_table_term id_thread state (term, ext0) =
+let rec check_table_term state (term, ext0) =
   match term with
   | PGFunApp((s,ext),l,None) ->
       (* FunApp: only tables allowed *)
       if List.mem s ["="; "<>"; "==>"; "&&"; "||"; "event"; "inj-event"; "table"] then
         input_error (s ^ " unexpected in query terms") ext;
-      let (l', tl') = List.split (List.map (check_query_term id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_query_term state) l) in
       let f = get_table_fun state.q_env (s,ext) tl' in
       FunApp(f, l')
   | PGFunApp(_,_,Some (s,ext)) -> input_error ("Unexpected temporal identifier "^s^" in query terms.") ext
   | _ -> input_error "Table term expected" ext0
 
-let check_table id_thread state e tl at_op n =
+let check_table state e tl at_op n =
   match tl with
     [t1] ->
-      let t1' = check_table_term id_thread state t1 in
+      let t1' = check_table_term state t1 in
       let table_n = Param.get_pred (Table(if n = -1 then state.q_max_phase else n)) in
-      let at_op' = check_time id_thread state at_op in
+      let at_op' = check_time state at_op in
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = at_op' } in
       QFact(table_n,ord_data,[t1'])
   | _ ->
@@ -681,56 +682,56 @@ let check_inequality_type state ty1 ty2 e =
   if ty1 != Param.nat_type && ty1 != Param.time_type
   then input_error "the two arguments of an inequality test should have the type nat or the type time." e
 
-let check_query_term_e id_thread state t =
-  let (t', ty) = check_query_term id_thread state t in ((t', snd t), ty)
+let check_query_term_e state t =
+  let (t', ty) = check_query_term state t in ((t', snd t), ty)
 
-let rec check_event id_thread state (f,e) = match f with
+let rec check_event state (f,e) = match f with
     (* FunApp: predicates, =, <>, event, inj-event, attacker, mess, table allowed *)
   | PGFunApp(("<>", _), [t1; t2],None) ->
       let state' = { state with q_choice_message = Some "Disequalities in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let (t1', ty1) = check_query_term_e id_thread state' t1 in
-      let (t2', ty2) = check_query_term_e id_thread state' t2 in
+      let (t1', ty1) = check_query_term_e state' t1 in
+      let (t2', ty2) = check_query_term_e state' t2 in
       if ty1 != ty2 then
         input_error "the two arguments of a disequality test should have the same type" e;
       QNeq(t1', t2')
   | PGFunApp(("=", _), [t1; t2],None) ->
       let state' = { state with q_choice_message = Some "Equalities in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let (t1', ty1) = check_query_term_e id_thread state' t1 in
-      let (t2', ty2) = check_query_term_e id_thread state' t2 in
+      let (t1', ty1) = check_query_term_e state' t1 in
+      let (t2', ty2) = check_query_term_e state' t2 in
       if ty1 != ty2 then
         input_error "the two arguments of an equality test should have the same type" e;
       QEq(t1', t2')
   | PGFunApp((">=",_), [t1;t2],None) ->
       let state' = { state with q_choice_message = Some "Inequalities in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let (t1', ty1) = check_query_term_e id_thread state' t1 in
-      let (t2', ty2) = check_query_term_e id_thread state' t2 in
+      let (t1', ty1) = check_query_term_e state' t1 in
+      let (t2', ty2) = check_query_term_e state' t2 in
       check_inequality_type state ty1 ty2 e;
       QGeq(t1', t2')
   | PGFunApp((">",_), [t1;t2],None) ->
       let state' = { state with q_choice_message = Some "Inequalities in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let (t1', ty1) = check_query_term_e id_thread state' t1 in
-      let ((t2'', ext2) as t2', ty2) = check_query_term_e id_thread state' t2 in
+      let (t1', ty1) = check_query_term_e state' t1 in
+      let ((t2'', ext2) as t2', ty2) = check_query_term_e state' t2 in
       check_inequality_type state ty1 ty2 e;
       if ty1 == Param.nat_type
       then QGeq(t1', (Terms.sum_nat_term t2'' 1, ext2))
       else QGr(t1',t2')
   | PGFunApp(("<=",_), [t1;t2],None) ->
       let state' = { state with q_choice_message = Some "Inequalities in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let (t1', ty1) = check_query_term_e id_thread state' t1 in
-      let (t2', ty2) = check_query_term_e id_thread state' t2 in
+      let (t1', ty1) = check_query_term_e state' t1 in
+      let (t2', ty2) = check_query_term_e state' t2 in
       check_inequality_type state ty1 ty2 e;
       QGeq(t2', t1')
   | PGFunApp(("<",_), [t1;t2],None) ->
       let state' = { state with q_choice_message = Some "Inequalities in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let ((t1'', ext1) as t1', ty1) = check_query_term_e id_thread state' t1 in
-      let (t2', ty2) = check_query_term_e id_thread state' t2 in
+      let ((t1'', ext1) as t1', ty1) = check_query_term_e state' t1 in
+      let (t2', ty2) = check_query_term_e state' t2 in
       check_inequality_type state ty1 ty2 e;
       if ty1 == Param.nat_type
       then QGeq(t2', (Terms.sum_nat_term t1'' 1, ext1))
       else QGr(t2',t1')
   | PGFunApp(("is_nat",_), [t],None) ->
       let state' = { state with q_choice_message = Some "Predicates is_nat in queries, lemmas, restrictions and axioms should not contain choice." } in
-      let (t', ty) = check_query_term id_thread state' t in
+      let (t', ty) = check_query_term state' t in
       if ty != Param.nat_type then
         input_error "the argument of the predicate is_nat should have the type nat." e;
       QIsNat(t')
@@ -740,9 +741,9 @@ let rec check_event id_thread state (f,e) = match f with
         | [PGIdent f,_] -> (f,[])
         | _ -> input_error "predicate event should have one argument, which is a function application" e'
       in
-      let at_op' = check_time id_thread state at_op in
+      let at_op' = check_time state at_op in
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = at_op' } in
-      let (tl', tyl') = List.split (List.map (check_query_term id_thread state) tl) in
+      let (tl', tyl') = List.split (List.map (check_query_term state) tl) in
       if !Param.key_compromise == 0 then
         QSEvent(None,ord_data,None,FunApp((get_event_fun state.q_env f tyl'), tl'))
       else
@@ -753,47 +754,47 @@ let rec check_event id_thread state (f,e) = match f with
         | [PGIdent f,_] -> (f,[])
         | _ -> input_error "predicate inj-event should have one argument, which is a function application" e'
       in
-      let at_op' = check_time id_thread state at_op in
+      let at_op' = check_time state at_op in
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = at_op' } in
-      let (tl', tyl') = List.split (List.map (check_query_term id_thread state) tl) in
+      let (tl', tyl') = List.split (List.map (check_query_term state) tl) in
       if !Param.key_compromise == 0 then
         QSEvent(Some (Param.fresh_injective_index ()),ord_data,None,FunApp((get_event_fun state.q_env f tyl'), tl'))
       else
         QSEvent(Some (Param.fresh_injective_index ()),ord_data,None,FunApp((get_event_fun state.q_env f (Param.sid_type :: tyl')), (Terms.new_var_def_term Param.sid_type)::tl'))
-  | PGFunApp(("subterm",_), tl, None) -> check_subterm_pred id_thread state e tl
+  | PGFunApp(("subterm",_), tl, None) -> check_subterm_pred state e tl
   | PGFunApp(("attacker",_), tl,at_op) ->
-      check_attacker id_thread state e tl at_op (-1)
+      check_attacker state e tl at_op (-1)
   | PGFunApp(("mess",_), tl,at_op) ->
-      check_mess id_thread state e tl at_op (-1)
+      check_mess state e tl at_op (-1)
   | PGFunApp(("table",_), tl,at_op) ->
-      check_table id_thread state e tl at_op (-1)
+      check_table state e tl at_op (-1)
   | PGFunApp((s, ext) as p, tl,None) ->
       if List.mem s ["||"; "&&"; "not"; "==>"; ">"; "<"; ">="; "<="; "is_nat"] then
         input_error (s ^ " unexpected in events") ext;
-      let (tl', tyl) = List.split (List.map (check_query_term id_thread state) tl) in
+      let (tl', tyl) = List.split (List.map (check_query_term state) tl) in
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = None } in
       QFact(get_pred state.q_env p tyl,ord_data,tl')
   | PGPhase((s, ext), tl, n,at_op) ->
       begin
         match s with
-          | "mess" -> check_mess id_thread state e tl at_op n
-          | "attacker" -> check_attacker id_thread state e tl at_op n
-          | "table" -> check_table id_thread state e tl at_op n
+          | "mess" -> check_mess state e tl at_op n
+          | "attacker" -> check_attacker state e tl at_op n
+          | "table" -> check_table state e tl at_op n
           | _ -> input_error "phases can be used only with attacker, mess, or table" ext
       end
   | PGIdent p ->
       let ord_data = { ord_target = QONone; ord_proved = ref None; temp_var = None } in
       QFact(get_pred state.q_env p [],ord_data,[])
-  | PGLet(id,t,t') -> check_event id_thread (add_binding id_thread state (id,t)) t'
+  | PGLet(id,t,t') -> check_event (add_binding state (id,t)) t'
   | PGFunApp(_,_,Some (at_id,ext)) -> input_error "only the predicates event, inj-event, attacker, mess and table can have a temporal identifier." ext
   | _ -> input_error "an event should be a predicate application" e
 
 (* The list of events corresponds to the premise of the query *)
-let rec check_ev_list id_thread state = function
+let rec check_ev_list state = function
   | PGFunApp(("&&", _), [e1;e2], _), _ ->
-      (check_ev_list id_thread state e1) @ (check_ev_list id_thread state e2)
+      (check_ev_list state e1) @ (check_ev_list state e2)
   | ev ->
-      let ev' = check_event id_thread state ev in
+      let ev' = check_event state ev in
       let ev'' =
         match ev' with
         | QEq _ -> Parsing_helper.input_error "Equality test should not occur in premise of queries, lemmas, restrictions, or axioms." (snd ev)
@@ -832,13 +833,13 @@ let rec check_ev_list id_thread state = function
       in
       [ev'']
 
-let rec check_hyp id_thread state = function
+let rec check_hyp state = function
     (* FunApp: ==>, ||, && allowed, or what is allowed in events *)
     PGFunApp(("==>", _), [ev; hypll],_), ext ->
       if state.q_is_lemma <> None then
         Parsing_helper.input_error "Declared lemmas, axioms, and restrictions should not contain nested queries." ext;
       let state' = { state with q_in_premise = true } in
-      let ev' = check_event id_thread state' ev in
+      let ev' = check_event state' ev in
       begin
         match ev' with
         | QNeq _ | QEq _ | QGeq _ | QGr _ | QIsNat _ | QFact _ | QMax _ | QMaxq _ ->
@@ -846,17 +847,17 @@ let rec check_hyp id_thread state = function
         | QSEvent2 _ -> internal_error __POS__ "[check_hyp] Should not occur at that stage."
         | _ -> ()
       end;
-      let hypll' = check_hyp id_thread state hypll in
+      let hypll' = check_hyp state hypll in
       NestedQuery(Before([ev'], hypll'))
   | PGFunApp(("||", _), [he1;he2],_), _ ->
-      QOr(check_hyp id_thread state he1,check_hyp id_thread state he2)
+      QOr(check_hyp state he1,check_hyp state he2)
   | PGFunApp(("&&", _), [he1;he2],_), _ ->
-      QAnd(check_hyp id_thread state he1,check_hyp id_thread state he2)
+      QAnd(check_hyp state he1,check_hyp state he2)
   | PGIdent("false", _), _ -> QFalse
   | PGIdent("true", _), _ -> QTrue
-  | PGLet(id,t,t'), _ -> check_hyp id_thread (add_binding id_thread state (id,t)) t'
+  | PGLet(id,t,t'), _ -> check_hyp (add_binding state (id,t)) t'
   | ev ->
-      let ev' = check_event id_thread state ev in
+      let ev' = check_event state ev in
       if state.q_is_lemma <> None then
         begin
           match ev' with
@@ -904,24 +905,24 @@ let check_variables_in_premise e evl =
     | _ -> internal_error __POS__ "[check_variables_in_subterm_predicates] Expecting a subterm fact."
   ) must_be_bound_facts
 
-let rec check_real_query_top id_thread state = function
+let rec check_real_query_top state = function
     PGFunApp(("==>", _), [evl; hypll],_), e ->
       (* FunApp: ==> allowed, or what is allowed in events (case below) *)
       let state' = { state with q_in_root_premise = true; q_in_premise = true } in
-      let evl' = check_ev_list id_thread state' evl in
+      let evl' = check_ev_list state' evl in
       check_variables_in_premise e evl';
-      let hypll' = check_hyp id_thread state hypll in
+      let hypll' = check_hyp state hypll in
       Before(evl', hypll')
-  | PGLet(id,t,t'), _ -> check_real_query_top id_thread (add_binding id_thread state (id,t)) t'
+  | PGLet(id,t,t'), _ -> check_real_query_top (add_binding state (id,t)) t'
   | (_,e) as evl ->
       let state' = { state with q_in_root_premise = true; q_in_premise = true } in
-      let evl' = check_ev_list id_thread state' evl in
+      let evl' = check_ev_list state' evl in
       check_variables_in_premise e evl';
       Before(evl', QFalse)
 
-let check_query id_thread state = function
+let check_query state = function
   | PRealQuery (q, pub_vars) ->
-      let q' = check_real_query_top id_thread state q in
+      let q' = check_real_query_top state q in
       let pub_vars' = List.concat (List.map (find_all_var_name_in_glob_table state) pub_vars) in
       RealQuery(q', pub_vars')
   | PQSecret(v, pub_vars, opt) ->
@@ -970,13 +971,13 @@ let put_user_defined_end_of_premise = function
       let evl' = explore [] [] evl in
       Before(evl',qconcl)
 
-let check_lemma id_thread state (q,ror_opt,pub_vars) =
+let check_lemma state (q,ror_opt,pub_vars) =
   let state' =
     if not state.q_is_equivalence_query && ror_opt = None
     then { state with q_choice_message = Some "choice can only be used in lemmas when the main query is an equivalence of (bi)processes,\nor if they have been specified for a query secret with the option real_or_random or pv_real_or_random." }
     else state
   in
-  let q' = check_real_query_top id_thread state' q in
+  let q' = check_real_query_top state' q in
   let q'' = put_user_defined_end_of_premise q' in
   let pub_vars' = List.concat (List.map (find_all_var_name_in_glob_table state') pub_vars) in
   let ror_opt' = match ror_opt with
@@ -990,19 +991,19 @@ let check_lemma id_thread state (q,ror_opt,pub_vars) =
   in
   ((RealQuery(q'',pub_vars'), snd q), ror_opt')
 
-let check_query_list id_thread state l =
+let check_query_list state l =
   List.filter_map (fun (q, ext) ->
     try
-      Some (check_query id_thread state q, ext)
+      Some (check_query state q, ext)
     with
     | (MissingNameArg _ | BadBoundName _) as e ->
        handle_bad_bound_names state "Cannot test this query." e
     ) l
 
-let check_lemma_list id_thread state l =
+let check_lemma_list state l =
   List.map (fun q ->
     try
-      Some (check_lemma id_thread state q)
+      Some (check_lemma state q)
     with
     | (MissingNameArg _ | BadBoundName _) as e ->
         handle_bad_bound_names state "Cannot test this query." e
@@ -1134,13 +1135,13 @@ let transl_option_lemma_query kind_lemma options =
 
   (solve_status,!keep,!remove_events)
 
-let transl_query id_thread (env,q,options) pi_state =
+let transl_query (env,q,options) pi_state =
   let q_state = build_q_state false pi_state in
   let q_state =
     { q_state with q_env = add_env ~time_allowed:true true q_state.q_env env;
       q_choice_message = Some "choice cannot be used in queries" }
   in
-  let q' = check_query_list id_thread q_state q in
+  let q' = check_query_list q_state q in
 
   let (solve_status,_,_) = transl_option_lemma_query None options in
 
@@ -1150,7 +1151,7 @@ let transl_query id_thread (env,q,options) pi_state =
 
 (* Translation lemmas and axioms *)
 
-let transl_lemma id_thread kind_lemma (env,q,options) pi_state =
+let transl_lemma kind_lemma (env,q,options) pi_state =
   let q_state = build_q_state false pi_state in
 
   let is_equivalence_query = match pi_state.pi_process_query with
@@ -1165,7 +1166,7 @@ let transl_lemma id_thread kind_lemma (env,q,options) pi_state =
       q_is_equivalence_query = is_equivalence_query }
   in
 
-  let q' = check_lemma_list id_thread q_state q in
+  let q' = check_lemma_list q_state q in
 
   List.iter2 (fun q1 q1' ->
     match q1, q1' with
@@ -1239,11 +1240,11 @@ let transl_lemma id_thread kind_lemma (env,q,options) pi_state =
 
 (* Not declarations *)
 
-let get_not id_thread not_list pi_state =
+let get_not not_list pi_state =
   let q_state = build_q_state true pi_state in
   List.filter_map (fun (env, no) ->
     try
-      Some (check_event id_thread { q_state with q_env = add_env true q_state.q_env env } no)
+      Some (check_event { q_state with q_env = add_env true q_state.q_env env } no)
     with
     | (MissingNameArg _ | BadBoundName _) as e ->
        handle_bad_bound_names q_state "Ignoring this not declaration." e
@@ -1252,12 +1253,12 @@ let get_not id_thread not_list pi_state =
 (* For Nounif. Very similar to queries, except that *v is allowed
    and events are not allowed *)
 
-let fget_ident_any id_thread state (s, ext) =
+let fget_ident_any state (s, ext) =
    try
      match StringMap.find s state.q_env with
          EVar b ->
            begin
-             match b.link.(id_thread) with
+             match Terms.get_link b with
                FLink t -> (t, b.btype)
              | NoLink -> (FVar b, b.btype)
              | _ -> internal_error __POS__ "unexpected link in fget_ident_any"
@@ -1281,12 +1282,12 @@ let fget_ident_any id_thread state (s, ext) =
    with Not_found ->
      input_error ("identifier " ^ s ^ " not defined") ext
 
-let rec check_gformat id_thread state (term, ext0) =
+let rec check_gformat state (term, ext0) =
   match term with
-    PFGIdent i -> fget_ident_any id_thread state i
+    PFGIdent i -> fget_ident_any state i
   | PFGFunApp((s,ext),l) ->
       (* FunApp: only constructors allowed *)
-      let (l', tl') = List.split (List.map (check_gformat id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_gformat state) l) in
       let (f, result_type) = get_fun state.q_env (s,ext) tl' in
       begin
         match f.f_cat with
@@ -1295,7 +1296,7 @@ let rec check_gformat id_thread state (term, ext0) =
       end;
       (Terms.format_app f l', result_type)
   | PFGTuple l ->
-      let (l', tl') = List.split (List.map (check_gformat id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_gformat state) l) in
       (FFunApp(Terms.get_tuple_fun tl', l'), Param.bitstring_type)
   | PFGAny (s,ext) ->
       begin
@@ -1303,7 +1304,7 @@ let rec check_gformat id_thread state (term, ext0) =
           match StringMap.find s state.q_env with
             EVar b ->
               begin
-                match b.link.(id_thread) with
+                match Terms.get_link b with
                   NoLink -> (FAny b, b.btype)
                 | FLink _ -> input_error "variables preceded by * must not be defined by a binding" ext
                 | _ -> internal_error __POS__ "unexpected link in check_gformat"
@@ -1325,19 +1326,19 @@ let rec check_gformat id_thread state (term, ext0) =
                   raise (MissingNameArg(s,s',ext))
                            ) bl;
               let p = List.map2 (fun m ty ->
-                fbinding_find id_thread state (Reduction_helper.meaning_encode m) ty bl) sl (fst r.f_type)
+                fbinding_find state (Reduction_helper.meaning_encode m) ty bl) sl (fst r.f_type)
               in
               (FFunApp(r, p), snd r.f_type)
           | _ -> internal_error __POS__ "name expected here"
         end
-  | PFGLet(id,t,t') -> check_gformat id_thread (add_fbinding id_thread state (id,t)) t'
+  | PFGLet(id,t,t') -> check_gformat (add_fbinding state (id,t)) t'
 
-and fbinding_find id_thread state s ty = function
+and fbinding_find state s ty = function
     [] -> FAny (Terms.new_var_def ty)
   | ((s',ext),t)::l ->
       if s' = s then
         begin
-          let (t', ty') = check_gformat id_thread state t in
+          let (t', ty') = check_gformat state t in
           if ty' != ty then
             input_error ("this variable is of type " ^ ty.tname ^ " but is given a value of type " ^ ty'.tname) ext;
           if (s <> "") && (s.[0] = '!') then
@@ -1349,9 +1350,9 @@ and fbinding_find id_thread state s ty = function
           t'
         end
       else
-        fbinding_find id_thread state s ty l
+        fbinding_find state s ty l
 
-and add_fbinding id_thread state ((i,ext),t) =
+and add_fbinding state ((i,ext),t) =
   begin
     try
       match StringMap.find i state.q_env with
@@ -1359,36 +1360,36 @@ and add_fbinding id_thread state ((i,ext),t) =
       | _ -> ()
     with Not_found -> ()
   end;
-  let (t', ty') = check_gformat id_thread state t in
+  let (t', ty') = check_gformat state t in
   let v = Terms.new_var i ty' in
-  v.link.(id_thread) <- FLink t';
+  Terms.link_unsafe v (FLink t');
   { state with q_env = StringMap.add i (EVar v) state.q_env }
 
-let rec check_table_gformat id_thread state (term, ext0) =
+let rec check_table_gformat state (term, ext0) =
   match term with
   | PFGFunApp((s,ext),l) ->
       (* FunApp: only tables allowed *)
-      let (l', tl') = List.split (List.map (check_gformat id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_gformat state) l) in
       let f = get_table_fun state.q_env (s,ext) tl' in
       FFunApp(f, l')
   | _ -> input_error "Table term expected" ext0
 
-let check_event_gformat id_thread state (term, ext0) =
+let check_event_gformat state (term, ext0) =
   match term with
   | PFGFunApp((s,ext),l) ->
       (* FunApp: only event allowed *)
-      let (l', tl') = List.split (List.map (check_gformat id_thread state) l) in
+      let (l', tl') = List.split (List.map (check_gformat state) l) in
       let f = get_event_fun state.q_env (s,ext) tl' in
       FFunApp(f, l')
   | _ -> input_error "Event term expected" ext0
 
-let check_gfact_format id_thread state concl_opt ((s, ext), tl, n) =
+let check_gfact_format state concl_opt ((s, ext), tl, n) =
   match s with
     "attacker" ->
       begin
         match tl with
           [t1] ->
-            let (t1', ty1) = check_gformat id_thread state t1 in
+            let (t1', ty1) = check_gformat state t1 in
             let att_n = Param.get_pred (Attacker((if n = -1 then state.q_max_phase else n), ty1))
             in
             (att_n, [t1'])
@@ -1399,8 +1400,8 @@ let check_gfact_format id_thread state concl_opt ((s, ext), tl, n) =
       begin
         match tl with
           [t1;t2] ->
-            let (t1', ty1) = check_gformat id_thread state t1 in
-            let (t2', ty2) = check_gformat id_thread state t2 in
+            let (t1', ty1) = check_gformat state t1 in
+            let (t2', ty2) = check_gformat state t2 in
             if ty1 != Param.channel_type then
               input_error ("First argument of mess is of type " ^ ty1.tname ^ " and should be of type channel") ext;
             let mess_n = Param.get_pred (Mess((if n = -1 then state.q_max_phase else n), ty2))
@@ -1413,7 +1414,7 @@ let check_gfact_format id_thread state concl_opt ((s, ext), tl, n) =
       begin
         match tl with
           [t1] ->
-            let t1' = check_table_gformat id_thread state t1 in
+            let t1' = check_table_gformat state t1 in
             let table_n = Param.get_pred (Table((if n = -1 then state.q_max_phase else n)))
             in
             (table_n, [t1'])
@@ -1432,14 +1433,14 @@ let check_gfact_format id_thread state concl_opt ((s, ext), tl, n) =
       begin
         match tl with
           [t1] ->
-            let t1' = check_event_gformat id_thread state t1 in
+            let t1' = check_event_gformat state t1 in
             let p = if !is_concl then Param.event_pred else Param.event_pred_block in
             (p, [t1'])
         | _ ->
             input_error "arity of predicate event should be 1" ext
       end
   | s ->
-      let (tl', tyl) = List.split (List.map (check_gformat id_thread state) tl) in
+      let (tl', tyl) = List.split (List.map (check_gformat state) tl) in
       (get_pred state.q_env (s,ext) tyl, tl')
 
 (* [check_induction_format vl f] is [true] if and only if the variables in [vl]
@@ -1453,10 +1454,10 @@ let rec check_induction_format vl = function
       ) vl
   | _ -> ()
 
-let rec handle_nounif id_thread state nounif_value nounif_op = function
-    BFLet(id,t,nounif) -> handle_nounif id_thread (add_fbinding id_thread state (id,t)) nounif_value nounif_op nounif
+let rec handle_nounif state nounif_value nounif_op = function
+    BFLet(id,t,nounif) -> handle_nounif (add_fbinding state (id,t)) nounif_value nounif_op nounif
   | BFNoUnif fact ->
-      let format = check_gfact_format id_thread state nounif_op fact in
+      let format = check_gfact_format state nounif_op fact in
       (format, nounif_value,nounif_op)
 
 let check_nounif_options pi_state nounif_value opt =
@@ -1503,14 +1504,14 @@ let check_nounif_options pi_state nounif_value opt =
       !op_acc
     end
 
-let get_nounif id_thread nounif_list pi_state =
+let get_nounif nounif_list pi_state =
   let q_state = build_q_state true pi_state in
   List.filter_map (fun (env, nounif,nounif_value,nounif_op) ->
     try
       let q_state1 = { q_state with q_env = add_env true q_state.q_env env } in
 
       let nounif_op' = check_nounif_options q_state1 nounif_value nounif_op in
-      Some (handle_nounif id_thread q_state1 nounif_value nounif_op' nounif)
+      Some (handle_nounif q_state1 nounif_value nounif_op' nounif)
     with
     | (MissingNameArg _ | BadBoundName _) as e ->
        handle_bad_bound_names q_state "Ignoring this nounif declaration." e
@@ -2504,14 +2505,14 @@ let rec et_term_never_fail t =
      when we have several calls to the same function defined by
      letfun one under the other. *)
 
-let get_lets_args_opt id_thread = function
+let get_lets_args_opt = function
     None -> ([], None)
   | Some l ->
       let rec get_lets_args = function
           [] -> ([],[])
         | b::l ->
             let (lets,l') = get_lets_args l in
-            match b.link.(id_thread) with
+            match Terms.get_link b with
               NoLink -> (lets, b::l')
             | VLink v' -> (lets, v'::l')
             | ETLink { et_desc = ET_Var b' } ->
@@ -2538,38 +2539,38 @@ let rec put_et_lets p = function
       let else_t = et_fail p.et_type in
       put_et_lets (make_et t.et_ext (ET_Let(pat,t,p,else_t))) l
 
-let rec copy_et id_thread t =
+let rec copy_et t =
   match t.et_desc with
   | ET_Var v ->
       begin
-        match v.link.(id_thread) with
+        match Terms.get_link v with
         | NoLink -> t
         | ETLink t' -> t'
         | VLink v' -> make_et t.et_ext (ET_Var v')
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in copy_et"
       end
-  | ET_FunApp(f,args) -> make_et t.et_ext (ET_FunApp(f, List.map (copy_et id_thread) args))
+  | ET_FunApp(f,args) -> make_et t.et_ext (ET_FunApp(f, List.map copy_et args))
   | ET_Restr(b, (args_opt, env), t') ->
-      let (lets, args_opt') = get_lets_args_opt id_thread args_opt in
+      let (lets, args_opt') = get_lets_args_opt args_opt in
       put_et_lets
-        (make_et t.et_ext (ET_Restr(b, (args_opt', env), copy_et id_thread t'))) lets
+        (make_et t.et_ext (ET_Restr(b, (args_opt', env), copy_et t'))) lets
   | ET_Test(t1,t2,t3) ->
-      make_et t.et_ext (ET_Test(copy_et id_thread t1, copy_et id_thread t2, copy_et id_thread t3))
+      make_et t.et_ext (ET_Test(copy_et t1, copy_et t2, copy_et t3))
   | ET_Let(pat, t1, t2, t3) ->
-      let t1' = copy_et id_thread t1 in
+      let t1' = copy_et t1 in
       let (pat', t2') =
         Terms.auto_cleanup (fun () ->
-          let pat' = copy_ep id_thread pat in
-          let t2' = copy_et id_thread t2 in
+          let pat' = copy_ep pat in
+          let t2' = copy_et t2 in
           (pat', t2')
             )
       in
-      let t3' = copy_et id_thread t3 in
+      let t3' = copy_et t3 in
       make_et t.et_ext (ET_Let(pat', t1', t2', t3'))
   | ET_Event(t1,(args_opt,env),t2) ->
-      let (lets, args_opt') = get_lets_args_opt id_thread args_opt in
+      let (lets, args_opt') = get_lets_args_opt args_opt in
       put_et_lets
-        (make_et t.et_ext (ET_Event(copy_et id_thread t1, (args_opt', env), copy_et id_thread t2))) lets
+        (make_et t.et_ext (ET_Event(copy_et t1, (args_opt', env), copy_et t2))) lets
   | ET_LetFilter(vl, p, tl, t2,t3) ->
       let (vl', tl', t2') =
         Terms.auto_cleanup (fun () ->
@@ -2579,33 +2580,33 @@ let rec copy_et id_thread t =
             v'
               ) vl
           in
-          let tl' = List.map (copy_et id_thread) tl in
-          let t2' = copy_et id_thread t2 in
+          let tl' = List.map copy_et tl in
+          let t2' = copy_et t2 in
           (vl', tl', t2')
             )
       in
-      make_et t.et_ext (ET_LetFilter(vl', p, tl', t2', copy_et id_thread t3))
+      make_et t.et_ext (ET_LetFilter(vl', p, tl', t2', copy_et t3))
   | ET_Insert(t1,t2) ->
-      make_et t.et_ext (ET_Insert(copy_et id_thread t1, copy_et id_thread t2))
+      make_et t.et_ext (ET_Insert(copy_et t1, copy_et t2))
   | ET_Get(pat, t1, t2, t3, precise) ->
       let (pat', t1', t2') =
         Terms.auto_cleanup (fun () ->
-          let pat' = copy_ep id_thread pat in
-          let t1' = copy_et id_thread t1 in
-          let t2' = copy_et id_thread t2 in
+          let pat' = copy_ep pat in
+          let t1' = copy_et t1 in
+          let t2' = copy_et t2 in
           (pat', t1', t2')
             )
       in
-      make_et t.et_ext (ET_Get(pat', t1', t2', copy_et id_thread t3, precise))
+      make_et t.et_ext (ET_Get(pat', t1', t2', copy_et t3, precise))
 
-and copy_ep id_thread pat =
+and copy_ep pat =
   match pat.ep_desc with
   | EP_PatVar b ->
       let b' = Terms.copy_var b in
       Terms.link b (VLink b');
       make_ep (EP_PatVar b')
-  | EP_PatTuple(f,l) -> make_ep (EP_PatTuple(f, List.map (copy_ep id_thread) l))
-  | EP_PatEqual t -> make_ep (EP_PatEqual (copy_et id_thread t))
+  | EP_PatTuple(f,l) -> make_ep (EP_PatTuple(f, List.map copy_ep l))
+  | EP_PatEqual t -> make_ep (EP_PatEqual (copy_et t))
 
 
 
@@ -4384,7 +4385,7 @@ let fix_query_options (env, q, opt) =
 
 (* Handle all declarations *)
 
-let rec check_one id_thread = function
+let rec check_one = function
     TTypeDecl(i) -> check_type_decl i
   | TFunDecl(f,argt,rest,i) -> check_fun_decl f argt rest (no_param_option_list i)
   | TConstDecl(f,rest,i) -> check_fun_decl f [] rest (no_param_option_list i)
@@ -4416,10 +4417,10 @@ let rec check_one id_thread = function
       global_env := StringMap.add s (EProcess(arglist, p', barrier_tags)) (!global_env)
   | TQuery (env,q,opt) ->
       let (env,q,opt) = fix_query_options (env,q,opt) in
-      query_list := (QueryToTranslate(transl_query id_thread (env, q,(no_param_option_list opt)))) :: (!query_list);
+      query_list := (QueryToTranslate(transl_query (env, q,(no_param_option_list opt)))) :: (!query_list);
       corresp_query_list := (env,q) :: (!corresp_query_list)
   | TLemma(b,env,q,opt) ->
-      lemma_list := (LemmaToTranslate(transl_lemma id_thread b (env,q,(no_param_option_list opt)))):: !lemma_list;
+      lemma_list := (LemmaToTranslate(transl_lemma b (env,q,(no_param_option_list opt)))):: !lemma_list;
       let q' = List.map (fun (t,_,pubvars) -> (PRealQuery(t,pubvars), snd t)) q in
       corresp_query_list := (env,q') :: (!corresp_query_list)
   | TNoninterf (env, lnoninterf) ->
@@ -4469,10 +4470,10 @@ let rec check_one id_thread = function
         List.iter2 (fun v term ->
           if (not v.unfailing) || (et_term_never_fail term) then
             if et_is_var term then
-              v.link.(id_thread) <- ETLink term
+              Terms.link_unsafe v (ETLink term)
             else
               let v' = Terms.new_var v.vname.name v.btype in
-              v.link.(id_thread) <- ETLink (make_et dummy_ext (ET_Var v'));
+              Terms.link_unsafe v (ETLink (make_et dummy_ext (ET_Var v')));
               lets := (v', term) ::(!lets)
           else
               (* The term may fail and we must evaluate the letfun with "fail" in this case,
@@ -4480,12 +4481,12 @@ let rec check_one id_thread = function
             let catch_fail = Terms.glet_fun v.btype in
             let undo_catch_fail = Terms.undo_catch_fail_fun v.btype in
             let v' = Terms.new_var v.vname.name v.btype in
-            v.link.(id_thread) <- ETLink (make_et dummy_ext (ET_FunApp(undo_catch_fail, [make_et dummy_ext (ET_Var v')])));
+            Terms.link_unsafe v (ETLink (make_et dummy_ext (ET_FunApp(undo_catch_fail, [make_et dummy_ext (ET_Var v')]))));
             lets := (v', make_et dummy_ext (ET_FunApp(catch_fail, [term]))) :: (!lets)
                  ) arg_list list_term_arg;
 
         put_et_lets
-          { (copy_et id_thread result) with et_type = type_result }
+          { (copy_et result) with et_type = type_result }
           (!lets)
            (* Changing the type is useful in case types are ignored and
               the last function of the letfun is a type converter *)
@@ -4647,7 +4648,7 @@ let interpret_setting (p,ext) v =
 
 (* Final parsing function *)
 
-let parse_file ?(id_thread=0) s =
+let parse_file s =
   (* Reinitialize the state *)
   Param.reset_param();
   Display.init_used_ids();
@@ -4681,7 +4682,7 @@ let parse_file ?(id_thread=0) s =
 
   List.iter (function
       TSet _ -> ()
-    | x -> check_one id_thread x) decl;
+    | x -> check_one x) decl;
 
   let (p, barrier_tags) = Terms.auto_cleanup (fun () ->
     check_process (!global_env) proc)
@@ -4779,8 +4780,8 @@ let parse_file ?(id_thread=0) s =
       pi_destructors_check_deterministic = !destructors_check_deterministic;
       pi_disequations = !disequations;
       pi_event_status_table = Unset;
-      pi_get_not = get_not id_thread (!not_list);
-      pi_get_nounif = get_nounif id_thread (!nounif_list);
+      pi_get_not = get_not (!not_list);
+      pi_get_nounif = get_nounif (!nounif_list);
       pi_terms_to_add_in_name_params = Unset;
       pi_min_choice_phase = Unset;
       pi_need_vars_in_names = Function (get_need_vars_in_names (!corresp_query_list) (!not_list) (!nounif_list));

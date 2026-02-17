@@ -63,12 +63,13 @@ open Utils
   initial clauses.
 *)
 
-let rec status_term ?(id_thread=0) = 
-  let is_TLink lst = match lst.(id_thread) with | TLink _ -> true | _ -> false in
-  function
-  | Var { link = lst; _ } when (is_TLink lst) -> let TLink t = lst.(id_thread) in status_term t
+let rec status_term = function
+  | Var v -> 
+      begin match Terms.get_link v with 
+      | TLink t -> status_term t
+      | _ -> if v.unfailing then 1 else 2
+      end
   | FunApp(f,[]) when f.f_cat = Failure -> 0
-  | Var(v) when v.unfailing -> 1
   | _ -> 2
 
 let inst_fail_fail f_next ty t1 t2 =
@@ -266,7 +267,10 @@ let remove_fail_facts get_fact f_next (hypl,concl,hist,constra) = match hist wit
 let clauseOrd_of_reduction f_next (hypl,concl,hist,constra) = 
   let hypl' = match hist,hypl,concl with
     (* Rechability and equivalence *)
-    | Rule(_,Rl _,_,_,_), [mess_fact;att_fact],_ -> [(mess_fact,COSpecific [1,Leq],0);(att_fact,COSpecific [1,Less],0)]
+    | Rule(_,Rl _,_,_,_), [mess_fact;att_fact],_ -> 
+        if Ordering.is_pred_to_prove_fact (Terms.unblock_predicate_fact att_fact)
+        then [(mess_fact,COSpecific [1,Leq],0);(att_fact,COSpecific [1,Less],0)]
+        else [(mess_fact,COSpecific [1,Leq],0);(att_fact,COSpecific [1,Leq],0)]
     (* Equivalence *)
     | Rule(_,Apply _,_,_,_), _, Pred({ p_info = AttackerBin _ | AttackerGuess _; _},[t1;t2]) when Terms.is_may_fail_term t1 || Terms.is_may_fail_term t2 ->
         List.map (fun f -> f,COSpecific [1,Leq],0) hypl

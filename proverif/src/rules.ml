@@ -384,9 +384,9 @@ struct
                         Terms.unify_facts ff hyp_fact;
                         (* check that all modified variables of hyp1 do not
                            occur in the rest of R including inequalities *)
-                        List.iter (function
-                          | { link = NoLink; _ } -> ()
-                          | v ->
+                        List.iter (fun v -> match Terms.get_link v with 
+                          | NoLink -> ()
+                          | _ ->
                               if
                                 List.memq v (Lazy.force constra_vars) ||
                                 List.memq v (Lazy.force concl_vars) ||
@@ -714,7 +714,7 @@ struct
   let rec has_unbound_var = function
     Var v ->
       begin
-        match v.link with
+        match Terms.get_link v with
           NoLink -> true
         | TLink _
         | VLink _ -> false
@@ -750,8 +750,11 @@ struct
   (* Marking of variables *)
 
   let rec is_marked_term = function
-    | Var { link = VLink _ ; _ } -> true
-    | Var _ -> false
+    | Var v -> 
+        begin match Terms.get_link v with 
+        | VLink _ -> true
+        | _ -> false 
+        end
     | FunApp(_,args) -> List.for_all is_marked_term args
 
   let is_marked_fact = function
@@ -759,7 +762,7 @@ struct
 
   let rec mark_variables = function
     | Var v ->
-        begin match v.link with
+        begin match Terms.get_link v with
           | TLink _ -> raise NoMatch
           | VLink _ -> ()
           | NoLink -> link v (VLink v)
@@ -775,7 +778,7 @@ struct
   let rec match_redundant_terms apply_mark t1 t2 = match t1, t2 with
     | Var v, Var v' when v == v' -> if apply_mark then mark_variables t2
     | Var v, _ ->
-        begin match v.link with
+        begin match Terms.get_link v with
           | NoLink ->
               if v.unfailing
               then
@@ -888,7 +891,7 @@ struct
 
             match_redundant_hypotheses (fun () ->
               (* We check whether some match was found *)
-              let success = List.exists (fun v -> match v.link with TLink _ -> true | _ -> false) !Terms.current_bound_vars in
+              let success = List.exists (fun v -> match Terms.get_link v with TLink _ -> true | _ -> false) !Terms.current_bound_vars in
 
               if success
               then
@@ -901,9 +904,9 @@ struct
                   (* We first save the links and remove the VLink *)
                   let saved_links =
                     List.map (fun v ->
-                      let v_link = v.link in
+                      let v_link = Terms.get_link v in
                       begin match v_link with
-                        | VLink _ -> v.link <- NoLink
+                        | VLink _ -> Terms.link_unsafe v NoLink
                         | _ -> ()
                       end;
                       (v,v_link)
@@ -914,7 +917,7 @@ struct
                   let constra_inst = copy_constra3 cl.constraints in
 
                   (* We now remove all the links *)
-                  List.iter (fun v -> v.link <- NoLink) all_vars;
+                  List.iter (fun v -> Terms.link_unsafe v NoLink) all_vars;
 
                   (* We compare *)
                   try
@@ -923,18 +926,18 @@ struct
 		      raise NoMatch;
 
                     (* We found a proper matching so we restore the TLink, copy the rule and run next_stage *)
-                    List.iter (function (v,TLink t) -> v.link <- TLink t | (v,_) -> v.link <- NoLink) saved_links;
+                    List.iter (function (v,TLink t) -> Terms.link_unsafe v (TLink t) | (v,_) -> Terms.link_unsafe v NoLink) saved_links;
 
                     let cl' = C.copy3 { cl with constraints = constra_inst } in
 
                     (* Restore the links - It is in fact unecessary as the links will be cleanup by the previous
                        call of auto_cleanup but we keep it to preserve the invariant on Terms.current_bound_vars *)
-                    List.iter (fun (v,link) -> v.link <- link) saved_links;
+                    List.iter (fun (v,link) -> Terms.link_unsafe v link) saved_links;
 
                     Some cl'
                   with NoMatch ->
                     (* Restore the links and raise Nomatch *)
-                    List.iter (fun (v,link) -> v.link <- link) saved_links;
+                    List.iter (fun (v,link) -> Terms.link_unsafe v link) saved_links;
                     raise NoMatch
                 end
               else raise NoMatch
@@ -1000,9 +1003,12 @@ struct
     | _ -> false
 
   let rec mark_variables_follow = function
-    | Var { link = TLink t; _ } -> mark_variables_follow t
-    | Var ({ link = NoLink; _ } as v)-> Terms.link v (VLink v)
-    | Var _ -> ()
+    | Var v -> 
+        begin match Terms.get_link v with 
+        | TLink t ->  mark_variables_follow t
+        | NoLink -> Terms.link v (VLink v)
+        | _ -> ()
+        end
     | FunApp(_,args) -> List.iter mark_variables_follow args
 
   let rec mark_variables_follow_fact = function
@@ -1010,11 +1016,14 @@ struct
 
   (* [inter_variables vars t] adds to [vars] to the marked variables in [t] *)
   let rec inter_variables vars = function
-    | Var { link = TLink t; _} -> inter_variables vars t
-    | Var ({ link = VLink _; _ } as v)->
-        if not (List.memq v !vars)
-        then vars := v :: !vars
-    | Var _ -> ()
+    | Var v -> 
+        begin match Terms.get_link v with 
+        | TLink t -> inter_variables vars t
+        | VLink _ -> 
+            if not (List.memq v !vars)
+            then vars := v :: !vars
+        | _ -> ()
+        end
     | FunApp(_,args) -> List.iter (inter_variables vars) args
 
   let inter_variables_fact vars = function
@@ -1028,13 +1037,16 @@ struct
   (* [vars_not_in vars t] removes from [vars] the marked variables in [t].
     Raises [NoMatch] in case no variable remains in [vars]. *)
   let rec vars_not_in vars = function
-    | Var { link = TLink t; _} -> vars_not_in vars t
-    | Var ({ link = NoLink; _ } as v)->
-        Terms.link v (VLink v);
-        vars := remove_from_list v !vars;
-        if !vars = []
-        then raise NoMatch
-    | Var _ -> ()
+    | Var v ->
+        begin match Terms.get_link v with
+        | TLink t -> vars_not_in vars t
+        | NoLink -> 
+            Terms.link v (VLink v);
+            vars := remove_from_list v !vars;
+            if !vars = []
+            then raise NoMatch
+        | _ -> ()
+        end
     | FunApp(_,args) -> List.iter (vars_not_in vars) args
 
   let vars_not_in_fact vars = function
@@ -1355,7 +1367,7 @@ struct
     | FunApp(f,l) as t ->
         let l' =  List.mapq (copy_term_and_record vars_ref) l in
         if l == l' then t else FunApp(f, l')
-    | Var v -> match v.link with
+    | Var v -> match Terms.get_link v with
         | NoLink -> 
             (* Existential variable *)
             let v' = copy_var v in
@@ -1376,36 +1388,42 @@ struct
     | (Var v, Var v') when v == v' -> ()
     | (Var v, _) ->
         begin
-          match v.link with
+          match Terms.get_link v with
           | NoLink ->
               begin
                 match t2 with
-                | Var {link = TLink t2'} -> unify_for_lemma priority_vars t1 t2'
-                | Var v' when v.unfailing ->
-                          if List.memq v' priority_vars && v'.unfailing
-                    then link v' (TLink t1)
-                    else link v (TLink t2)
-                | Var v' when v'.unfailing ->
-                        link v' (TLink t1)
-                | FunApp (f_symb,_) when f_symb.f_cat = Failure && v.unfailing = false -> raise Unify
-                | Var v' when v'.vname.name = Param.def_var_name ->
-                    if List.memq v priority_vars && not (List.memq v' priority_vars)
-                    then link v (TLink t2)
-                    else link v' (TLink t1)
                 | Var v' ->
-                    if List.memq v' priority_vars
-                    then link v' (TLink t1)
-                    else link v (TLink t2)
+                    begin match Terms.get_link v' with
+                    | TLink t2' -> unify_for_lemma priority_vars t1 t2'
+                    | _ -> 
+                        if v.unfailing 
+                        then 
+                          if List.memq v' priority_vars && v'.unfailing
+                          then link v' (TLink t1)
+                          else link v (TLink t2)
+                        else if v'.unfailing
+                        then link v' (TLink t1)
+                        else if v'.vname.name = Param.def_var_name
+                        then 
+                          if List.memq v priority_vars && not (List.memq v' priority_vars)
+                          then link v (TLink t2)
+                          else link v' (TLink t1)
+                        else
+                          if List.memq v' priority_vars
+                          then link v' (TLink t1)
+                          else link v (TLink t2)
+                    end
+                | FunApp (f_symb,_) when f_symb.f_cat = Failure && v.unfailing = false -> raise Unify
                 | _ ->
                     occur_check v t2;
-                          link v (TLink t2)
+                    link v (TLink t2)
               end
           | TLink t1' -> unify_for_lemma priority_vars t1' t2
           | _ -> Parsing_helper.internal_error __POS__ "Unexpected link in unify 1"
         end
     | (FunApp(f_symb,_), Var v) ->
         begin
-          match v.link with
+          match Terms.get_link v with
             NoLink ->
               if v.unfailing = false && f_symb.f_cat = Failure
               then raise Unify
@@ -1426,8 +1444,11 @@ struct
   let rec match_for_lemma exists_vars t1 t2 = match t1, t2 with
     | Var v, Var v' when v == v' -> ()
     | Var v, _ when not (List.memq v exists_vars) -> raise NoMatch
-    | Var { link = TLink t;_}, _ -> if not (Terms.equal_terms t t2) then raise NoMatch
-    | Var v, _ -> link v (TLink t2)
+    | Var v, _ ->
+        begin match Terms.get_link v with 
+        | TLink t -> if not (Terms.equal_terms t t2) then raise NoMatch
+        | _ -> link v (TLink t2)
+        end
     | FunApp(f1,args1), FunApp(f2,args2) -> 
         if f1 != f2 then raise NoMatch;
         List.iter2 (match_for_lemma exists_vars) args1 args2 

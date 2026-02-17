@@ -41,35 +41,39 @@ let rec add_no_unif format weight = function
 (* Make the variables of a nounif declaration homogeneous, i.e. if a var v is
    tagged with FVar then the function replaces all instances of FAny v by FVar v. *)
 
-let rec mark_format_term id_thread = function
-  | FFunApp(_,args) -> List.iter (mark_format_term id_thread) args
+let rec mark_format_term = function
+  | FFunApp(_,args) -> List.iter mark_format_term args
   | FVar v ->
-      begin match v.link.(id_thread) with
+      begin match Terms.get_link v with
         | FLink (FVar _) -> ()
         | NoLink -> link v (FLink (FVar v))
         | _ -> Parsing_helper.internal_error __POS__ "[selfun.mark_format_term] Unexpected link"
       end
   | FAny v -> ()
 
-let rec follow_link_format_term id_thread = 
-  let is_FLink lst = match lst.(id_thread) with FLink _ -> true | _ -> false in
-  let is_NoLink lst = match lst.(id_thread) with NoLink -> true | _ -> false in
-  function
-  | FFunApp(f,args) -> FFunApp(f,List.map (follow_link_format_term id_thread) args)
-  | FVar { link = lst; _ } when is_FLink lst -> let FLink t = lst.(id_thread) in t
-  | FAny { link = lst; _ } when is_FLink lst -> let FLink t = lst.(id_thread) in t
-  | FAny { link = lst } as t when is_NoLink lst -> t
-  | _ -> Parsing_helper.internal_error __POS__ "[selfun.follow_link_format_term] Unexpected link"
+let rec follow_link_format_term = function
+  | FFunApp(f,args) -> FFunApp(f,List.map follow_link_format_term args)
+  | FVar v -> 
+      begin match Terms.get_link v with 
+      | FLink t -> t
+      | _ -> Parsing_helper.internal_error __POS__ "[selfun.follow_link_format_term] Unexpected link"
+      end
+  | FAny v as t -> 
+      begin match Terms.get_link v with 
+      | FLink t' -> t'
+      | NoLink -> t 
+      | _ -> Parsing_helper.internal_error __POS__ "[selfun.follow_link_format_term] Unexpected link"
+      end
 
-let homogeneous_format_term_list id_thread tlist =
+let homogeneous_format_term_list tlist =
   Terms.auto_cleanup (fun () ->
-    List.iter (mark_format_term id_thread) tlist;
-    List.map (follow_link_format_term id_thread) tlist
+    List.iter mark_format_term tlist;
+    List.map follow_link_format_term tlist
   )
 
-let homogeneous_format ?(id_thread=0) (p,args) = (p,homogeneous_format_term_list id_thread args)
+let homogeneous_format (p,args) = (p,homogeneous_format_term_list args)
 
-let initialize ?(id_thread=0) v_no_unif_set solver_kind =
+let initialize v_no_unif_set solver_kind =
 
   no_unif_set := [];
   no_unif_concl_set := [];
@@ -78,7 +82,7 @@ let initialize ?(id_thread=0) v_no_unif_set solver_kind =
 
   List.iter (fun (f,nv,opt) ->
     let n = weight_of_user_weight nv in
-    let f' = homogeneous_format ~id_thread f in
+    let f' = homogeneous_format f in
     List.iter (function
       | Hypothesis -> no_unif_set := add_no_unif f' n !no_unif_set
       | Conclusion -> no_unif_concl_set := add_no_unif f' n !no_unif_concl_set
@@ -97,18 +101,18 @@ let initialize ?(id_thread=0) v_no_unif_set solver_kind =
   | _ ->
      inst_constraints := false
 
-let rec has_same_format_term id_thread t1 t2 =
+let rec has_same_format_term t1 t2 =
    match (t1,t2) with
    | (FunApp(f1,l1), FFunApp(f2,l2)) ->
-        (f1 == f2) && (List.for_all2 (has_same_format_term id_thread) l1 l2)
+        (f1 == f2) && (List.for_all2 has_same_format_term l1 l2)
    | (Var _, FVar v2) | (_, FAny v2) ->
        begin
-         match v2.link.(id_thread) with
+         match Terms.get_link v2 with
            NoLink ->
              begin
                if v2.unfailing then
                  begin
-                   Terms.link ~id_thread v2 (TLink t1);
+                   Terms.link v2 (TLink t1);
                    true
                  end
                else
@@ -116,19 +120,19 @@ let rec has_same_format_term id_thread t1 t2 =
                  match t1 with
                    Var v' when v'.unfailing -> false
                  | FunApp(f,[]) when f.f_cat = Failure -> false
-                 | _ -> Terms.link ~id_thread v2 (TLink t1); true
+                 | _ -> Terms.link v2 (TLink t1); true
              end
          | TLink t1' -> Terms.equal_terms t1 t1'
          | _ -> Parsing_helper.internal_error __POS__ "unexpected link in has_same_format_term"
        end
    | (_,_) -> false
 
-let has_same_format id_thread (c1, p1) (c2, p2) =
-  (c1 == c2) && (auto_cleanup (fun () -> List.for_all2 (has_same_format_term id_thread) p1 p2))
+let has_same_format (c1, p1) (c2, p2) =
+  (c1 == c2) && (auto_cleanup (fun () -> List.for_all2 has_same_format_term p1 p2))
 
-let rec find_same_format id_thread f = function
+let rec find_same_format f = function
     [] -> 0
-  | ((a,n)::l) -> if has_same_format id_thread f a then n else find_same_format id_thread f l
+  | ((a,n)::l) -> if has_same_format f a then n else find_same_format f l
 
 (* Function dealing with induction nounif *)
 
@@ -136,26 +140,26 @@ let rec find_same_format id_thread f = function
    declared with the option [ignoreAFewTimes]. *)
 let exists_ignored_nounif () = !no_unif_ignore != []
 
-let rec implies_format id_thread t1 t2 = match t1,t2 with
+let rec implies_format t1 t2 = match t1,t2 with
   | FFunApp(f1,args1), FFunApp(f2,args2) ->
-      f1 == f2 && List.for_all2 (implies_format id_thread) args1 args2
+      f1 == f2 && List.for_all2 implies_format args1 args2
   | FFunApp _, _ -> false
   | FVar v1, FVar _
   | FAny v1, _ ->
-      begin match v1.link.(id_thread) with
+      begin match Terms.get_link v1 with
         | FLink t1' -> Terms.equal_formats t1' t2
-        | NoLink -> Terms.link ~id_thread v1 (FLink t2); true
+        | NoLink -> Terms.link v1 (FLink t2); true
         | _ -> Parsing_helper.internal_error __POS__ "[selfun.implies_format_term] Unexpected link"
       end
   | _ -> false
 
 (* [implies_fact_format f1 f2] returns true when the format [f1] implies format [f2].
    To work properly, [f2] should be homogeneous. *)
-let implies_fact_format id_thread (p1,args1) (p2,args2) =
+let implies_fact_format (p1,args1) (p2,args2) =
   if p1 == p2
   then
     Terms.auto_cleanup (fun () ->
-      List.for_all2 (implies_format id_thread) args1 args2
+      List.for_all2 implies_format args1 args2
     )
   else false
 
@@ -175,12 +179,12 @@ let compute_match_format_fact f1 f2 = match (f1,f2) with
       internal_error __POS__ "facts do not match";
     (c1, List.map2 compute_match_format p1 p2)
 
-let rec already_implied_format_by_lower_weight id_thread format = function
+let rec already_implied_format_by_lower_weight format = function
   | [] -> false
   | (f,n)::q when n <= default_add_no_unif_weight ->
-      if implies_fact_format id_thread f format
+      if implies_fact_format f format
       then true
-      else already_implied_format_by_lower_weight id_thread format q
+      else already_implied_format_by_lower_weight format q
   | _ -> false
 
 
@@ -192,22 +196,22 @@ sig
 
   (** Initialisation of the selection function after generation of the clauses. The function
       will go through the queue and detect initial nounif declarations to be added. *)
-  val initialize_before_saturation : ?id_thread:int -> queue -> unit
+  val initialize_before_saturation : queue -> unit
 
   (** The standard selection function. [selection_fun cl] will return the position of the hypothesis
       in the clause that will be selected. It returns [-1] when no hypothesis are selected. 
       The function may automatically declare some nounif statement when needed. *)
-  val selection_fun : ?id_thread:int -> clause -> int
+  val selection_fun : clause -> int
 
   (** Similar to [selection_fun] except that the automatic detection of nounif has been deactivated. *)
-  val selection_fun_nostatechange : ?id_thread:int -> clause -> int
+  val selection_fun_nostatechange : clause -> int
 
   (** [selection_fun_ignore_nounif cl] checks whether one hypothese of [cl] can be 
       matched with a nounif declared with option [ignoreAFewTimes]. When it is the case,
       the function returns the position of the hypothesis selected as well as the update
       clause. When no hypothesis is authorized, the function returns -1 and the outputted
       clause is physicall the same as [cl]. *)
-  val selection_fun_ignore_nounif : ?id_thread:int -> clause -> int * clause
+  val selection_fun_ignore_nounif : clause -> int * clause
 end
 
 module Make
@@ -256,7 +260,7 @@ struct
 
   (** The selection functions *)
 
-  let selection_fun_nounifset id_thread cl =
+  let selection_fun_nounifset cl =
     let rec sel (nold, wold) n = function
       | [] ->
           if !modify_nounif  && nold >= 0 && Terms.matchafactstrict cl.conclusion (H.get_fact (List.nth cl.hypotheses nold))
@@ -271,7 +275,7 @@ struct
           sel (nold, wold) (n+1) l
       | h::l -> 
           let Pred(p,lp) as f = H.get_fact h in
-          let wnew = find_same_format id_thread (p,lp) (!no_unif_set) in
+          let wnew = find_same_format (p,lp) (!no_unif_set) in
           if wnew <> 0 then
             if wnew > wold
             then sel (n,wnew) (n+1) l
@@ -289,14 +293,14 @@ struct
       (* The conclusion can be selected if we don't find better in
          the hypothesis *)
       let Pred(p,args) = cl.conclusion in
-      let w = find_same_format id_thread (p,args) !no_unif_concl_set in
+      let w = find_same_format (p,args) !no_unif_concl_set in
       if w <> 0
       then sel (-1, w) 0 cl.hypotheses
       else sel (-1, -1) 0 cl.hypotheses
 
   (* Very good for skeme, but slightly slower for some other protocols *)
 
-  let selection_fun_nounifset_maxsize id_thread cl =
+  let selection_fun_nounifset_maxsize cl =
     let rec sel (nold, wold) n = function
         [] ->
           if !modify_nounif && nold >= 0 && matchafactstrict cl.conclusion (H.get_fact (List.nth cl.hypotheses nold))
@@ -311,7 +315,7 @@ struct
           sel (nold, wold) (n+1) l
       | h::l ->
           let Pred(p,lp) as f = H.get_fact h in
-          let wtmp = find_same_format id_thread (p,lp) (!no_unif_set) in
+          let wtmp = find_same_format (p,lp) (!no_unif_set) in
           let wnew =
             if wtmp <> 0
             then wtmp
@@ -329,7 +333,7 @@ struct
         the hypothesis *)
       match cl.conclusion with
         | Pred(p,args) ->
-            let w = find_same_format id_thread (p,args) !no_unif_concl_set in
+            let w = find_same_format (p,args) !no_unif_concl_set in
             if w <> 0
             then sel (-1, w) 0 cl.hypotheses
             else sel (-1, -1) 0 cl.hypotheses
@@ -337,7 +341,7 @@ struct
   
   (* Very good for termination - even if it does not solve all cases, of course *)
 
-  let selection_fun_weight id_thread cl =
+  let selection_fun_weight cl =
     (* [(nold, wold)] is the information for the hypotheses that are not more general than the conclusion.
      [(nold_m,wold_m,hold_m)] is the information for the hypotheses that are more general than the conclusion.
      We prefer selecting a hypothesis that is not more general than the conclusion, to avoid cycles, 
@@ -361,10 +365,10 @@ struct
                 if matchafactstrict cl.conclusion (H.get_fact h) then
                   begin
                     let format = compute_match_format_fact (H.get_fact h) cl.conclusion in
-                    let format' = homogeneous_format ~id_thread format in
+                    let format' = homogeneous_format format in
 
                     (* We add a nounif if it is not already implied by a nounif with smaller weight *)
-                    if not (already_implied_format_by_lower_weight id_thread format' !no_unif_set) then
+                    if not (already_implied_format_by_lower_weight format' !no_unif_set) then
                       begin
                         no_unif_set := add_no_unif format' default_add_no_unif_weight !no_unif_set;
                         if !Param.nounif_ignore_once <> Param.NIO_None
@@ -385,9 +389,9 @@ struct
           then 
             begin
               let format = compute_match_format_fact hold_m cl.conclusion in
-              let format' = homogeneous_format ~id_thread format in
+              let format' = homogeneous_format format in
   
-              if not (List.exists (fun f -> implies_fact_format id_thread f format') !no_unif_warnings)
+              if not (List.exists (fun f -> implies_fact_format f format') !no_unif_warnings)
               then
                 begin
                   no_unif_warnings := format' :: !no_unif_warnings;
@@ -433,7 +437,7 @@ struct
       | h::l ->
           let Pred(p,lp) as f = H.get_fact h in
           let wnew =
-            let wtmp_0 = find_same_format id_thread (p,lp) (!no_unif_set) in
+            let wtmp_0 = find_same_format (p,lp) (!no_unif_set) in
             let wtmp_1 =
               if wtmp_0 > match_concl_weight && matchafactstrict cl.conclusion f
               then match_concl_weight
@@ -466,7 +470,7 @@ struct
         | Pred(p,args) ->
             (* The conclusion can be selected if we don't find better in
               the hypothesis *)
-            let wtmp_0 = find_same_format id_thread (p,args) !no_unif_concl_set in
+            let wtmp_0 = find_same_format (p,args) !no_unif_concl_set in
             let wtmp_1 =
               if wtmp_0 > match_concl_weight && List.exists (fun h -> matchafactstrict (H.get_fact h) cl.conclusion) cl.hypotheses
               then match_concl_weight
@@ -482,17 +486,17 @@ struct
     Var v -> Terms.new_var_def_term v.btype
   | FunApp(f,l) -> FunApp(f, List.map false_copy l)
 
-  let inst_constra id_thread = function
+  let inst_constra = function
   | (Var v,t) ->
-      if v.link.(id_thread) = NoLink then
-        Terms.link ~id_thread v (TLink (false_copy t))
+      if Terms.get_link v = NoLink then
+        Terms.link v (TLink (false_copy t))
   | _ -> ()
 
-  let selection_fun ?(id_thread=0) cl =
+  let selection_fun cl =
     let r = match !Param.select_fun with
-      | Param.NounifsetMaxsize -> selection_fun_nounifset_maxsize id_thread cl
-      | Param.Term | Param.TermMaxsize -> selection_fun_weight id_thread cl
-      | Param.Nounifset -> selection_fun_nounifset id_thread cl
+      | Param.NounifsetMaxsize -> selection_fun_nounifset_maxsize cl
+      | Param.Term | Param.TermMaxsize -> selection_fun_weight cl
+      | Param.Nounifset -> selection_fun_nounifset cl
     in
     let r =
       (* For proofs of equivalences (!inst_constraints = true),
@@ -504,15 +508,15 @@ struct
         begin
           let cl2 = 
             Terms.auto_cleanup_noexception (fun () -> 
-              List.iter (List.iter (inst_constra id_thread)) cl.constraints.neq;
+              List.iter (List.iter inst_constra) cl.constraints.neq;
               C.copy2 cl
             )
           in
           
           match !Param.select_fun with
-          | Param.NounifsetMaxsize -> selection_fun_nounifset_maxsize id_thread cl2
-          | Param.Term | Param.TermMaxsize -> selection_fun_weight id_thread cl2
-          | Param.Nounifset -> selection_fun_nounifset id_thread cl2
+          | Param.NounifsetMaxsize -> selection_fun_nounifset_maxsize cl2
+          | Param.Term | Param.TermMaxsize -> selection_fun_weight cl2
+          | Param.Nounifset -> selection_fun_nounifset cl2
         end
       else r
     in
@@ -521,11 +525,11 @@ struct
     in
     if r = -1 then W.selfun cl else r
   
-  let initialize_before_saturation ?(id_thread=0) rulequeue =
+  let initialize_before_saturation rulequeue =
     (* If no "nounif" instruction is given, first guess them by "selection_fun_weight" *)
     if !no_unif_set = [] || !Param.select_fun == Param.Term || !Param.select_fun == Param.TermMaxsize
     then
-      Q.iter (fun (r,_,_) -> ignore (selection_fun_weight id_thread r)) rulequeue
+      Q.iter (fun (r,_,_) -> ignore (selection_fun_weight r)) rulequeue
 
   let hypothesis_is_in_conclusion hyp concl = 
     let concl_list = fact_list_of_conclusion concl in
@@ -536,13 +540,13 @@ struct
       the function returns the position of the hypothesis selected as well as the updated
       clause. When no hypothesis is authorized, the function returns -1 and the outputted
       clause is physically the same as [cl]. *)
-  let selection_fun_ignore_nounif ?(id_thread=0) cl =
+  let selection_fun_ignore_nounif cl =
 
     let rec explore_hyp n prev_hypl = function
       | []-> None (* No need hypothesis selected *)
       | hyp :: q_hypl ->
           let Pred(p,args) = H.get_fact hyp in
-          if H.can_ignore_nounif hyp && List.exists (has_same_format id_thread (p,args)) !no_unif_ignore
+          if H.can_ignore_nounif hyp && List.exists (has_same_format (p,args)) !no_unif_ignore
           then 
             (* A format has been matched *)
             let hyp' = H.decrease_ignore_nounif_authorization hyp in
@@ -559,9 +563,9 @@ struct
       | None -> -1,cl  
 
   (** Similar to [selection_fun] except that the automatic detection of nounif has been deactivated. *)
-  let selection_fun_nostatechange ?(id_thread=0) rule =
+  let selection_fun_nostatechange rule =
     modify_nounif := false;
-    let r = selection_fun ~id_thread rule in
+    let r = selection_fun rule in
     modify_nounif := true;
     r
 end
