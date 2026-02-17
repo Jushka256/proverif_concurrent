@@ -41,8 +41,8 @@ val get_until_pos : int -> 'a list -> 'a list
 val do_rnil : 'a Pitypes.reduc_state -> int -> 'a Pitypes.reduc_state
 
 val equal_terms_modulo : term -> term -> bool
-val equal_open_terms_modulo : ?id_thread:int -> term -> term -> bool
-val equal_facts_modulo : ?id_thread:int -> fact -> fact -> bool
+val equal_open_terms_modulo : term -> term -> bool
+val equal_facts_modulo : fact -> fact -> bool
 val match_modulo : (unit -> 'a) -> term -> term -> 'a
 val match_modulo_list :
   (unit -> 'a) -> term list -> term list -> 'a
@@ -63,23 +63,23 @@ val fact_subst :
 val process_subst :
   process -> funsymb -> term -> process
 
-val copy_process : ?id_thread:int -> process -> process
+val copy_process : process -> process
 
 val instantiate_natural_predicates : (unit -> 'a) -> fact_tree -> 'a
 
-val close_term : ?id_thread:int -> term -> unit
-val close_destr_constraints : ?id_thread:int -> constraints -> unit
-val close_tree : ?id_thread:int -> fact_tree -> unit
+val close_term : term -> unit
+val close_destr_constraints : constraints -> unit
+val close_tree : fact_tree -> unit
 
-val copy_closed : ?id_thread:int -> term -> term
-val copy_closed_remove_syntactic : ?id_thread:int -> term -> term
+val copy_closed : term -> term
+val copy_closed_remove_syntactic : term -> term
 
-val rev_name_subst : ?id_thread:int -> term -> term
-val rev_name_subst_list : ?id_thread:int -> term list -> term list
-val rev_name_subst_fact : ?id_thread:int -> fact -> fact
+val rev_name_subst : term -> term
+val rev_name_subst_list : term list -> term list
+val rev_name_subst_fact : fact -> fact
 
-val follow_link : ?id_thread:int -> term -> term
-val close_tree_collect_links : ?id_thread:int -> (binder * linktype) list ref -> fact_tree -> unit
+val follow_link : term -> term
+val close_tree_collect_links : (binder * linktype) list ref -> fact_tree -> unit
 
 val getphase : predicate -> int
 
@@ -99,11 +99,11 @@ val reduction_check_several_patterns : Pitypes.term_occ -> bool
    This function must be called after translating the process into
    clauses, because this translation determines the arguments of the
    name function symbols. *)
-val check_delayed_names : ?id_thread:int -> Pitypes.query_e -> Pitypes.query_e
-val check_delayed_names_ax : ?id_thread:int -> Pitypes.realquery_e -> Pitypes.realquery_e
+val check_delayed_names : Pitypes.query_e -> Pitypes.query_e
+val check_delayed_names_ax : Pitypes.realquery_e -> Pitypes.realquery_e
 
 val collect_constraints : fact_tree -> constraints
-val close_constraints : ?id_thread:int -> constraints -> unit
+val close_constraints : constraints -> unit
 
 (* Functions handleling the occurence names as well as the precise events. *)
 

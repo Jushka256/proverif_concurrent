@@ -1107,12 +1107,12 @@ let rec close_term_collect_links links = function
             let name = add_new_name v.btype in
             let valname = FunApp(name, []) in
             Terms.link v (TLink valname);
-            links := (v,v.link) :: (!links);
-        | TLink t ->
+            links := (v,NoLink) :: (!links);
+        | TLink t as l ->
             if not (List.exists (fun (v',_) -> v == v') (!links)) then
                (* If v is in links, we have already done this, so no need to redo it *)
               begin
-                links := (v,v.link) :: (!links);
+                links := (v,l) :: (!links);
                 close_term_collect_links links t
               end
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in close_term (3)"
