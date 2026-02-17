@@ -311,7 +311,7 @@ let pred_phase_0_to_1 p =
 (* With non-interference, all variables mapping to a secret in the state should
    be linked with their secret. Moreover, last_step_variables and last_step_constra
    should be empty. *)
-let output_rule id_thread cur_state out_fact = match cur_state.record_fun_opt with
+let output_rule cur_state out_fact = match cur_state.record_fun_opt with
   | None ->
       (* We record the symbols from the rule *)
       List.iter Database.record_from_fact (out_fact::cur_state.hypothesis);
@@ -355,7 +355,7 @@ let output_rule id_thread cur_state out_fact = match cur_state.record_fun_opt wi
                 FunApp(f,l) ->
                   FunApp((if f == session0 then session1 else f),
                          List.map copy_term3 l)
-              | Var v -> match v.link.(id_thread) with
+              | Var v -> match Terms.get_link v with
                   NoLink ->
                     let r = Terms.copy_var v in
                     Terms.link v (VLink r);
@@ -404,46 +404,46 @@ let current_bound_vars_destructor = ref ([] : binder list)
    reference Terms.current_bound_vars but does not empty the reference
    current_bounds_vars_destructor. Moreover, before running [f], the function
    saves the variables in Terms.current_bound_vars in current_bound_vars_destructor *)
-let save_bound_vars id_thread f =
+let save_bound_vars f =
   let tmp_bound_vars = !Terms.current_bound_vars in
   let tmp_bound_vars_dest = !current_bound_vars_destructor in
   Terms.current_bound_vars := [];
   current_bound_vars_destructor := List.rev_append tmp_bound_vars !current_bound_vars_destructor;
   try
     let r = f () in
-    List.iter (fun v -> v.link.(id_thread) <- NoLink) !Terms.current_bound_vars;
+    List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
     Terms.current_bound_vars := tmp_bound_vars;
     current_bound_vars_destructor := tmp_bound_vars_dest;
     r
   with
     | Terms.Unify | TermsEq.FalseConstraint ->
-        List.iter (fun v -> v.link.(id_thread) <- NoLink) !Terms.current_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
         Terms.current_bound_vars := tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest
     | x ->
-        List.iter (fun v -> v.link.(id_thread) <- NoLink) !Terms.current_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
         Terms.current_bound_vars := tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest;
         raise x
 
-let cleanup_bound_vars id_thread f =
+let cleanup_bound_vars f =
   let tmp_bound_vars = !Terms.current_bound_vars in
   let tmp_bound_vars_dest = !current_bound_vars_destructor in
   Terms.current_bound_vars := [];
   current_bound_vars_destructor := [];
   try
     let r = f () in
-    List.iter (fun v -> v.link.(id_thread) <- NoLink) !Terms.current_bound_vars;
+    List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
     Terms.current_bound_vars := tmp_bound_vars;
     current_bound_vars_destructor := tmp_bound_vars_dest;
     r
   with
     | Terms.Unify | TermsEq.FalseConstraint ->
-        List.iter (fun v -> v.link.(id_thread) <- NoLink) !Terms.current_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
         Terms.current_bound_vars := tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest
     | x ->
-        List.iter (fun v -> v.link.(id_thread) <- NoLink) !Terms.current_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
         Terms.current_bound_vars := tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest;
         raise x
@@ -456,7 +456,7 @@ let link_mapping_vars (f,v) = Terms.unify (FunApp(f,[])) (Var v)
 (* Function unify that takes into account whether or not we need to keep
    equalities into last_step_unif or if we can directly unify them *)
 
-let unify_list id_thread f_next cur_state tl1 tl2 =
+let unify_list f_next cur_state tl1 tl2 =
   if cur_state.record_fun_opt = None
   then f_next cur_state
   else
@@ -469,7 +469,7 @@ let unify_list id_thread f_next cur_state tl1 tl2 =
           last_step_unif_right = tl2 @ cur_state.last_step_unif_right
         }
     else
-      save_bound_vars id_thread (fun () ->
+      save_bound_vars (fun () ->
         List.iter2 Terms.unify tl1 tl2;
 
         (* We unify the previous element in last_step_unif if there are some *)
@@ -482,10 +482,10 @@ let unify_list id_thread f_next cur_state tl1 tl2 =
         else f_next cur_state
       )
 
-let unify id_thread f_next cur_state t1 t2 =
+let unify f_next cur_state t1 t2 =
   if cur_state.record_fun_opt = None
   then f_next cur_state
-  else unify_list id_thread f_next cur_state [t1] [t2]
+  else unify_list f_next cur_state [t1] [t2]
 
 (* Raises TermsEq.FalseConstraint when cur_state does not need to be considered
    - When we want to compute the negation of success conditions,
@@ -499,7 +499,7 @@ let unify id_thread f_next cur_state t1 t2 =
    of the secrets only.
  *)
 
-let check_feasible id_thread f_next check cur_state =
+let check_feasible f_next check cur_state =
   if !(cur_state.neg_success_conditions) != None
   then
     (* We need to check modulo the equational theory since we are gathering the
@@ -553,7 +553,7 @@ let check_feasible id_thread f_next check cur_state =
 
     if cur_state.last_step_unif_left != []
     then
-      save_bound_vars id_thread (fun () ->
+      save_bound_vars (fun () ->
         List.iter2 Terms.unify cur_state.last_step_unif_left cur_state.last_step_unif_right;
         check_constraints ()
       )
@@ -571,11 +571,11 @@ let wedge_constraints cur_state constra =
 
 (* End destructor group *)
 
-let end_destructor_group_no_test_unif id_thread next_f cur_state =
+let end_destructor_group_no_test_unif next_f cur_state =
   if cur_state.record_fun_opt = None
   then next_f cur_state
   else
-    cleanup_bound_vars id_thread (fun () ->
+    cleanup_bound_vars (fun () ->
       (* We unify the secrets with their variables. If the unification fails,
       then we can remove this branch. Similarly, we simplify the constraints
       and remove the branch if it fails. *)
@@ -601,11 +601,11 @@ let end_destructor_group_no_test_unif id_thread next_f cur_state =
         }
     )
 
-let noninterf_equalities id_thread cur_state occ eq_left eq_right =
+let noninterf_equalities cur_state occ eq_left eq_right =
   (* Output the rule *)
   let tuple_fun = Terms.get_tuple_fun (List.map Terms.get_term_type eq_left) in
   let new_hyp = testunif_fact (FunApp(tuple_fun, eq_left)) (FunApp(tuple_fun, eq_right)) in
-  output_rule id_thread { cur_state with
+  output_rule { cur_state with
             hypothesis = new_hyp :: cur_state.hypothesis;
             hyp_tags = TestUnifTag(occ) :: cur_state.hyp_tags;
             last_step_variables = [];
@@ -613,7 +613,7 @@ let noninterf_equalities id_thread cur_state occ eq_left eq_right =
             last_step_unif_left = [];
             last_step_unif_right = [] } (Pred(bad_pred, []))
 
-let noninterf_constraints id_thread cur_state secret_not_applied occ =
+let noninterf_constraints cur_state secret_not_applied occ =
   (** Second, output the rule for constraints *)
   if cur_state.last_step_constra.is_nat != [] || cur_state.last_step_constra.is_not_nat != [] || cur_state.last_step_constra.geq != []
   then Parsing_helper.user_error "Natural numbers do not work with non-interference yet.";
@@ -632,7 +632,7 @@ let noninterf_constraints id_thread cur_state secret_not_applied occ =
         let (l1,l2) = List.split constra_neq in
         let tuple_fun = Terms.get_tuple_fun (List.map Terms.get_term_type l1) in
         let new_hyp = testunif_fact (FunApp(tuple_fun, l1)) (FunApp(tuple_fun, l2)) in
-        output_rule id_thread
+        output_rule
           { cur_state with
             hypothesis = new_hyp :: cur_state.hypothesis;
             hyp_tags = TestUnifTag(occ) :: cur_state.hyp_tags;
@@ -650,15 +650,15 @@ let noninterf_record_symbol cur_state =
   List.iter Database.record_from_fact cur_state.hypothesis;
   Database.record_predicate (Param.get_pred (TestUnifP Param.bitstring_type))
 
-let end_destructor_group id_thread next_f occ cur_state =
-  end_destructor_group_no_test_unif id_thread next_f cur_state;
+let end_destructor_group next_f occ cur_state =
+  end_destructor_group_no_test_unif next_f cur_state;
 
   if cur_state.record_fun_opt = None
   then (if Param.is_noninterf cur_state.tr_pi_state then noninterf_record_symbol cur_state)
   else
     if (Param.is_noninterf cur_state.tr_pi_state) || (!(cur_state.neg_success_conditions) != None)
     then
-      check_feasible id_thread (fun cur_state1 ->
+      check_feasible (fun cur_state1 ->
         match !(cur_state1.neg_success_conditions) with
         | None ->
             (* We need to apply non interference *)
@@ -666,8 +666,8 @@ let end_destructor_group id_thread next_f occ cur_state =
 
             let vars_links =
               List.map (fun v ->
-                let l = v.link in
-                v.link.(id_thread) <- NoLink;
+                let l = Terms.get_link v in
+                Terms.link_unsafe v NoLink;
                 (v,l)
               ) bound_vars
             in
@@ -686,7 +686,7 @@ let end_destructor_group id_thread next_f occ cur_state =
                      by universal variables *)
                   let (eq_left,eq_right) =
                     Terms.auto_cleanup (fun _ ->
-                      List.fold_right (fun (v,links) (acc_l,acc_r) -> match links.(id_thread) with
+                      List.fold_right (fun (v,link) (acc_l,acc_r) -> match link with
                         | TLink t ->
                             let t' = Terms.copy_term4 t in
                             let t_left = Terms.generalize_vars_in cur_state1.last_step_variables (Var v) in
@@ -698,15 +698,15 @@ let end_destructor_group id_thread next_f occ cur_state =
                   in
 
                   (* Create the rule *)
-                  noninterf_equalities id_thread cur_state occ eq_left eq_right;
+                  noninterf_equalities cur_state occ eq_left eq_right;
                 with Terms.Unify | TermsEq.FalseConstraint -> Parsing_helper.internal_error __POS__ "[end_destructor_group] The unification should not fail (they were true at the beginning of the group and should be at the end)"
               );
 
             (* Put back the links *)
-            List.iter (fun (v,l) -> v.link <- l) vars_links;
+            List.iter (fun (v,l) -> Terms.link_unsafe v l) vars_links;
 
             (* Create the rule for constraints *)
-            noninterf_constraints id_thread cur_state true occ
+            noninterf_constraints cur_state true occ
         | Some r ->
             assert (get_bound_vars () = []);
 
@@ -747,15 +747,15 @@ let end_destructor_group id_thread next_f occ cur_state =
                 then
                   begin
                     if cur_state1.last_step_unif_left != []
-                    then noninterf_equalities id_thread cur_state occ eq_left eq_right;
+                    then noninterf_equalities cur_state occ eq_left eq_right;
 
-                    noninterf_constraints id_thread cur_state false occ
+                    noninterf_constraints cur_state false occ
                   end
               with Terms.Unify | TermsEq.FalseConstraint  -> Parsing_helper.internal_error __POS__ "[end_destructor_group] The unification should not fail (they were true at the beginning of the group and should be at the end) (2)"
             )
       ) true cur_state
 
-let begin_destructor_group id_thread next_f cur_state =
+let begin_destructor_group next_f cur_state =
   if cur_state.record_fun_opt = None
   then next_f cur_state
   else
@@ -769,20 +769,20 @@ let begin_destructor_group id_thread next_f cur_state =
         assert(!current_bound_vars_destructor = []);
         let mapping = List.map (fun (f,v) ->
           let rec get_var v =
-            match v.link.(id_thread) with
+            match Terms.get_link v with
             | TLink(FunApp(f',[])) when f == f' -> v
             | TLink(Var v') -> get_var v'
             | _ -> Parsing_helper.internal_error __POS__ "[begin_destructor_group] The mapping variables should be linked with their symlbol."
           in
           let v' = get_var v in
-          v'.link.(id_thread) <- NoLink;
+          Terms.link_unsafe v' NoLink;
           (f,v')
             ) cur_state.mapping_secret_vars
         in
         Terms.auto_cleanup (fun () ->
           next_f cur_state
         );
-        List.iter (fun (f,v) -> v.link.(id_thread) <- TLink(FunApp(f,[]))) mapping
+        List.iter (fun (f,v) -> Terms.link_unsafe v (TLink(FunApp(f,[])))) mapping
       end
     else
       Terms.auto_cleanup (fun () ->
@@ -791,10 +791,13 @@ let begin_destructor_group id_thread next_f cur_state =
 
 (* Decide when to optimize mess(c,M) into attacker(M) *)
 
-let optimize_mess id_thread cur_state tc =
-  let is_TLink lst = match lst.(id_thread) with TLink t -> true | _ -> false in 
+let optimize_mess cur_state tc =
   let rec is_public_term = function
-    | Var({ link = lst; _}) when is_TLink lst -> let TLink t = lst.(id_thread) in is_public_term t
+    | Var v -> 
+        begin match Terms.get_link v with
+        | TLink t -> is_public_term t
+        | _ -> false
+        end
     | FunApp({ f_cat = Name _; f_private = false },_) -> true
     | FunApp({ f_cat = Eq _; f_private = false; _ }, args)
     | FunApp({ f_cat = Tuple; _}, args) -> List.for_all is_public_term args
@@ -819,13 +822,13 @@ let optimize_mess id_thread cur_state tc =
 
 (* Translate term *)
 
-let check_feasible_rewrite_rules id_thread f_next check args_rw_list cur_state =
+let check_feasible_rewrite_rules f_next check args_rw_list cur_state =
   if Param.is_noninterf cur_state.tr_pi_state || !(cur_state.neg_success_conditions) != None
   then
     let vars = ref [] in
     List.iter (Terms.get_vars_acc vars) args_rw_list;
-    check_feasible id_thread f_next check { cur_state with last_step_variables = !vars @ cur_state.last_step_variables }
-  else check_feasible id_thread f_next check cur_state
+    check_feasible f_next check { cur_state with last_step_variables = !vars @ cur_state.last_step_variables }
+  else check_feasible f_next check cur_state
 
 let rec retrieve_rw_rules_at_pos acc_c acc_e pos = function
   | (ToCheck(i,_),_) as s :: q when i = pos ->
@@ -843,12 +846,12 @@ let rec retrieve_rw_rules_at_pos acc_c acc_e pos = function
     - [rules] are the rewrite rules that still require translation.
     - [check] indicates whether we should check the satisfiability of the constraints.
 *)
-let rec transl_rewrite_rules id_thread next_f cur_state check transl_args args pos rules =
+let rec transl_rewrite_rules next_f cur_state check transl_args args pos rules =
   if List.for_all (function
     | ToExecute i, _ when pos < i -> true
     | _ -> false
     ) rules
-  then transl_rewrite_rules_execute id_thread next_f cur_state transl_args args pos rules
+  then transl_rewrite_rules_execute next_f cur_state transl_args args pos rules
   else
     match rules with
       | [] -> ()
@@ -858,8 +861,8 @@ let rec transl_rewrite_rules id_thread next_f cur_state check transl_args args p
       | (ToExecute i,_)::_ when pos < i ->
           (* All rules require to translate the next argument *)
           let t = List.hd args in
-          transl_term id_thread (fun cur_state1 t1 ->
-            transl_rewrite_rules id_thread next_f cur_state1 check (transl_args@[t1]) (List.tl args) (pos+1) rules
+          transl_term (fun cur_state1 t1 ->
+            transl_rewrite_rules next_f cur_state1 check (transl_args@[t1]) (List.tl args) (pos+1) rules
               ) cur_state t
       | _ ->
           let check_rules, execute_rules, others = retrieve_rw_rules_at_pos [] [] pos rules in
@@ -889,9 +892,9 @@ let rec transl_rewrite_rules id_thread next_f cur_state check transl_args args p
                     (* We unify the arguments of the rewrite rules with the translated
 		       arguments to obtain the result of the application
                        of the rewrite rule *)
-                    unify_list id_thread (fun cur_state1 ->
+                    unify_list (fun cur_state1 ->
                       let cur_state2 = wedge_constraints cur_state1 side_c in
-                      check_feasible_rewrite_rules id_thread (fun cur_state3 -> next_f cur_state3 right) check left_list_to_check cur_state2
+                      check_feasible_rewrite_rules (fun cur_state3 -> next_f cur_state3 right) check left_list_to_check cur_state2
 			) cur_state transl_args left_list_to_check
 
 		else
@@ -900,9 +903,9 @@ let rec transl_rewrite_rules id_thread next_f cur_state check transl_args args p
 		     if the rewrite rule is applicable or not. *)
 		  let is_applicable = ref false in
 
-		  unify_list id_thread (fun cur_state1 ->
+		  unify_list (fun cur_state1 ->
                     let cur_state2 = wedge_constraints cur_state1 side_c in
-                    check_feasible_rewrite_rules id_thread (fun _ -> is_applicable := true) check left_list_to_check cur_state2
+                    check_feasible_rewrite_rules (fun _ -> is_applicable := true) check left_list_to_check cur_state2
 		      ) cur_state transl_args left_list_to_check;
 
 		  if !is_applicable
@@ -920,18 +923,18 @@ let rec transl_rewrite_rules id_thread next_f cur_state check transl_args args p
               else Reduction_helper.get_until_pos pos left_list
             in
 
-            unify_list id_thread (fun cur_state1 ->
+            unify_list (fun cur_state1 ->
               let cur_state2 = wedge_constraints cur_state1 side_c in
               (* We put the check variable to false since the check of constraints
                was done when handling ToCheck(i,j). We could still check the constraints
                too but i think it is superfleous. *)
-              check_feasible_rewrite_rules id_thread (fun cur_state3 -> next_f cur_state3 right) false left_list_to_check cur_state2
+              check_feasible_rewrite_rules (fun cur_state3 -> next_f cur_state3 right) false left_list_to_check cur_state2
 		) cur_state transl_args left_list_to_check
 	      ) execute_rules;
 
-          transl_rewrite_rules id_thread next_f cur_state check transl_args args pos !others1
+          transl_rewrite_rules next_f cur_state check transl_args args pos !others1
 
-and transl_rewrite_rules_execute id_thread next_f cur_state transl_args args pos rules = match rules with
+and transl_rewrite_rules_execute next_f cur_state transl_args args pos rules = match rules with
   | [] -> ()
   | (ToExecute i,_)::q ->
       let (check_rules,same_to_execute,other_to_execute) = retrieve_rw_rules_at_pos [] [] i rules in
@@ -939,27 +942,27 @@ and transl_rewrite_rules_execute id_thread next_f cur_state transl_args args pos
       then Parsing_helper.internal_error __POS__ "[transl_rewrite_rules_one_side_execute] The list should not contain ToCheck.";
 
       let t_to_translate = List.nth args (i-pos-1) in
-      transl_term id_thread (fun cur_state1 t1 ->
+      transl_term (fun cur_state1 t1 ->
         List.iter (fun (left_list,right,side_c) ->
           let left_list_to_check = Reduction_helper.get_until_pos pos left_list in
-          unify_list id_thread (fun cur_state2 ->
+          unify_list (fun cur_state2 ->
             let cur_state3 = wedge_constraints cur_state2 side_c in
             (* We put the check variable to false since the check of constraints
                was done when handling ToCheck(i,j). We could still check the constraints
                too but i think it is superfleous. *)
-            check_feasible_rewrite_rules id_thread (fun cur_state4 -> next_f cur_state4 t1) false (right::left_list_to_check) cur_state3
+            check_feasible_rewrite_rules (fun cur_state4 -> next_f cur_state4 t1) false (right::left_list_to_check) cur_state3
           ) cur_state1 (t1::transl_args) (right::left_list_to_check)
         ) same_to_execute
       ) cur_state t_to_translate;
 
-      transl_rewrite_rules_execute id_thread next_f cur_state transl_args args pos other_to_execute
+      transl_rewrite_rules_execute next_f cur_state transl_args args pos other_to_execute
   | _ -> Parsing_helper.internal_error __POS__ "[transl_rewrite_rules_execute] Unexpected case."
 
 (* next_f takes a state and a pattern as parameter *)
-and transl_term id_thread next_f cur_state = function
+and transl_term next_f cur_state = function
     Var v ->
       begin
-        match v.link.(id_thread) with
+        match Terms.get_link v with
           TLink t -> next_f cur_state t
         | _ -> internal_error __POS__ ("unexpected link in transl_term "^Display.string_of_binder v)
       end
@@ -970,7 +973,7 @@ and transl_term id_thread next_f cur_state = function
           (* In such a case, all rules are of the form f -> a *)
           let red_rules = Terms.red_rules_fun f in
           List.iter (fun (_,t,_) -> next_f cur_state t) red_rules
-        else transl_rewrite_rules id_thread next_f cur_state check [] l 0 (Terms.get_all_rewrite_rules_status f)
+        else transl_rewrite_rules next_f cur_state check [] l 0 (Terms.get_all_rewrite_rules_status f)
       in
       match f.f_cat with
         Name n ->
@@ -983,31 +986,31 @@ and transl_term id_thread next_f cur_state = function
       | Red _ | Eq _ -> transl_red true
       | _ -> Parsing_helper.internal_error __POS__ "function symbols of these categories should not appear in input terms (pitransl)"
 
-let transl_term id_thread next_f cur_state t =
+let transl_term next_f cur_state t =
   if cur_state.record_fun_opt = None
   then next_f cur_state t
-  else transl_term id_thread next_f cur_state t
+  else transl_term next_f cur_state t
 
 (* next_f takes a state and a list of patterns as parameter *)
-let rec transl_term_list id_thread next_f cur_state = function
+let rec transl_term_list next_f cur_state = function
     [] -> next_f cur_state []
   | (a::l) ->
-      transl_term id_thread (fun cur_state1 p ->
-        transl_term_list id_thread (fun cur_state2 patlist ->
+      transl_term (fun cur_state1 p ->
+        transl_term_list (fun cur_state2 patlist ->
           next_f cur_state2 (p::patlist)) cur_state1 l) cur_state a
 
-let transl_term_incl_destructor id_thread f cur_state occ t =
+let transl_term_incl_destructor f cur_state occ t =
   let may_have_several_types = Reduction_helper.transl_check_several_patterns terms_to_add_in_name_params occ t in
-  transl_term id_thread (fun cur_state1 pat1 ->
+  transl_term (fun cur_state1 pat1 ->
     if may_have_several_types then
       f { cur_state1 with name_params = (MUnknown, pat1, Always)::cur_state1.name_params } pat1
     else
       f cur_state1 pat1
     ) cur_state t
 
-let transl_term_list_incl_destructor id_thread f cur_state occ tl =
+let transl_term_list_incl_destructor f cur_state occ tl =
   let may_have_several_types = List.exists (Reduction_helper.transl_check_several_patterns terms_to_add_in_name_params occ) tl in
-  transl_term_list id_thread (fun cur_state1 patlist ->
+  transl_term_list (fun cur_state1 patlist ->
     if may_have_several_types then
       f { cur_state1 with
           name_params = (List.map2 (fun t pat -> (MUnknown, pat, Always)) tl patlist) @ cur_state1.name_params } patlist
@@ -1017,40 +1020,40 @@ let transl_term_list_incl_destructor id_thread f cur_state occ tl =
 
 (* Detect failure *)
 
-let no_fail id_thread next_f cur_state t =
+let no_fail next_f cur_state t =
   if cur_state.record_fun_opt = None
   then next_f cur_state t
   else
     let x = Terms.new_var_def (Terms.get_term_type t) in
-    unify id_thread (fun cur_state1 ->
+    unify (fun cur_state1 ->
       next_f { cur_state1 with last_step_variables = x :: cur_state1.last_step_variables } t
     ) cur_state t (Var x)
 
-let no_fail_list id_thread next_f cur_state tl =
+let no_fail_list next_f cur_state tl =
   if cur_state.record_fun_opt = None
   then next_f cur_state tl
   else
     let xl = List.map (fun t -> Terms.new_var_def (Terms.get_term_type t)) tl in
     let xl_term = List.map (fun x -> Var x) xl in
-    unify_list id_thread (fun cur_state1 ->
+    unify_list (fun cur_state1 ->
       next_f { cur_state with last_step_variables = xl @ cur_state.last_step_variables } tl
     ) cur_state tl xl_term
 
-let must_fail id_thread next_f cur_state t =
+let must_fail next_f cur_state t =
   if cur_state.record_fun_opt = None
   then next_f cur_state
   else
     let fail = Terms.get_fail_term (Terms.get_term_type t) in
-    unify id_thread next_f cur_state t fail
+    unify next_f cur_state t fail
 
 (* Translate pattern *)
 
-let rec transl_pat id_thread put_var f cur_state pat =
+let rec transl_pat put_var f cur_state pat =
   match pat with
     PatVar b ->
       let b' = Terms.copy_var b in
       let pat' = Var b' in
-      b.link.(id_thread) <- TLink pat';
+      Terms.link_unsafe b (TLink pat');
       let cur_state1 =
         { cur_state with
           name_params = (MVar(b, None), pat', put_var) :: cur_state.name_params;
@@ -1058,22 +1061,22 @@ let rec transl_pat id_thread put_var f cur_state pat =
         }
       in
       f cur_state1 (Var b');
-      b.link.(id_thread) <- NoLink
+      Terms.link_unsafe b NoLink
   | PatTuple (fsymb,pat_list) ->
-      transl_pat_list id_thread put_var (fun cur_state2 term_list ->
+      transl_pat_list put_var (fun cur_state2 term_list ->
         f cur_state2 (FunApp(fsymb, term_list))
           ) cur_state pat_list;
   | PatEqual t ->
-      transl_term id_thread (no_fail id_thread f) cur_state t
+      transl_term (no_fail f) cur_state t
 
-and transl_pat_list id_thread put_var f cur_state = function
+and transl_pat_list put_var f cur_state = function
     [] -> f cur_state []
   | p::pl ->
       (* It is important to translate the head first, like the head is
          checked first in pisyntax.ml, because variables may be bound in the
          head and used in equality tests in the tail *)
-      transl_pat id_thread put_var (fun cur_state2 term ->
-        transl_pat_list id_thread put_var (fun cur_state3 term_list ->
+      transl_pat put_var (fun cur_state2 term ->
+        transl_pat_list put_var (fun cur_state3 term_list ->
           f cur_state3 (term::term_list)
             ) cur_state2 pl
           ) cur_state p
@@ -1097,13 +1100,13 @@ let rec transl_unif next_f cur_state accu = function
 
 (* Handles the case in which one the terms =M in the pattern fails *)
 
-let rec transl_pat_fail_term id_thread next_f cur_state = function
+let rec transl_pat_fail_term next_f cur_state = function
     PatVar b -> ()
   | PatTuple(f,l) ->
-      List.iter (transl_pat_fail_term id_thread next_f cur_state) l
+      List.iter (transl_pat_fail_term next_f cur_state) l
   | PatEqual t ->
       (* t fails *)
-      transl_term id_thread (must_fail id_thread next_f) cur_state t
+      transl_term (must_fail next_f) cur_state t
 
 (* Handles the case in which the terms =M in the pattern succeed,
    but the result does not match
@@ -1111,42 +1114,42 @@ let rec transl_pat_fail_term id_thread next_f cur_state = function
    and a term that represents the pattern, with general variables
    instead of variables bound by the pattern. *)
 
-let rec transl_pat_fail_rec id_thread next_f cur_state = function
+let rec transl_pat_fail_rec next_f cur_state = function
     PatVar b ->
       let gvar = Terms.new_gen_var b.btype false in
       next_f cur_state (FunApp(gvar, []));
   | PatTuple (fsymb,pat_list) ->
-      transl_pat_fail_list id_thread (fun cur_state gen_list ->
+      transl_pat_fail_list (fun cur_state gen_list ->
         next_f cur_state (FunApp(fsymb, gen_list))
           ) cur_state pat_list
   | PatEqual t ->
       (* term t succeeds *)
-      transl_term id_thread (no_fail id_thread next_f) cur_state t
+      transl_term (no_fail next_f) cur_state t
 
-and transl_pat_fail_list id_thread next_f cur_state = function
+and transl_pat_fail_list next_f cur_state = function
     [] -> next_f cur_state []
   | p::pl ->
-      transl_pat_fail_rec id_thread (fun cur_state1 gen ->
-        transl_pat_fail_list id_thread (fun cur_state2 gen_list ->
+      transl_pat_fail_rec (fun cur_state1 gen ->
+        transl_pat_fail_list (fun cur_state2 gen_list ->
           next_f cur_state2 (gen::gen_list)
             ) cur_state1 pl
         ) cur_state p
 
-let transl_pat_fail id_thread next_f cur_state pat pat' =
+let transl_pat_fail next_f cur_state pat pat' =
   (* one the terms =M in the pattern fails *)
-  transl_pat_fail_term id_thread next_f cur_state pat;
+  transl_pat_fail_term next_f cur_state pat;
   (* the terms =M in the pattern succeed, but the result does not match *)
-  transl_pat_fail_rec id_thread (fun cur_state1 pat_gen ->
+  transl_pat_fail_rec (fun cur_state1 pat_gen ->
     next_f { cur_state1 with
              last_step_constra = { cur_state1.last_step_constra with neq = [pat_gen, pat']::cur_state1.last_step_constra.neq } };
       ) cur_state pat
 
 (* Translate fact *)
 
-let transl_fact id_thread next_fun cur_state occ f =
+let transl_fact next_fun cur_state occ f =
   match f with
   | Pred(p,tl) ->
-      transl_term_list_incl_destructor id_thread (no_fail_list id_thread (fun cur_state1 patl ->
+      transl_term_list_incl_destructor (no_fail_list (fun cur_state1 patl ->
         next_fun (Pred(p,patl)) cur_state1)) cur_state occ tl
 
 (* Translate process *)
@@ -1187,13 +1190,13 @@ let get_occurrence_name_for_precise cur_state occ =
         FunApp(n,np)
     | _ -> internal_error __POS__ "[get_occurrence_name_for_precise] Unexpected function category in the translation of events."
 
-let rec transl_process id_thread cur_state process =
+let rec transl_process cur_state process =
   verify_explored_occurrence cur_state process (fun () -> match process with
     | Nil -> ()
-    | NamedProcess(_, _, p) -> transl_process id_thread cur_state p
+    | NamedProcess(_, _, p) -> transl_process cur_state p
     | Par(p,q) ->
-        transl_process id_thread cur_state p;
-        transl_process id_thread cur_state q
+        transl_process cur_state p;
+        transl_process cur_state q
     | Repl (p,occ) ->
         let cur_state = { cur_state with repl_count = cur_state.repl_count + 1 } in
         let sid_meaning = MSid cur_state.repl_count in
@@ -1205,20 +1208,20 @@ let rec transl_process id_thread cur_state process =
          if Param.is_noninterf cur_state.tr_pi_state then
            begin
              if (!Param.key_compromise == 0) then
-               transl_process id_thread { cur_state with
+               transl_process { cur_state with
                                 hypothesis = (att_fact cur_state.cur_phase (Var v)) :: cur_state.hypothesis;
                                 name_params = (sid_meaning, Var v, Always) :: cur_state.name_params;
                                 hyp_tags = (ReplTag(occ, count_params)) :: cur_state.hyp_tags
                               } p
              else if (!Param.key_compromise == 1) then
-               transl_process id_thread { cur_state with
+               transl_process { cur_state with
                                 hypothesis = (att_fact cur_state.cur_phase (Var v)) :: (att_fact cur_state.cur_phase (Var comp_session_var)) :: cur_state.hypothesis;
                                 name_params = (MCompSid, Var comp_session_var, Always) ::
                                    (sid_meaning, Var v, Always) :: cur_state.name_params;
                                 hyp_tags = (ReplTag(occ, count_params)) :: cur_state.hyp_tags
                               } p
              else
-               transl_process id_thread { cur_state with
+               transl_process { cur_state with
                                 hypothesis = (att_fact cur_state.cur_phase (Var v)) :: cur_state.hypothesis;
                                 name_params = (MCompSid, compromised_session, Always) ::
                                    (sid_meaning, Var v, Always) :: cur_state.name_params;
@@ -1228,18 +1231,18 @@ let rec transl_process id_thread cur_state process =
          else
            begin
              if (!Param.key_compromise == 0) then
-               transl_process id_thread { cur_state with
+               transl_process { cur_state with
                                 name_params = (sid_meaning, Var v, Always) :: cur_state.name_params;
                                 hyp_tags = (ReplTag(occ, count_params)) :: cur_state.hyp_tags
                               } p
              else if (!Param.key_compromise == 1) then
-               transl_process id_thread { cur_state with
+               transl_process { cur_state with
                                 name_params = (MCompSid, Var comp_session_var, Always) ::
                                    (sid_meaning, Var v, Always) :: cur_state.name_params;
                                 hyp_tags = (ReplTag(occ, count_params)) :: cur_state.hyp_tags
                               } p
              else
-               transl_process id_thread { cur_state with
+               transl_process { cur_state with
                                 name_params = (MCompSid, compromised_session, Always) ::
                                    (sid_meaning, Var v, Always) :: cur_state.name_params;
                                 hyp_tags = (ReplTag(occ, count_params)) :: cur_state.hyp_tags
@@ -1276,7 +1279,7 @@ let rec transl_process id_thread cur_state process =
                  internal_error __POS__ ("Name " ^ (Display.string_of_fsymb n) ^ " has bad type")
              end;
            r.prev_inputs <- Some (FunApp(n, np));
-           transl_process id_thread cur_state p;
+           transl_process cur_state p;
            r.prev_inputs <- None
           | _ -> internal_error __POS__ "A restriction should have a name as parameter"
        end
@@ -1286,22 +1289,22 @@ let rec transl_process id_thread cur_state process =
           (* We optimize the case q == Nil.
              In this case, the adversary cannot distinguish the situation
              in which t fails from the situation in which t is false. *)
-          begin_destructor_group id_thread (fun cur_state0 ->
-            transl_term_incl_destructor id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-              unify id_thread (fun cur_state2 ->
-                end_destructor_group id_thread (fun cur_state3 ->
-                  transl_process id_thread { cur_state3 with
+          begin_destructor_group (fun cur_state0 ->
+            transl_term_incl_destructor (no_fail (fun cur_state1 pat1 ->
+              unify (fun cur_state2 ->
+                end_destructor_group (fun cur_state3 ->
+                  transl_process { cur_state3 with
                                    hyp_tags = (TestTag occ) :: cur_state3.hyp_tags } p
                 ) occ cur_state2
               ) cur_state1 pat1 Terms.true_term
             )) cur_state0 (OTest(occ)) t
           ) cur_state
         else
-          begin_destructor_group id_thread (fun cur_state0 ->
-            transl_term_incl_destructor id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-              end_destructor_group id_thread (fun cur_state2 ->
+          begin_destructor_group (fun cur_state0 ->
+            transl_term_incl_destructor (no_fail (fun cur_state1 pat1 ->
+              end_destructor_group (fun cur_state2 ->
                 if Param.is_noninterf cur_state2.tr_pi_state then
-                  output_rule id_thread { cur_state2 with
+                  output_rule { cur_state2 with
                                 hypothesis = (testunif_fact pat1 Terms.true_term) :: cur_state2.hypothesis;
                                 hyp_tags = TestUnifTag(occ) :: cur_state2.hyp_tags
                               } (Pred(bad_pred, []));
@@ -1310,7 +1313,7 @@ let rec transl_process id_thread cur_state process =
                   try
                     if cur_state2.record_fun_opt <> None then
 		      Terms.unify pat1 Terms.true_term;
-                    transl_process id_thread { cur_state2 with
+                    transl_process { cur_state2 with
                                      hyp_tags = (TestTag occ) :: cur_state2.hyp_tags } p
                   with Terms.Unify -> ()
                 );
@@ -1319,7 +1322,7 @@ let rec transl_process id_thread cur_state process =
                     let constra' = { cur_state2.constra with neq = [pat1, Terms.true_term]::cur_state2.constra.neq } in
                     if cur_state2.record_fun_opt <> None then
                       TermsEq.check_constraints constra';
-                    transl_process id_thread { cur_state2 with
+                    transl_process { cur_state2 with
                                      constra = constra';
                                      hyp_tags = (TestTag occ) :: cur_state2.hyp_tags } q
                   with Terms.Unify | TermsEq.FalseConstraint -> ()
@@ -1328,12 +1331,12 @@ let rec transl_process id_thread cur_state process =
             )) cur_state0 (OTest(occ)) t
            ) cur_state
     | Input(tc,pat,p,occ) ->
-        if optimize_mess id_thread cur_state tc then
+        if optimize_mess cur_state tc then
           begin
-            begin_destructor_group id_thread (fun cur_state0 ->
+            begin_destructor_group (fun cur_state0 ->
               let x = Reduction_helper.new_var_pat pat in
-              transl_pat id_thread Always (fun cur_state1 pat1 ->
-                unify id_thread (fun cur_state2 ->
+              transl_pat Always (fun cur_state1 pat1 ->
+                unify (fun cur_state2 ->
                   let cur_state3 =
                     if cur_state2.is_below_begin || occ.precise || Param.get_precise()
                     then
@@ -1354,14 +1357,14 @@ let rec transl_process id_thread cur_state process =
                       }
                   in
 
-                  end_destructor_group id_thread (fun cur_state4 -> transl_process id_thread cur_state4 p) occ cur_state3
+                  end_destructor_group (fun cur_state4 -> transl_process cur_state4 p) occ cur_state3
                 ) cur_state1 pat1 x
               ) cur_state pat;
 
               if Param.is_noninterf cur_state.tr_pi_state then
-                transl_term_incl_destructor id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-                  end_destructor_group id_thread (fun cur_state2 ->
-                    output_rule id_thread { cur_state2 with
+                transl_term_incl_destructor (no_fail (fun cur_state1 pat1 ->
+                  end_destructor_group (fun cur_state2 ->
+                    output_rule { cur_state2 with
                                   hyp_tags = (InputPTag(occ)) :: cur_state2.hyp_tags }
                       (Pred(cur_state2.input_pred, [pat1]))
                   ) occ cur_state1
@@ -1370,13 +1373,13 @@ let rec transl_process id_thread cur_state process =
           end
         else
           begin
-            begin_destructor_group id_thread (fun cur_state0 ->
-              transl_term_incl_destructor id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-                end_destructor_group id_thread (fun cur_state1' ->
-                  begin_destructor_group id_thread (fun cur_state2 ->
+            begin_destructor_group (fun cur_state0 ->
+              transl_term_incl_destructor (no_fail (fun cur_state1 pat1 ->
+                end_destructor_group (fun cur_state1' ->
+                  begin_destructor_group (fun cur_state2 ->
                     let x = Reduction_helper.new_var_pat pat in
-                    transl_pat id_thread Always (fun cur_state3' pat2 ->
-                      unify id_thread (fun cur_state3 ->
+                    transl_pat Always (fun cur_state3' pat2 ->
+                      unify (fun cur_state3 ->
                         let cur_state4 =
                           if cur_state3.is_below_begin || occ.precise || Param.get_precise()
                           then
@@ -1396,13 +1399,13 @@ let rec transl_process id_thread cur_state process =
                               hyp_tags = (InputTag(occ)) :: cur_state3.hyp_tags
                             }
                         in
-                        end_destructor_group id_thread (fun cur_state5 -> transl_process id_thread cur_state5 p) occ cur_state4
+                        end_destructor_group (fun cur_state5 -> transl_process cur_state5 p) occ cur_state4
                       ) cur_state3' pat2 x
                     ) cur_state2 pat
                   ) cur_state1';
 
                   if Param.is_noninterf cur_state1'.tr_pi_state then
-  		  output_rule id_thread { cur_state1' with
+  		  output_rule { cur_state1' with
                                   hyp_tags = (InputPTag(occ)) :: cur_state1'.hyp_tags }
   		    (Pred(cur_state1'.input_pred, [pat1]))
                 ) occ cur_state1
@@ -1411,25 +1414,25 @@ let rec transl_process id_thread cur_state process =
           end
     | Output(tc,t,p,occ) ->
         begin
-          if optimize_mess id_thread cur_state tc
+          if optimize_mess cur_state tc
           then
             begin
               if Param.is_noninterf cur_state.tr_pi_state then
               begin
-                begin_destructor_group id_thread (fun cur_state0 ->
-                  transl_term id_thread (no_fail id_thread (fun cur_state1 patc ->
-                    end_destructor_group id_thread (fun cur_state2 ->
-                       output_rule id_thread { cur_state2 with
+                begin_destructor_group (fun cur_state0 ->
+                  transl_term (no_fail (fun cur_state1 patc ->
+                    end_destructor_group (fun cur_state2 ->
+                       output_rule { cur_state2 with
                                     hyp_tags = (OutputPTag occ) :: cur_state2.hyp_tags }
                         (Pred(cur_state2.output_pred, [patc]))
                     ) occ cur_state1
                   )) cur_state0 tc
                 ) cur_state
               end;
-              begin_destructor_group id_thread (fun cur_state0 ->
-                transl_term id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-                  end_destructor_group id_thread (fun cur_state2 ->
-                    output_rule id_thread { cur_state2 with
+              begin_destructor_group (fun cur_state0 ->
+                transl_term (no_fail (fun cur_state1 pat1 ->
+                  end_destructor_group (fun cur_state2 ->
+                    output_rule { cur_state2 with
                                   hyp_tags = (OutputTag occ) :: cur_state2.hyp_tags
                                 } (att_fact cur_state2.cur_phase pat1)
                   ) occ cur_state1
@@ -1437,15 +1440,15 @@ let rec transl_process id_thread cur_state process =
               ) cur_state
             end
           else
-            begin_destructor_group id_thread (fun cur_state0 ->
-              transl_term id_thread (no_fail id_thread (fun cur_state1 patc ->
-                transl_term id_thread (no_fail id_thread (fun cur_state2 pat1 ->
-                  end_destructor_group id_thread (fun cur_state3 ->
+            begin_destructor_group (fun cur_state0 ->
+              transl_term (no_fail (fun cur_state1 patc ->
+                transl_term (no_fail (fun cur_state2 pat1 ->
+                  end_destructor_group (fun cur_state3 ->
                     if Param.is_noninterf cur_state3.tr_pi_state then
-                      output_rule id_thread { cur_state3 with
+                      output_rule { cur_state3 with
                                     hyp_tags = (OutputPTag occ) :: cur_state3.hyp_tags
                                   } (Pred(cur_state2.output_pred, [patc]));
-                    output_rule id_thread { cur_state3 with
+                    output_rule { cur_state3 with
                                    hyp_tags = (OutputTag occ) :: cur_state3.hyp_tags
                                 } (mess_fact cur_state3.cur_phase patc pat1)
                    ) occ cur_state2
@@ -1453,18 +1456,18 @@ let rec transl_process id_thread cur_state process =
                )) cur_state0 tc
             ) cur_state
         end;
-        transl_process id_thread { cur_state with
+        transl_process { cur_state with
                          hyp_tags = (OutputTag occ) :: cur_state.hyp_tags } p
     | Let(pat,t,p,Nil,occ) ->
         assert (cur_state.last_step_unif_left == []); (* last_step_unif should have been appended unified *)
         (* We distinguish the case with Else branch Nil since [neg_success_conditions] remains equal
            to [None] which speeds up the translation. *)
         (* Case "in" branch taken *)
-        begin_destructor_group id_thread (fun cur_state0 ->
-          transl_term_incl_destructor id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-            transl_pat id_thread IfQueryNeedsIt (fun cur_state2 pat2 ->
-              unify id_thread (
-                end_destructor_group id_thread (fun cur_state3 -> transl_process id_thread cur_state3 p) occ
+        begin_destructor_group (fun cur_state0 ->
+          transl_term_incl_destructor (no_fail (fun cur_state1 pat1 ->
+            transl_pat IfQueryNeedsIt (fun cur_state2 pat2 ->
+              unify (
+                end_destructor_group (fun cur_state3 -> transl_process cur_state3 p) occ
               ) cur_state2 pat1 pat2
             ) cur_state1 pat
           )) { cur_state0 with hyp_tags = (LetTag occ) :: cur_state0.hyp_tags } (OLet(occ)) t;
@@ -1474,11 +1477,11 @@ let rec transl_process id_thread cur_state process =
         (* Case "in" branch taken *)
         let neg_success_conditions = ref (Some (ref Terms.true_constraints)) in
 
-        begin_destructor_group id_thread (fun cur_state0 ->
-          transl_term_incl_destructor id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-            transl_pat id_thread IfQueryNeedsIt (fun cur_state2 pat2 ->
-              unify id_thread (
-                end_destructor_group id_thread (fun cur_state3 -> transl_process id_thread cur_state3 p) occ
+        begin_destructor_group (fun cur_state0 ->
+          transl_term_incl_destructor (no_fail (fun cur_state1 pat1 ->
+            transl_pat IfQueryNeedsIt (fun cur_state2 pat2 ->
+              unify (
+                end_destructor_group (fun cur_state3 -> transl_process cur_state3 p) occ
               ) cur_state2 pat1 pat2
             ) cur_state1 pat
            ))
@@ -1495,17 +1498,17 @@ let rec transl_process id_thread cur_state process =
                  were too complicated to compute. Moreover, we do not start with
                  begin_destructor_group since we only apply at the end the
                  function end_destructor_group_no_test_unif *)
-              transl_term_incl_destructor id_thread (fun cur_state1 pat1 ->
-                must_fail id_thread (end_destructor_group_no_test_unif id_thread (fun cur_state2 -> transl_process id_thread cur_state2 p')) cur_state1 pat1;
-                no_fail id_thread (fun cur_state2 _ ->
-                  transl_pat_fail id_thread (end_destructor_group_no_test_unif id_thread (fun cur_state6 -> transl_process id_thread cur_state6 p'))
+              transl_term_incl_destructor (fun cur_state1 pat1 ->
+                must_fail (end_destructor_group_no_test_unif (fun cur_state2 -> transl_process cur_state2 p')) cur_state1 pat1;
+                no_fail (fun cur_state2 _ ->
+                  transl_pat_fail (end_destructor_group_no_test_unif (fun cur_state6 -> transl_process cur_state6 p'))
                     cur_state2 pat pat1
                 ) cur_state1 pat1
               ) { cur_state with
                   hyp_tags = (LetTag occ) :: cur_state.hyp_tags } (OLet(occ)) t
           | Some r -> (* Use the neg_success_conditions has condition for taking
                         the else branch *)
-             transl_process id_thread { cur_state with
+             transl_process { cur_state with
                               constra = Terms.wedge_constraints !r cur_state.constra;
                               hyp_tags = (LetTag occ) :: cur_state.hyp_tags } p'
        end
@@ -1532,12 +1535,12 @@ let rec transl_process id_thread cur_state process =
        if !Param.check_pred_calls then check_first_fact cur_state.tr_pi_state vlist f;
        let vlist' = List.map (fun v ->
          let v' = Var (Terms.copy_var v) in
-         v.link.(id_thread) <- TLink v';
+         Terms.link_unsafe v (TLink v');
          v') vlist in
 
-       begin_destructor_group id_thread (fun cur_state0 ->
-         transl_fact id_thread (fun f1 cur_state1 ->
-           end_destructor_group_no_test_unif id_thread (fun cur_state2 ->
+       begin_destructor_group (fun cur_state0 ->
+         transl_fact (fun f1 cur_state1 ->
+           end_destructor_group_no_test_unif (fun cur_state2 ->
              let cur_state3 =
                if cur_state2.is_below_begin || occ.precise || Param.get_precise()
                then
@@ -1576,14 +1579,14 @@ let rec transl_process id_thread cur_state process =
                   hyp_tags = (LetFilterTag(occ)) :: cur_state2.hyp_tags
                 }
              in
-             transl_process id_thread cur_state3 p
+             transl_process cur_state3 p
            ) cur_state1
          ) { cur_state0 with name_params = (List.map2 (fun v v' -> (MVar(v, None), v', Always)) vlist vlist') @ cur_state0.name_params } (OLetFilter(occ)) f;
        ) cur_state;
-       List.iter (fun v -> v.link.(id_thread) <- NoLink) vlist;
+       List.iter (fun v -> Terms.link_unsafe v NoLink) vlist;
 
        (* The else branch *)
-       transl_process id_thread { cur_state with hyp_tags = LetFilterTagElse(occ) :: cur_state.hyp_tags } q
+       transl_process { cur_state with hyp_tags = LetFilterTagElse(occ) :: cur_state.hyp_tags } q
     | Event(FunApp(f,l) as lendbegin, (env_args, env), p,occ) ->
         begin
          if !Param.key_compromise == 0 then
@@ -1592,9 +1595,9 @@ let rec transl_process id_thread cur_state process =
            match l with
              (Var v)::l' ->
                if !Param.key_compromise == 1 then
-                 v.link.(id_thread) <- TLink (Var comp_session_var)
+                 Terms.link_unsafe v (TLink (Var comp_session_var))
                else
-                 v.link.(id_thread) <- TLink compromised_session
+                 Terms.link_unsafe v (TLink compromised_session)
            | _ -> internal_error __POS__ "Bad event format in queries"
         end;
 
@@ -1640,37 +1643,37 @@ let rec transl_process id_thread cur_state process =
         match fstatus.begin_status with
           | No ->
               (* Even if the event does nothing, the term lendbegin is evaluated *)
-              begin_destructor_group id_thread (fun cur_state0' ->
-                transl_term id_thread (
-                  no_fail id_thread (fun cur_state0 pat_begin ->
-                    end_destructor_group id_thread (fun cur_state1 ->
+              begin_destructor_group (fun cur_state0' ->
+                transl_term (
+                  no_fail (fun cur_state0 pat_begin ->
+                    end_destructor_group (fun cur_state1 ->
                       let cur_state_output = { cur_state1 with hyp_tags = (EventTag(occ)) :: cur_state1.hyp_tags } in
                       begin match fstatus.end_status with
                         | No -> ()
                         | WithOcc ->
                             let occ_name = get_occurrence_name cur_state_output in
-                            output_rule id_thread cur_state_output (Pred(Param.inj_event_pred, [pat_begin;occ_name]))
+                            output_rule cur_state_output (Pred(Param.inj_event_pred, [pat_begin;occ_name]))
                         | NoOcc ->
-                            output_rule id_thread cur_state_output (Pred(Param.event_pred, [pat_begin]))
+                            output_rule cur_state_output (Pred(Param.event_pred, [pat_begin]))
                       end;
-                      transl_process id_thread cur_state_output p
+                      transl_process cur_state_output p
                     ) occ cur_state0
                   )
                 ) cur_state0' lendbegin
               ) cur_state
           | NoOcc ->
-              begin_destructor_group id_thread (fun cur_state0' ->
-                transl_term_incl_destructor id_thread (
-                  no_fail id_thread (fun cur_state0 pat_begin ->
-                    end_destructor_group id_thread (fun cur_state1 ->
+              begin_destructor_group (fun cur_state0' ->
+                transl_term_incl_destructor (
+                  no_fail (fun cur_state0 pat_begin ->
+                    end_destructor_group (fun cur_state1 ->
                       let cur_state_output = { cur_state1 with hyp_tags = (EventTag(occ)) :: cur_state1.hyp_tags } in
                       begin match fstatus.end_status with
                         | No -> ()
                         | WithOcc ->
                             let occ_name = get_occurrence_name cur_state_output in
-                            output_rule id_thread cur_state_output (Pred(Param.inj_event_pred, [ pat_begin;occ_name]));
+                            output_rule cur_state_output (Pred(Param.inj_event_pred, [ pat_begin;occ_name]));
                         | NoOcc ->
-                            output_rule id_thread cur_state_output (Pred(Param.event_pred, [pat_begin]))
+                            output_rule cur_state_output (Pred(Param.event_pred, [pat_begin]))
                       end;
                       let cur_state2 =
                         { cur_state_output with
@@ -1678,22 +1681,22 @@ let rec transl_process id_thread cur_state process =
                           hyp_tags = BeginFact :: cur_state_output.hyp_tags
                         }
                       in
-                      transl_process id_thread cur_state2 p
+                      transl_process cur_state2 p
                     ) occ cur_state0
                   )
                 ) cur_state0' (OEvent(occ)) lendbegin
               ) cur_state
           | WithOcc ->
-              begin_destructor_group id_thread (fun cur_state0' ->
-                transl_term_incl_destructor id_thread (
-                  no_fail id_thread (fun cur_state0 pat_begin ->
-                    end_destructor_group id_thread (fun cur_state1 ->
+              begin_destructor_group (fun cur_state0' ->
+                transl_term_incl_destructor (
+                  no_fail (fun cur_state0 pat_begin ->
+                    end_destructor_group (fun cur_state1 ->
                       let occ_name = get_occurrence_name cur_state1 in
                       let cur_state_output = { cur_state1 with hyp_tags = (EventTag(occ)) :: cur_state1.hyp_tags } in
                       begin match fstatus.end_status with
                         | No -> ()
-                        | WithOcc -> output_rule id_thread cur_state_output (Pred(Param.inj_event_pred, [pat_begin;occ_name]))
-                        | NoOcc -> output_rule id_thread cur_state_output (Pred(Param.event_pred, [pat_begin]))
+                        | WithOcc -> output_rule cur_state_output (Pred(Param.inj_event_pred, [pat_begin;occ_name]))
+                        | NoOcc -> output_rule cur_state_output (Pred(Param.event_pred, [pat_begin]))
                       end;
                       let cur_state2 =
                         { cur_state_output with
@@ -1701,7 +1704,7 @@ let rec transl_process id_thread cur_state process =
                           hyp_tags = BeginFact :: cur_state_output.hyp_tags
                         }
                       in
-                      transl_process id_thread cur_state2 p
+                      transl_process cur_state2 p
                     ) occ cur_state0
                   )
                 ) { cur_state0' with is_below_begin = (env_args = None) || cur_state0'.is_below_begin } (OEvent(occ)) lendbegin
@@ -1709,27 +1712,27 @@ let rec transl_process id_thread cur_state process =
         end
     | Event(_,_,_,_) -> user_error ("Events should be function applications")
     | Insert(t,p,occ) ->
-        begin_destructor_group id_thread (fun cur_state0 ->
-          transl_term id_thread (no_fail id_thread (fun cur_state1 pat1 ->
-            end_destructor_group id_thread (fun cur_state2 ->
+        begin_destructor_group (fun cur_state0 ->
+          transl_term (no_fail (fun cur_state1 pat1 ->
+            end_destructor_group (fun cur_state2 ->
 	      let cur_state3 =
 		{ cur_state2 with
                   hyp_tags = (InsertTag occ) :: cur_state2.hyp_tags }
 	      in
-              output_rule id_thread cur_state3 (table_fact cur_state2.cur_phase pat1);
-	      transl_process id_thread cur_state3 p
+              output_rule cur_state3 (table_fact cur_state2.cur_phase pat1);
+	      transl_process cur_state3 p
 
             ) occ cur_state1
           )) cur_state0 t
         ) cur_state
 
     | Get(pat,t,p,q,occ) ->
-        begin_destructor_group id_thread (fun cur_state0 ->
+        begin_destructor_group (fun cur_state0 ->
           let x = Reduction_helper.new_var_pat pat in
-          transl_pat id_thread Always (fun cur_state1 pat1 ->
-	    unify id_thread (fun cur_state2 ->
-              transl_term id_thread (no_fail id_thread (fun cur_state3 patt ->
-		unify id_thread (fun cur_state4 ->
+          transl_pat Always (fun cur_state1 pat1 ->
+	    unify (fun cur_state2 ->
+              transl_term (no_fail (fun cur_state3 patt ->
+		unify (fun cur_state4 ->
                   let cur_state5 =
                     if cur_state4.is_below_begin || occ.precise || Param.get_precise()
                     then
@@ -1749,15 +1752,15 @@ let rec transl_process id_thread cur_state process =
                         hyp_tags = (GetTag(occ)) :: cur_state4.hyp_tags
                       }
                   in
-                  end_destructor_group id_thread (fun cur_state6 -> transl_process id_thread cur_state6 p) occ cur_state5
+                  end_destructor_group (fun cur_state6 -> transl_process cur_state6 p) occ cur_state5
 		) cur_state3 patt Terms.true_term
 	      )) cur_state2 t
 	    ) cur_state1 pat1 x
           ) cur_state0 pat
         ) cur_state;
-        transl_process id_thread { cur_state with hyp_tags = GetTagElse(occ) :: cur_state.hyp_tags } q
+        transl_process { cur_state with hyp_tags = GetTagElse(occ) :: cur_state.hyp_tags } q
     | Phase(n,p,_) ->
-        transl_process id_thread { cur_state with
+        transl_process { cur_state with
                          cur_phase = n;
                          input_pred = Param.get_pred (InputP(n));
                          output_pred = Param.get_pred (OutputP(n)) } p
@@ -2226,7 +2229,7 @@ let reset() =
   Hashtbl.reset explored_occurrences
 
 
-let transl ?(id_thread=0) pi_state =
+let transl pi_state =
   (* Reset the record of which occurrence are precise (needed for reconstruction) *)
   Reduction_helper.reset_occ_precise_event ();
   reset();
@@ -2342,8 +2345,8 @@ let transl ?(id_thread=0) pi_state =
 	let mapping =
           List.map (fun (f,x) ->
             let y = Terms.new_var ~orig:false (Terms.get_fsymb_basename f) (snd f.f_type) in
-            x.link.(id_thread) <- TLink(Var y);
-            y.link.(id_thread) <- TLink(FunApp(f,[]));
+            Terms.link_unsafe x (TLink(Var y));
+            Terms.link_unsafe y (TLink(FunApp(f,[])));
             (f,y)
               ) process_mapping
 	in
@@ -2374,7 +2377,7 @@ let transl ?(id_thread=0) pi_state =
   (* Dummy translation of the process to set the arguments of bound
      names and record symbols used as features to index clauses for
      subsumption *)
-  set_free_names_prev_inputs (fun () -> transl_process id_thread cur_state_init p') pi_state;
+  set_free_names_prev_inputs (fun () -> transl_process cur_state_init p') pi_state;
 
   if !Param.key_compromise > 0 then
     begin
@@ -2399,7 +2402,7 @@ let transl ?(id_thread=0) pi_state =
     nrule := tmp_nrule;
     current_precise_actions := tmp_current_precise_actions;
     let cur_state = { cur_state_init with record_fun_opt = Some f_add } in
-    set_free_names_prev_inputs (fun () -> transl_process id_thread cur_state p') pi_state
+    set_free_names_prev_inputs (fun () -> transl_process cur_state p') pi_state
   in
 
   List.iter (function ((_,fl) as f,n,for_hyp) ->
