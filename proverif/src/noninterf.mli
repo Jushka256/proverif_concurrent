@@ -10,7 +10,7 @@ sig
   (** [is_standard_clause r] returns true when the clause [r] 
       must be preserved from transformations *)
   val is_standard_clause : clause -> bool
-  val simplify : ?id_thread:int -> (clause -> unit) -> (clause -> unit) -> clause -> unit
+  val simplify : (clause -> unit) -> (clause -> unit) -> clause -> unit
   val selfun : clause -> int
 end
 

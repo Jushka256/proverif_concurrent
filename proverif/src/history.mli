@@ -9,7 +9,7 @@ val iter_term_history : (term -> unit) -> history -> unit
 
 val get_rule_hist : rulespec -> history
 
-val build_fact_tree : ?id_thread:int -> history -> fact_tree
+val build_fact_tree : history -> fact_tree
 
 val get_clause_from_derivation : fact_tree -> reduction
 
@@ -24,7 +24,7 @@ type recheck_t = (Ord.clause -> bool) option
    In this case, it uses [recheck] to verify that the obtained
    clause still contradicts the desired security property.
    Raises [Not_found] in case of failure *)
-val build_history : ?id_thread:int -> recheck_t -> Ord.clause -> fact_tree
+val build_history : recheck_t -> Ord.clause -> fact_tree
 
 (* [unify_derivation recheck tree] implements a heuristic
    to find traces more often, especially with complex protocols:
@@ -43,7 +43,7 @@ initial derivation [tree].
 
 No link should be active when this function is called.
 It creates links when it modifies the derivation. *)
-val unify_derivation : ?id_thread:int -> (fact_tree -> 'a) -> recheck_t -> fact_tree -> 'a
+val unify_derivation : (fact_tree -> 'a) -> recheck_t -> fact_tree -> 'a
 
 (* For debugging only
 val verify_clause_and_derivation : reduction -> unit *)

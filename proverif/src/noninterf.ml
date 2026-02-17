@@ -31,7 +31,7 @@ let rec contains_bound_name fl = function
         Name _ -> f.f_private
       | _ -> false) || (List.exists (contains_bound_name fl) l))
 
-let unify_up_to_x ?(id_thread=0) next_stage t1 t2 =
+let unify_up_to_x next_stage t1 t2 =
   let vlsecr = List.map (fun f -> (f,Terms.new_var ~orig:false (Terms.get_fsymb_basename f) (snd f.f_type))) (!secret_vars) in
   let vl = ref vlsecr in
   assert (!current_bound_vars == []);
@@ -47,7 +47,7 @@ let unify_up_to_x ?(id_thread=0) next_stage t1 t2 =
        allow the user to specify a possibly infinite set of terms for
        the secret. *)
     let keep = List.for_all (fun (f,v) ->
-      match (v.link).(id_thread) with
+      match Terms.get_link v with
         NoLink -> true
       | TLink t ->
           begin
@@ -137,7 +137,7 @@ sig
   (** [is_standard_clause r] returns true when the clause [r] 
       must be preserved from transformations *)
   val is_standard_clause : clause -> bool
-  val simplify : ?id_thread:int -> (clause -> unit) -> (clause -> unit) -> clause -> unit
+  val simplify : (clause -> unit) -> (clause -> unit) -> clause -> unit
   val selfun : clause -> int
 end
 
@@ -480,7 +480,7 @@ struct
   
   (* Calls to [simplify] are prevented on standard clauses (clauses such that
       [is_standard_clause] returns true) in rules.ml *)
-  let simplify ?(id_thread=0) next_stage repeat_next_stage cl =
+  let simplify next_stage repeat_next_stage cl =
     assert (!Terms.current_bound_vars == []);
     if (not (!non_interference)) then
       next_stage cl
@@ -505,7 +505,7 @@ struct
               dec_out_rule rebuilds the standard rule format.
                 print_string "Simplifying ";
                 Display.Text.display_rule r; *)
-                unify_up_to_x ~id_thread:id_thread (swap_with_copy (inst_elim (check_sets (check_testunif_true simplify_testunif)) repeat_next_stage) hypbefore l concl hist constra) t1 t2
+                unify_up_to_x (swap_with_copy (inst_elim (check_sets (check_testunif_true simplify_testunif)) repeat_next_stage) hypbefore l concl hist constra) t1 t2
             | _ -> simplify_testunif (a::hypbefore) l concl hist constra
       in
       simplify_testunif [] cl.hypotheses cl.conclusion cl.history cl.constraints

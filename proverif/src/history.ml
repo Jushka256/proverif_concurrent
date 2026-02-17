@@ -168,21 +168,21 @@ module HashFact =
         Fixed s -> SFixed s
       | Renamable id -> SRenamable(id.name, id.idx)
 
-    let rec skeleton_term ?(id_thread=0) = function
+    let rec skeleton_term = function
         Var b ->
           begin
-            match (b.link).(id_thread) with
-              TLink t -> skeleton_term ~id_thread:id_thread t
+            match Terms.get_link b with
+              TLink t -> skeleton_term t
             | NoLink -> SVar(b.vname.name, b.vname.idx)
             | _ -> Parsing_helper.internal_error __POS__ "unexpected link in skeleton_term"
           end
       |	FunApp(f,l) ->
           match f.f_cat with
             Name _ -> SFun(skel_f f,[])
-          | _ -> SFun(skel_f f, List.map (skeleton_term ~id_thread:id_thread) l)
+          | _ -> SFun(skel_f f, List.map skeleton_term l)
 
-    let skeleton_fact ?(id_thread=0) = function
-      | Pred(p,l) -> SPred(p.p_name, List.map (skeleton_term ~id_thread:id_thread) l)
+    let skeleton_fact = function
+      | Pred(p,l) -> SPred(p.p_name, List.map skeleton_term l)
 
     let hash a = a.hash
 
@@ -348,15 +348,17 @@ let get_desc s t n =
 
 (* Rebuild the derivation tree *)
 
-let rec get_subterm ?(id_thread=0) t pos_l =
-  let is_TLink lst = match lst.(id_thread) with TLink _ -> true | _ -> false in
+let rec get_subterm t pos_l =
   match t, pos_l with
   | _, [] -> t
-  | Var { link = lst }, _ when (is_TLink lst) -> let TLink t' = lst.(id_thread) in get_subterm ~id_thread:id_thread t' pos_l
-  | Var _, _ -> Parsing_helper.internal_error __POS__ "[history.get_subterm] Incorrect position"
+  | Var v, _ ->
+      begin match Terms.get_link v with
+      | TLink t' -> get_subterm t' pos_l
+      | _ -> Parsing_helper.internal_error __POS__ "[history.get_subterm] Incorrect position"
+      end
   | FunApp(_,args),i::q_pos ->
       let t' = List.nth args (i-1) in
-      get_subterm ~id_thread:id_thread t' q_pos
+      get_subterm t' q_pos
 
 let copy_injectivity = function
   | DoubleIndex (n1,n2) -> DoubleIndex (n1,n2)
@@ -368,7 +370,7 @@ let rec search_first_rule tree = match tree.desc with
   | FEquation tree -> search_first_rule tree
   | _ -> Parsing_helper.internal_error __POS__ "[history.search_first_rule] When adding an additional hypothesis, there must be a rule at the top."
 
-let rec build_fact_tree ?(id_thread=0) = function
+let rec build_fact_tree = function
   | Empty(f) ->
       let tmp_bound_vars = !current_bound_vars in
       current_bound_vars := [];
@@ -377,7 +379,7 @@ let rec build_fact_tree ?(id_thread=0) = function
       current_bound_vars := tmp_bound_vars;
       { desc = FEmpty; thefact = f' }
   | Any(n, h) ->
-      let t = build_fact_tree ~id_thread:id_thread h in
+      let t = build_fact_tree h in
       let d = get_desc "any" t n in
       begin
         try
@@ -392,12 +394,12 @@ let rec build_fact_tree ?(id_thread=0) = function
       d.desc <- FHAny;
       t
   | HRemovedBySimplification(n,h) ->
-      let t = build_fact_tree ~id_thread:id_thread h in
+      let t = build_fact_tree h in
       let d = get_desc "simplification" t n in
       d.desc <- FRemovedBySimplification;
       t
   | Removed(rem_count, dup_count, h) ->
-      let t = build_fact_tree ~id_thread:id_thread h in
+      let t = build_fact_tree h in
       let d1 = get_desc "removed" t rem_count in
       let d2 = get_desc "removed" t dup_count in
 
@@ -409,7 +411,7 @@ let rec build_fact_tree ?(id_thread=0) = function
       d1.desc <- FRemovedWithProof d2;
       t
   | HEquation(n,leq,req,h) ->
-     let t = build_fact_tree ~id_thread:id_thread h in
+     let t = build_fact_tree h in
      (* Copy the facts *)
      let tmp_bound_vars = !current_bound_vars in
      current_bound_vars := [];
@@ -456,8 +458,8 @@ let rec build_fact_tree ?(id_thread=0) = function
         thefact = rconcl;
       }
   | Resolution(h1, n, h2) ->
-      let t1 = build_fact_tree ~id_thread:id_thread h1 in
-      let t2 = build_fact_tree ~id_thread:id_thread h2 in
+      let t1 = build_fact_tree h1 in
+      let t2 = build_fact_tree h2 in
       let d = get_desc "resolution" t2 n in
       begin
         try
@@ -467,12 +469,12 @@ let rec build_fact_tree ?(id_thread=0) = function
       d.desc <- t1.desc;
       t2
   | TestUnifTrue(n, h2) ->
-      let t2 = build_fact_tree ~id_thread:id_thread h2 in
+      let t2 = build_fact_tree h2 in
       let d = get_desc "test_unif_true" t2 n in
       d.desc <- FRule(-1, TestUnif, true_constraints, [],[]);
       t2
   | HLemma(lem,matching_prem_l,matching_sub_l,(i_concl,is_added_l),h) ->
-      let t1 = build_fact_tree ~id_thread:id_thread h in
+      let t1 = build_fact_tree h in
 
       begin
         try
@@ -516,7 +518,7 @@ let rec build_fact_tree ?(id_thread=0) = function
 
           (* Match the subterm fact of the lemma's premise *)
           List.iter2 (fun pos_l (t_sub,t) ->
-            let t_at_pos = get_subterm ~id_thread:id_thread t pos_l in
+            let t_at_pos = get_subterm t pos_l in
             unify t_sub t_at_pos
           ) matching_sub_l sub_l;
 
@@ -533,7 +535,7 @@ let rec build_fact_tree ?(id_thread=0) = function
         with Unify -> raise (HistoryUnifyError("HLemma"))
       end
   | HCaseDistinction(concl,hypl,subst,constra,h) ->
-      let tree = build_fact_tree ~id_thread:id_thread h in
+      let tree = build_fact_tree h in
 
       begin
         try
@@ -571,7 +573,7 @@ let rec build_fact_tree ?(id_thread=0) = function
         with Unify -> raise (HistoryUnifyError("HVerification"))
       end
   | HInjectivity(injectivity,h) ->
-      let tree = build_fact_tree ~id_thread:id_thread h in
+      let tree = build_fact_tree h in
 
       begin
         try
@@ -594,7 +596,7 @@ let rec build_fact_tree ?(id_thread=0) = function
         with Unify -> raise (HistoryUnifyError("HInjectivity"))
       end
   | HNested(n_list,nb_f_in_concl,h) ->
-      let tree = build_fact_tree ~id_thread:id_thread h in
+      let tree = build_fact_tree h in
 
       begin
         try
@@ -621,7 +623,7 @@ let rec build_fact_tree ?(id_thread=0) = function
         with Unify -> raise (HistoryUnifyError("HNested"))
       end
   | HLiveness(i,fresh_occ,h) ->
-      let tree = build_fact_tree ~id_thread:id_thread h in
+      let tree = build_fact_tree h in
       let d = get_desc "liveness" tree i in
 
       let ublock_fact = 
@@ -880,7 +882,7 @@ let display_derivation new_tree1 =
    clause still contradicts the desired security property.
    Raises [Not_found] in case of failure *)
 
-let build_history ?(id_thread=0) recheck cl =
+let build_history recheck cl =
   assert (!current_bound_vars == []);
   if not (!Param.reconstruct_derivation) then
     begin
@@ -892,7 +894,7 @@ let build_history ?(id_thread=0) recheck cl =
     end
   else
   try
-    let new_tree0 = build_fact_tree ~id_thread:id_thread cl.Ord.history in
+    let new_tree0 = build_fact_tree cl.Ord.history in
     let new_tree1 =
       if !Param.simplify_derivation then
         begin
@@ -992,29 +994,29 @@ module HashFactId =
         Fixed s -> SFixed s
       | Renamable id -> SRenamable(id.name, id.idx)
 
-    let rec skeleton_term ?(id_thread=0) = function
+    let rec skeleton_term = function
         Var b ->
           begin
-            match (b.link).(id_thread) with
-              TLink t -> skeleton_term ~id_thread:id_thread t
+            match Terms.get_link b with
+              TLink t -> skeleton_term t
             | NoLink -> SVar(b.vname.name, b.vname.idx)
             | _ -> Parsing_helper.internal_error __POS__ "unexpected link in skeleton_term"
           end
       |	FunApp(f,l) ->
           match f.f_cat with
             Name _ -> SFun(skel_f f,[])
-          | _ -> SFun(skel_f f, List.map (skeleton_term ~id_thread:id_thread) l)
+          | _ -> SFun(skel_f f, List.map skeleton_term l)
 
-    let skeleton_factIdElem ?(id_thread=0) = function
+    let skeleton_factIdElem = function
         HypSpec x -> SHypSpec x
-      |	Term t -> STerm(skeleton_term ~id_thread:id_thread t)
+      |	Term t -> STerm(skeleton_term t)
 
     let hash a = a.hash
 
     (* build a HashFactId.t from a fact id *)
 
-    let build ?(id_thread=0) fid hyp_spec = 
-      { hash = Hashtbl.hash(List.map (skeleton_factIdElem ~id_thread:id_thread) fid);
+    let build fid hyp_spec = 
+      { hash = Hashtbl.hash(List.map skeleton_factIdElem fid);
         factId = fid;
         hyp_spec = hyp_spec }
 
@@ -1022,16 +1024,16 @@ module HashFactId =
 
 module FactHashtbl = Hashtbl.Make(HashFactId)
 
-let display_unified_variables id_thread useful_vars =
+let display_unified_variables useful_vars =
   (* Swap links to avoid displaying useless variables *)
   let old_links = ref [] in
   List.iter (fun x ->
-    match (x.link).(id_thread) with
+    match Terms.get_link x with
     | TLink t ->
         let rec follow_var = function
           | Var y ->
               begin
-                match (y.link).(id_thread) with
+                match Terms.get_link y with
                 | TLink t' -> follow_var t'
                 | NoLink -> Some y
                 | _ -> assert false
@@ -1043,9 +1045,9 @@ let display_unified_variables id_thread useful_vars =
         | Some y ->
             if not (List.memq y useful_vars) then
               begin
-                old_links := (x, (x.link).(id_thread)) :: (y, NoLink) :: (!old_links);
-                (y.link).(id_thread) <- TLink (Var x);
-                (x.link).(id_thread) <- NoLink
+                old_links := (x, Terms.get_link x) :: (y, NoLink) :: (!old_links);
+                Terms.link_unsafe y (TLink (Var x));
+                Terms.link_unsafe x NoLink
               end
         | None -> ()
         end
@@ -1054,7 +1056,7 @@ let display_unified_variables id_thread useful_vars =
   (* Display the unification *)
   let has_unif = ref false in
   List.iter (fun x -> 
-    match (x.link).(id_thread) with
+    match Terms.get_link x with
     | NoLink -> ()
     | TLink t ->
         has_unif := true;
@@ -1063,7 +1065,7 @@ let display_unified_variables id_thread useful_vars =
             Display.Html.print_string "Unified ";
             Display.Html.display_var x;
             Display.Html.print_string " with ";
-            Display.Html.WithLinks.term ~id_thread t;
+            Display.Html.WithLinks.term t;
             Display.Html.newline()
           end
         else
@@ -1077,9 +1079,7 @@ let display_unified_variables id_thread useful_vars =
     | _ -> Parsing_helper.internal_error __POS__ "[history.display_unified_variables] Unexpected link."
             ) useful_vars;
   (* Restore the links *)
-  List.iter (fun (x,l) ->
-    (x.link).(id_thread) <- l
-            ) (!old_links);
+  List.iter (fun (x,l) -> Terms.link_unsafe x l) (!old_links);
   !has_unif
 
 let f_err f1 f2 hyp_spec () =
@@ -1127,7 +1127,7 @@ let constraint_satisfiable constra =
     true
   with TermsEq.FalseConstraint -> false
 
-let simplify_tree_precise id_thread restwork_success restwork_failed err_msg_op constra tree =
+let simplify_tree_precise restwork_success restwork_failed err_msg_op constra tree =
 
   let rec one_round_unification useful_vars last_hashtbl = 
     let fact_hashtbl = FactHashtbl.create 7 in
@@ -1183,7 +1183,7 @@ let simplify_tree_precise id_thread restwork_success restwork_failed err_msg_op 
     in
 
     let unif_from_hash restwork useful_vars factId fact hyp_spec = 
-      let fact_id = HashFactId.build ~id_thread:id_thread factId hyp_spec in
+      let fact_id = HashFactId.build factId hyp_spec in
 
       try 
         let fact' = FactHashtbl.find fact_hashtbl fact_id in
@@ -1352,16 +1352,16 @@ and simplify_tree_attacker_added_derivation_list restwork useful_vars constra = 
         simplify_tree_attacker_added_derivation_list restwork useful_vars' constra q
       ) useful_vars constra factl
 
-let simplify_tree id_thread restwork recheck tree = 
+let simplify_tree restwork recheck tree = 
   let constra = Reduction_helper.collect_constraints tree in
   
   let err_msg = ref None in
 
   (* We apply a first simplification for precise *)
-  simplify_tree_precise id_thread (fun useful_vars ->
+  simplify_tree_precise (fun useful_vars ->
     (* We check that the tree still satisfies the query before continuing. *)
     try 
-      let has_unif = display_unified_variables id_thread useful_vars in
+      let has_unif = display_unified_variables useful_vars in
       let tree' = 
         if has_unif
         then revise_tree "UnifyDerivationPrecise" recheck tree 
@@ -1373,7 +1373,7 @@ let simplify_tree id_thread restwork recheck tree =
          to retry [simplify_tree_precise].  *)
       simplify_tree_attacker (fun useful_vars ->
         try 
-          let has_unif = display_unified_variables id_thread useful_vars in
+          let has_unif = display_unified_variables useful_vars in
           let tree'' = 
             if has_unif
             then revise_tree "UnifyDerivationAttackerBinGuess" recheck tree' 
@@ -1402,7 +1402,7 @@ let simplify_tree id_thread restwork recheck tree =
     restwork tree
   ) err_msg constra tree
 
-let unify_derivation ?(id_thread=0) restwork recheck tree =
+let unify_derivation restwork recheck tree =
   let restwork tree' = 
     auto_cleanup (fun () -> restwork tree') 
   in
@@ -1418,7 +1418,7 @@ let unify_derivation ?(id_thread=0) restwork recheck tree =
             Display.Html.print_string "<H1>Unifying the derivation</H1>\n"
           end;
 
-        simplify_tree id_thread (fun tree' ->
+        simplify_tree (fun tree' ->
           if !Param.html_output then
             Display.LangHtml.close();
           restwork tree'

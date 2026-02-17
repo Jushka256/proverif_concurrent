@@ -782,9 +782,12 @@ let create_equations_premises acc = function
   | _ -> Parsing_helper.internal_error __POS__ "[create_equations_premisses] Unexpected element in the premises of queries, lemmas and axioms."
 
 let rec follow_vlink = function
-  | Var {link = VLink v; _ } -> Var v
+  | Var v as t -> 
+      begin match Terms.get_link v with
+      | VLink v -> Var v
+      | _ -> t
+      end
   | FunApp(f,args) -> FunApp(f,List.map follow_vlink args)
-  | t -> t
 
 let create_equations_concl_term acc t = acc := (t,follow_vlink t) :: !acc
 
@@ -834,17 +837,16 @@ let rec create_equations_concl acc = function
 
 let rec put_constants2 = function
   | Var v ->
-      begin match v.link with
+      begin match Terms.get_link v with
         | TLink t -> put_constants2 t
         | NoLink ->
-            v.link <- TLink (FunApp({ f_name = Renamable v.vname;
+            Terms.link v (TLink (FunApp({ f_name = Renamable v.vname;
                                       f_type = [], v.btype;
                                       f_cat = SpecVar v;
                                       f_initial_cat = SpecVar v;
                                       f_private = false;
                                       f_options = 0;
-                                      f_record = Param.fresh_record () }, []));
-            Terms.current_bound_vars := v :: (!Terms.current_bound_vars)
+                                      f_record = Param.fresh_record () }, [])))
         | _ -> Parsing_helper.internal_error __POS__ "[put_constants2] Unexpected link."
       end
   | FunApp(f,l) -> List.iter put_constants2 l
@@ -1181,7 +1183,7 @@ let transl_realquery next_f pi_state = function
 
               let keep_vars = ref vars_premise in
               List.iter (fun (f,_) -> Terms.get_vars_acc_fact keep_vars f) fact_list2;
-              List.iter (fun v -> match v.link with
+              List.iter (fun v -> match Terms.get_link v with
                 | TLink t -> Terms.get_vars_acc keep_vars (Terms.copy_term4 t)
                 | _ -> ()
               ) vars_premise;
@@ -1189,7 +1191,7 @@ let transl_realquery next_f pi_state = function
               let next_step constra =
                 let eq_list1 =
                   List.fold_left (fun acc v ->
-                    match v.link with
+                    match Terms.get_link v with
                       | NoLink -> acc
                       | TLink t -> (Var v,Terms.copy_term4 t)::acc
                       | _ -> Parsing_helper.internal_error __POS__ "[transl_realquery] Unexpected link."
@@ -1201,7 +1203,7 @@ let transl_realquery next_f pi_state = function
                 Terms.auto_cleanup (fun () ->
                   let eq_list2 =
                     List.fold_left (fun acc (t1,t2) -> match t2 with
-                      | Var v when v.link = NoLink && not (List.memq v vars_premise) ->
+                      | Var v when Terms.get_link v = NoLink && not (List.memq v vars_premise) ->
                           Terms.link v (TLink t1);
                           acc
                       | _ -> (t1,t2)::acc
@@ -1483,8 +1485,11 @@ let rec match_one_premise f_next state ev =
         | Some state' -> match_one_premise f_next state' ev
 
 let rec not_ground = function
-  | Var { link = TLink t } -> not_ground t
-  | Var _ -> true
+  | Var v -> 
+      begin match Terms.get_link v with
+      | TLink t -> not_ground t
+      | _ -> true
+      end
   | FunApp(_,args) -> List.exists not_ground args
 
 exception AxiomNotVerified
@@ -1658,9 +1663,12 @@ let check_axioms final_state axioms =
  *************************************************)
 
 let rec no_bound_name_term = function
-  | Var { link = PGLink _ } -> false
-  | Var { link = TLink t } -> no_bound_name_term t
-  | Var _ -> true
+  | Var v ->
+      begin match Terms.get_link v with 
+      | PGLink _ -> false
+      | TLink t -> no_bound_name_term t
+      | _ -> true
+      end
   | FunApp(_,args) -> List.for_all no_bound_name_term args
 
 let no_bound_name_term_option = function

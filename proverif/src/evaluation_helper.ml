@@ -5,23 +5,23 @@ open Terms
 let debug_print s = ()
   (* print_endline s *)
 
-let rec term_evaluation ?(id_thread=0) = function
+let rec term_evaluation = function
     Var v ->
     begin
-      match (v.link).(id_thread) with
-        TLink t -> term_evaluation ~id_thread:id_thread t
+      match Terms.get_link v with
+        TLink t -> term_evaluation t
       | _ -> Parsing_helper.internal_error __POS__ "Error: term should be closed in attack reconstruction";
     end
   | FunApp(f,[c;tthen;telse]) when
       f == Terms.gtest_fun (snd f.f_type) ->
       (* optimize evaluation of if-then-else terms, to evaluate only the useful branch.
 	 useful in particular to avoid evaluating catch-fail(caught-fail). *)
-      let c_eval = term_evaluation ~id_thread:id_thread c in
+      let c_eval = term_evaluation c in
       begin
         try
           auto_cleanup (fun () ->
             Reduction_helper.match_modulo (fun () ->
-              term_evaluation ~id_thread:id_thread tthen
+              term_evaluation tthen
             ) Terms.true_term c_eval
           )
         with Unify ->
@@ -31,20 +31,20 @@ let rec term_evaluation ?(id_thread=0) = function
                 Terms.get_fail_term (snd f.f_type)
               ) (Terms.get_fail_term Param.bool_type) c_eval
             )
-          with Unify -> term_evaluation ~id_thread:id_thread telse
+          with Unify -> term_evaluation telse
       end
   | FunApp(f,l) ->
     (* for speed, use the initial definition of destructors, not the one enriched with the equational theory *)
     match f.f_initial_cat with
       Eq _ | Tuple ->
-      let l' = List.map (term_evaluation ~id_thread:id_thread) l in
+      let l' = List.map term_evaluation l in
       if List.exists Reduction_helper.is_fail l' then
         Terms.get_fail_term (snd f.f_type)
       else
         FunApp(f, l')
     | Name _ | Failure -> FunApp(f,[])
     | Red redl ->
-      let l' = List.map (term_evaluation ~id_thread:id_thread) l in
+      let l' = List.map term_evaluation l in
       let rec try_red_list = function
           [] ->
           Parsing_helper.internal_error __POS__ "Term evaluation should always succeeds (perhaps returning Fail)"
@@ -72,37 +72,38 @@ let rec term_evaluation ?(id_thread=0) = function
     | _ -> Parsing_helper.internal_error __POS__ "unexpected function symbol in term_evaluation"
 
 (* Evaluates t1 and tests if it is equal to t2. *)
-let equal_terms_modulo_eval ?(id_thread=0) t1 t2 =
-  let t1' = term_evaluation ~id_thread:id_thread t1 in
+let equal_terms_modulo_eval t1 t2 =
+  let t1' = term_evaluation t1 in
   if Reduction_helper.is_fail t1' then false else Reduction_helper.equal_terms_modulo t1' t2
 
 (* Evaluates a term. Raises Unify when the result is fail. *)
-let term_evaluation_fail ?(id_thread=0) t =
-  let r = term_evaluation ~id_thread:id_thread t in
+let term_evaluation_fail t =
+  let r = term_evaluation t in
   if Reduction_helper.is_fail r then
     raise Unify
   else
     r
 
-let rec term_evaluation_letfilter ?(id_thread=0) = 
-  let is_TLink lst = match lst.(id_thread) with | TLink _ -> true | _ -> false in
-  function
-      Var { link = lst } when (is_TLink lst) -> let TLink t = lst.(id_thread) in term_evaluation_letfilter ~id_thread:id_thread t
-    | Var v ->  Var v
-    | FunApp(f,l) ->
-        match f.f_cat with
-            Eq _ | Tuple -> FunApp(f, term_evaluation_list_letfilter ~id_thread:id_thread l)
-          | Name _ -> FunApp(f,[])
-          |	Failure -> raise Unify
-          | Red redl -> term_evaluation_fail ~id_thread:id_thread (FunApp(f,l))
-          | _ -> Parsing_helper.internal_error __POS__ "unexpected function symbol in term_evaluation_letfilter"
+let rec term_evaluation_letfilter = function
+  | Var v ->
+      begin match Terms.get_link v with
+      | TLink t -> term_evaluation_letfilter t
+      | _ -> Var v
+      end
+  | FunApp(f,l) ->
+    match f.f_cat with
+      Eq _ | Tuple -> FunApp(f, term_evaluation_list_letfilter l)
+    | Name _ -> FunApp(f,[])
+    |	Failure -> raise Unify
+    | Red redl -> term_evaluation_fail (FunApp(f,l))
+    | _ -> Parsing_helper.internal_error __POS__ "unexpected function symbol in term_evaluation_letfilter"
 
-and term_evaluation_list_letfilter ?(id_thread=0) l =
-  List.map (term_evaluation_letfilter ~id_thread:id_thread) l
+and term_evaluation_list_letfilter l =
+  List.map term_evaluation_letfilter l
 
-let term_evaluation_letfilter ?(id_thread=0) occ l name_params =
+let term_evaluation_letfilter occ l name_params =
   let may_have_several_types = Reduction_helper.reduction_check_several_patterns occ in
-  let l' = term_evaluation_list_letfilter ~id_thread:id_thread l in
+  let l' = term_evaluation_list_letfilter l in
   if may_have_several_types then
     l', ((List.map (fun t -> (MUnknown,t,Always)) l') @ name_params)
   else
@@ -112,12 +113,12 @@ let term_evaluation_letfilter ?(id_thread=0) occ l name_params =
 (* Match a pattern
    Raises Unify when the matching fails *)
 
-let rec match_pattern ?(id_thread=0) p t =
+let rec match_pattern p t =
   if not (Terms.equal_types (Terms.get_pat_type p) (Terms.get_term_type t)) then
     raise Unify;
   match p with
     PatVar b ->
-      Terms.link ~id_thread:id_thread b (TLink t)
+      Terms.link b (TLink t)
   | PatTuple(f,l) ->
       let vl = Terms.var_gen (fst f.f_type) in
       let tl =
@@ -125,9 +126,9 @@ let rec match_pattern ?(id_thread=0) p t =
 	  List.map Reduction_helper.copy_closed_remove_syntactic vl
 	    ) (FunApp(f, vl)) t
       in
-      List.iter2 (match_pattern ~id_thread:id_thread) l tl
+      List.iter2 match_pattern l tl
   | PatEqual t' ->
-      let t'' = term_evaluation_fail ~id_thread:id_thread t' in
+      let t'' = term_evaluation_fail t' in
       Reduction_helper.match_modulo (fun () -> ()) t'' t
 
 (* Decompose tuples *)
@@ -230,18 +231,18 @@ let rec remove_first_in_public public = function
         l'
 
 
-let update_term_list ?(id_thread=0) oldpub public tc_list =
+let update_term_list oldpub public tc_list =
   match tc_list with
     [] -> []
   | ((c0, t0)::l0) ->
     let rec is_in_until = function
 	[] -> false
       | (((ca, a)::l) as public) ->
-	      if public == oldpub then false else
+	if public == oldpub then false else
           if Reduction_helper.equal_terms_modulo a t0
           then
             begin
-              Terms.link ~id_thread:id_thread c0 (TLink ca);
+              Terms.link c0 (TLink ca);
               true
             end
           else
@@ -250,7 +251,7 @@ let update_term_list ?(id_thread=0) oldpub public tc_list =
     if Terms.is_ground_public t0
     then
       begin
-        Terms.link ~id_thread:id_thread c0 (TLink t0);
+        Terms.link c0 (TLink t0);
         remove_first_in_public public l0
       end
     else if is_in_until public then
