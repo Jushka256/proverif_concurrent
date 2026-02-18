@@ -35,7 +35,7 @@ let rec close_list_eq close_elt restwork = function
 let rec close_term_eq restwork = function
     Var x ->
       begin
-        match x.link with
+        match Terms.get_link x with
           TLink t -> close_term_eq restwork t
         (* TO DO should I always recursively close links modulo equations? *)
         | NoLink -> restwork (Var x)
@@ -207,7 +207,7 @@ let rec close_list_destr_eq close_elt accu_constra restwork = function
 let rec close_term_destr_eq accu_constra restwork = function
     Var x ->
       begin
-        match x.link with
+        match Terms.get_link x with
           TLink t ->
           (* TO DO should I always recursively close links modulo equations? *)
             close_term_eq (fun t' -> restwork accu_constra t') t
@@ -1103,7 +1103,7 @@ let get_syntactic f =
 let rec put_syntactic = function
   | FunApp(f,l) -> FunApp(get_syntactic f, List.map put_syntactic l)
   | Var v ->
-      match v.link with
+      match Terms.get_link v with
       |	NoLink ->
           let r = Terms.copy_var v in
           link v (VLink r);
@@ -1117,10 +1117,10 @@ let rec put_syntactic = function
 let rec copy_remove_syntactic = function
   | FunApp(f,l) -> FunApp(non_syntactic f, List.map copy_remove_syntactic l)
   | Var v ->
-      match v.link with
-	NoLink ->
-	  let r = copy_var v in
-	  link v (VLink r);
+      match Terms.get_link v with
+      | NoLink ->
+          let r = Terms.copy_var v in
+          link v (VLink r);
           Var r
       | TLink l -> copy_remove_syntactic l
       | VLink r -> Var r
@@ -1170,7 +1170,7 @@ and copy_remove_syntactic_realquery = function
 
 let rec remove_syntactic_term = function
  | FunApp(f,l) -> FunApp(non_syntactic f, List.map remove_syntactic_term l)
- | Var v -> match v.link with
+ | Var v -> match Terms.get_link v with
       NoLink -> Var v
     | TLink l -> remove_syntactic_term l
     | _ -> internal_error __POS__ "unexpected link in remove_syntactic_term"
@@ -1191,7 +1191,7 @@ let remove_syntactic_rule (hyp,concl,hist,constra) =
 let rec collect_unset_vars accu = function
     FunApp(f,l) -> List.iter (collect_unset_vars accu) l
   | Var v ->
-      match v.link with
+      match Terms.get_link v with
 	NoLink ->
 	  if not (List.memq v (!accu)) then
 	    accu := v :: (!accu)
@@ -1251,7 +1251,7 @@ let auto_cleanup_eq_tail f_apply f_next f_Unify f_NoBacktrack =
       match l with
       | [] -> assert false
       | a::r ->
-	  a.link <- NoLink;
+	  Terms.link_unsafe a NoLink;
 	  aux_reset r
   in
   let reset() =
@@ -1265,7 +1265,7 @@ let auto_cleanup_eq_tail f_apply f_next f_Unify f_NoBacktrack =
 
 let rec occur_check_eq_modulo_aux_tail restwork restwork_occurs f_clean f_Unify f_NoBacktrack  v t = match t with
   | Var v' ->
-      begin match v'.link with
+      begin match Terms.get_link v' with
         | TLink t' -> occur_check_eq_modulo_aux_tail restwork restwork_occurs f_clean f_Unify f_NoBacktrack v t'
         | _  ->
             if v == v'
@@ -1334,7 +1334,7 @@ and occur_check_eq_modulo_tail restwork f_clean f_Unify f_NoBacktrack v t =
 and close_term_eq_synt_tail restwork f_clean f_Unify f_NoBacktrack = function
   | (Var x) as t ->
     begin
-      match x.link with
+      match Terms.get_link x with
         | TLink t -> close_term_eq_synt_tail restwork f_clean f_Unify f_NoBacktrack t
         | NoLink -> restwork f_clean f_Unify f_NoBacktrack t
         | _ -> internal_error __POS__ "unexpected link in close_term_eq_synt"
@@ -1376,22 +1376,40 @@ and unify_modulo_tail restwork f_clean f_Unify f_NoBacktrack t1 t2 =
       | (Var v, Var v') when v == v' -> restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
       | (Var v, _) ->
           begin
-            match v.link with
+            match Terms.get_link v with
             | NoLink ->
                 begin
                   match t2 with
-                  | Var {link = TLink t2'} -> unify_modulo_tail restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1 t2'
-                  | Var v' when v.unfailing ->
-                      link v (TLink t2);
-                      restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
-                  | Var v' when v'.unfailing ->
-                      link v' (TLink t1);
-                      restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
+                  | Var v' ->
+                      begin
+                        match Terms.get_link v' with 
+                          | TLink t2' -> unify_modulo_tail restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1 t2'
+                          | _ when v.unfailing ->
+                                link v (TLink t2);
+                                restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
+                          | _ when v'.unfailing ->
+                                link v' (TLink t1);
+                                restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
+                          | _ -> 
+                                occur_check_eq_modulo_tail (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t2' ->
+                                match Terms.get_link v with
+                                  | NoLink ->
+                                      if occurs_vars_follows v t2' 
+                                      then f_Unify_3 ()
+                                      else
+                                        auto_cleanup_eq_tail (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
+                                          link v (TLink t2');
+                                          restwork f_clean_4 f_Unify_4 f_NoBacktrack_4
+                                        ) f_clean_3 f_Unify_3 f_NoBacktrack_3
+                                  | TLink t1' -> unify_modulo_tail restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
+                                  | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_tail] Unexpected link (1)."
+                              ) f_clean_2 f_Unify_2 f_NoBacktrack_2 v t2
+                        end
                   | FunApp (f_symb,_) when (non_syntactic f_symb).f_cat = Failure && v.unfailing = false ->
                       f_Unify_2 ()
                   | _ ->
                       occur_check_eq_modulo_tail (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t2' ->
-                        match v.link with
+                        match Terms.get_link v with
                           | NoLink ->
                               if occurs_vars_follows v t2' 
                               then f_Unify_3 ()
@@ -1409,13 +1427,13 @@ and unify_modulo_tail restwork f_clean f_Unify f_NoBacktrack t1 t2 =
           end
       | (FunApp(f,_), Var v) ->
           begin
-            match v.link with
+            match Terms.get_link v with
             | NoLink ->
                 if v.unfailing = false && (non_syntactic f).f_cat = Failure
                 then f_Unify_2 ()
                 else
                   occur_check_eq_modulo_tail (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' ->
-                    match v.link with
+                    match Terms.get_link v with
                       | NoLink ->
                           if occurs_vars_follows v t1' 
                           then f_Unify_3 ()
@@ -1446,7 +1464,7 @@ and unify_modulo_list_internal_tail restwork f_clean f_Unify f_NoBacktrack l1 l2
         collect_unset_vars unset_vars a2;
 
         unify_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
-          if not (List.exists (fun v -> v.link != NoLink) (!unset_vars))  then
+          if not (List.exists (fun v -> Terms.get_link v != NoLink) (!unset_vars))  then
             (* No variable of a1, a2 defined by unification modulo.
                In this case, we do not need to backtrack on the choices made
                in unify_modulo (...) a1 a2 when a subsequent unification fails. *)
@@ -1474,26 +1492,46 @@ and unify_modulo_list_tail restwork f_clean f_Unify f_NoBacktrack l1 l2 =
     | Var v, Var v' when v == v' -> restwork f_clean f_Unify f_NoBacktrack unif_to_do_left unif_to_do_right
     | (Var v, _) ->
           begin
-            match v.link with
+            match Terms.get_link v with
             | NoLink ->
                 begin
                   match t2 with
-                  | Var {link = TLink t2'} -> add_unif_term restwork f_clean f_Unify f_NoBacktrack  unif_to_do_left unif_to_do_right t1 t2'
-                  | Var v' when v.unfailing ->
-                      auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
-                        link v (TLink t2);
-                        restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
-                      ) f_clean f_Unify f_NoBacktrack
-                  | Var v' when v'.unfailing ->
-                      auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
-                        link v' (TLink t1);
-                        restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
-                      ) f_clean f_Unify f_NoBacktrack
+                  | Var v' ->
+                      begin
+                        match Terms.get_link v' with
+                          | TLink t2' -> add_unif_term restwork f_clean f_Unify f_NoBacktrack unif_to_do_left unif_to_do_right t1 t2'
+                          | _ when v.unfailing -> 
+                                auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
+                                  link v (TLink t2);
+                                  restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
+                                ) f_clean f_Unify f_NoBacktrack
+                          | _ when v'.unfailing ->
+                                auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
+                                  link v' (TLink t1);
+                                  restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
+                                ) f_clean f_Unify f_NoBacktrack
+                          | _ ->
+                                occur_check_eq_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t2' ->
+                                match Terms.get_link v with
+                                  | NoLink ->
+                                      if occurs_vars_follows v t2' 
+                                      then f_Unify_1 ()
+                                      else
+                                        auto_cleanup_eq_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                                          link v (TLink t2');
+                                          restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
+                                        ) f_clean_1 f_Unify_1 f_NoBacktrack_1
+                                  | TLink t1' -> unify_modulo_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                                    restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
+                                  ) f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' t2'
+                                  | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_tail] Unexpected link (1)."
+                              ) f_clean f_Unify f_NoBacktrack v t2
+                        end
                   | FunApp (f_symb,_) when (non_syntactic f_symb).f_cat = Failure && v.unfailing = false ->
                       f_Unify ()
                   | _ ->
                       occur_check_eq_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t2' ->
-                        match v.link with
+                        match Terms.get_link v with
                           | NoLink ->
                               if occurs_vars_follows v t2' 
                               then f_Unify_1 ()
@@ -1514,13 +1552,13 @@ and unify_modulo_list_tail restwork f_clean f_Unify f_NoBacktrack l1 l2 =
           end
       | (FunApp(f,_), Var v) ->
           begin
-            match v.link with
+            match Terms.get_link v with
             | NoLink ->
                 if v.unfailing = false && (non_syntactic f).f_cat = Failure
                 then f_Unify ()
                 else
                   occur_check_eq_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' ->
-                    match v.link with
+                    match Terms.get_link v with
                       | NoLink ->
                           if occurs_vars_follows v t1' 
                           then f_Unify_1 ()
@@ -1738,7 +1776,7 @@ let elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v =
       then raise TrueConstraint
       else
         begin
-          match v.link with
+          match Terms.get_link v with
           | NoLink ->
               Terms.link v (TLink (FunApp(
                 { f_name = Renamable (Terms.new_id ~orig:false "any_val");
@@ -2217,7 +2255,7 @@ let update_keepvars keep_vars =
   let keep_ref = ref [] in
   let new_terms = ref [] in
 
-  List.iter (fun v -> match v.link with
+  List.iter (fun v -> match Terms.get_link v with
     | NoLink -> keep_ref := v :: !keep_ref
     | TLink t ->
         new_terms := t :: !new_terms;
@@ -2466,7 +2504,7 @@ let rec make_disequation_from_unify keep_vars assoc_gen_with_var = function
   | [] -> []
   | (var::l) ->
       let l' = make_disequation_from_unify keep_vars assoc_gen_with_var l in
-      match var.link with
+      match Terms.get_link var with
         | NoLink -> l'
         | TLink _ -> (rev_assoc2 keep_vars assoc_gen_with_var var, follow_link (rev_assoc2 keep_vars assoc_gen_with_var) (Var var)) :: l'
         | _ -> internal_error __POS__ "unexpected link in make_disequation_from_unify"
@@ -2762,7 +2800,7 @@ let simplify_constraints_simple keepvars_op c =
           that are made equal by the inequalities. We added inequalities to
           represents these equalities. *)
         let c1' =
-          List.fold_left (fun acc v -> match v.link with
+          List.fold_left (fun acc v -> match Terms.get_link v with
             | TLink t ->
                 let t' = Terms.copy_term4 t in
                 { acc with geq = (Var v,0,t')::(t',0,Var v)::acc.geq }
@@ -3183,7 +3221,7 @@ let get_solution f_next constra =
             | _ -> Parsing_helper.internal_error __POS__ "[TermsEq.get_solution] Should be a variable and the distance should not be infinite."
         done;
 
-        List.iter (fun v -> match v.link with
+        List.iter (fun v -> match Terms.get_link v with
           | NoLink -> link v (TLink zero_term)
           | _ -> ()
         ) !nat_vars;
