@@ -118,6 +118,8 @@ let explain_derivation = ref true
 let reconstruct_trace = ref 4
 let trace_backtracking = ref true
 
+let num_cores = ref 4 (* Currently hard coded, need to make a parameter or auto detected *)
+
 (* Parameters for recording features for the subsumption test *)
 
 let feature = ref true

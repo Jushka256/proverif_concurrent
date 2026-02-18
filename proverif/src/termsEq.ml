@@ -1832,62 +1832,73 @@ type status_nat =
 (* [get_status_natural_number] and [can_be_natural_number] do not take into
    account the equational theory. *)
 let rec get_status_natural_number nat_vars = function
-  | Var { link = TLink t; _ } -> get_status_natural_number nat_vars t
   | Var v ->
-      if Param.get_ignore_types() then
-	if List.memq v nat_vars then IsNat else CanBeNat v
-      else
-	if equal_types v.btype Param.nat_type then IsNat else NeverNat
+      begin
+        match Terms.get_link v with
+        | TLink t -> get_status_natural_number nat_vars t
+        | _ ->
+            if Param.get_ignore_types() then
+              if List.memq v nat_vars then IsNat else CanBeNat v
+            else
+              if equal_types v.btype Param.nat_type then IsNat else NeverNat
+      end
   | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> get_status_natural_number nat_vars t
   | FunApp(f,[]) when (non_syntactic f) == Terms.zero_cst -> IsNat
   | _ -> NeverNat
 
 let rec can_be_natural_number = function
-  | Var { link = TLink t; _ } -> can_be_natural_number t
-  | Var v -> equal_types v.btype Param.nat_type
+  | Var v -> 
+      begin
+        match Terms.get_link v with
+        | TLink t -> can_be_natural_number t
+        | _ -> equal_types v.btype Param.nat_type
+      end
   | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> can_be_natural_number t
   | FunApp(f,[]) when (non_syntactic f) == Terms.zero_cst -> true
   | _ -> false
 
 let rec elim_var_in_is_not_nat accu_vars accu_keep_nat_vars keep_vars nat_vars = function
-  | Var { link = TLink t ; _ } ->
-      (* In such a case, [t] is in fact a name any_val. *)
-      t
-  | Var ({ link = NoLink ; _ } as v) ->
-      if List.memq v keep_vars
-      then
-        begin
-          if not (List.memq v !accu_vars)
-          then accu_vars := v :: !accu_vars;
-          Var v
-        end
-      else
-        if List.memq v nat_vars
-        then
-          begin
-            if not (List.memq v !accu_vars)
-            then accu_vars := v :: !accu_vars;
-            if not (List.memq v !accu_keep_nat_vars)
-            then accu_keep_nat_vars := v :: !accu_keep_nat_vars;
-            Var v
-          end
-        else
-          begin
-            let t =
-              FunApp(
-                { f_name = Renamable (Terms.new_id ~orig:false "any_val");
-                  f_type = [], v.btype;
-                  f_cat = Eq []; (* Should not be a name to avoid bad interaction with any_name_fsymb *)
-                  f_initial_cat = Eq []; (* Should not be a name to avoid bad interaction with any_name_fsymb *)
-                  f_private = true;
-                  f_options = 0;
-                  f_record = Param.fresh_record () }, [])
-            in
-            Terms.link v (TLink t);
-            t
-          end
+  | Var v -> 
+      begin
+        match Terms.get_link v with
+          | TLink t -> t
+              (* In such a case, [t] is in fact a name any_val. *)
+          | NoLink ->
+              if List.memq v keep_vars
+              then
+                begin
+                  if not (List.memq v !accu_vars)
+                  then accu_vars := v :: !accu_vars;
+                  Var v
+                end
+              else
+                if List.memq v nat_vars
+                then
+                  begin
+                    if not (List.memq v !accu_vars)
+                    then accu_vars := v :: !accu_vars;
+                    if not (List.memq v !accu_keep_nat_vars)
+                    then accu_keep_nat_vars := v :: !accu_keep_nat_vars;
+                    Var v
+                  end
+                else
+                  begin
+                    let t =
+                      FunApp(
+                        { f_name = Renamable (Terms.new_id ~orig:false "any_val");
+                          f_type = [], v.btype;
+                          f_cat = Eq []; (* Should not be a name to avoid bad interaction with any_name_fsymb *)
+                          f_initial_cat = Eq []; (* Should not be a name to avoid bad interaction with any_name_fsymb *)
+                          f_private = true;
+                          f_options = 0;
+                          f_record = Param.fresh_record () }, [])
+                    in
+                    Terms.link v (TLink t);
+                    t
+                  end
 
-  | Var _ -> Parsing_helper.internal_error __POS__ "[termsEq.elim_var_in_is_not_nat] Unexpected link."
+          | _ -> Parsing_helper.internal_error __POS__ "[termsEq.elim_var_in_is_not_nat] Unexpected link."
+          end
   | FunApp(f,args) -> FunApp(f,List.map (elim_var_in_is_not_nat accu_vars accu_keep_nat_vars keep_vars nat_vars) args)
 
 let rec check_is_nat accu_vars = function
@@ -1940,7 +1951,7 @@ let rec simplify_is_not_nat accu_keep_vars nat_vars = function
           | IsNat ->
               (* When t1 is for sure a natural number, we check that the variables of [t] have not been
                 instantiated. In such a case, we know that [t] is for sur a natural number. *)
-              if List.for_all (function { link = NoLink; _} -> true | _ -> false) !accu_vars
+              if List.for_all (fun v -> match Terms.get_link v with NoLink -> true | _ -> false) !accu_vars
               then raise FalseConstraint;
               can_be_nat := true;
               raise Unify
@@ -1967,7 +1978,7 @@ let check_is_not_nat nat_vars t =
       | IsNat ->
           (* When t1 is for sure a natural number, we check that the variables of [t] have not been
             instantiated. In such a case, we know that [t] is for sur a natural number. *)
-          if List.for_all (function { link = NoLink; _} -> true | _ -> false) !accu_vars
+          if List.for_all (fun v -> match Terms.get_link v with NoLink -> true | _ -> false) !accu_vars
           then raise FalseConstraint;
           raise Unify
       | CanBeNat _ | NeverNat -> raise Unify
@@ -2928,7 +2939,11 @@ let check_constraints c =
    because this is not done before. *)
 
 let rec nat_of_closed_term = function
-  | Var { link = TLink t } -> nat_of_closed_term t
+  | Var v -> begin 
+      match Terms.get_link v with
+        | TLink t -> nat_of_closed_term t
+        | _ -> raise Unify
+      end
   | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> (nat_of_closed_term t) + 1
   | FunApp(f,[]) when (non_syntactic f) == Terms.zero_cst -> 0
   | _ -> raise Unify
@@ -2985,11 +3000,14 @@ Notice that variables may not be cleaned up when this function is called.
 *)
 
 let rec copy_term5 modified = function
-  | Var { link = TLink t } ->
-      (* We remove the syntactic symbols *)
-      modified := true;
-      remove_syntactic_term t
-  | Var v -> Var v
+  | Var v -> begin
+      match Terms.get_link v with 
+        | TLink t ->
+            (* We remove the syntactic symbols *)
+            modified := true;
+            copy_term5 modified t
+        | _ -> Var v
+      end
   | FunApp(f,args) -> FunApp(f,List.map (copy_term5 modified) args)
 
 let implies_is_not_nat constraints1 nat_vars t =
@@ -3104,7 +3122,7 @@ let implies_constraints nat_vars1 geq1_data constraints1 constraints2 =
 
 exception Implied
 
-let implies_constraints_copy2 f_copy get_vars_op constraints1 constraints2 =
+let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 constraints2 =
   try 
     if not (is_true_constraints constraints2) 
     then
@@ -3202,7 +3220,7 @@ let implies_constraints_copy2 f_copy get_vars_op constraints1 constraints2 =
   with NoMatch -> false 
 
 let implies_constraints = implies_constraints_copy2 (fun c -> c)
-let implies_constraints3 = implies_constraints_copy2 Terms.copy_constra3
+let implies_constraints3 ?(id_thread=0) = implies_constraints_copy2 ~id_thread Terms.copy_constra3
 let implies_constraints4 = implies_constraints_copy2 Terms.copy_constra4
 
 

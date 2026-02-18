@@ -351,7 +351,7 @@ let new_var ?orig ?(may_fail=false) s t =
     else
       s
   in
-  { vname = new_id ?orig s0; unfailing = may_fail; btype = t; link = NoLink }
+  { vname = new_id ?orig s0; unfailing = may_fail; btype = t; link = Array.make !Param.num_cores NoLink }
 
 (* [copy_var v] creates a fresh variable with the same sname and type as [v]
    Invariant: if vname = 0, then sname never contains N_xxx where xxx is a non-zero
@@ -364,7 +364,7 @@ let copy_var ?(rename=true) ?orig v =
             else
               v.vname;
     unfailing = v.unfailing;
-    btype = v.btype; link = NoLink }
+    btype = v.btype; link = Array.make !Param.num_cores NoLink }
 
 (* [new_var_def t] creates a fresh variable with a default name and type [t] *)
 let new_var_def ?may_fail t =
@@ -413,12 +413,16 @@ let rec occurs_vars_all bl = function
   | Var v -> List.exists (fun v' -> v == v') bl
   | FunApp(_,l) -> List.for_all (occurs_vars_all bl) l
 
+let get_link ?(id_thread=0) v = v.link.(id_thread) [@@inline]
+
+let link_unsafe ?(id_thread=0) v l = v.link.(id_thread) <- l [@@inline]
+
 let rec occurs_vars_follows v = function
   | Var v' -> 
       if v' == v 
       then true
       else 
-        begin match v'.link with 
+        begin match get_link v' with 
         | TLink t -> occurs_vars_follows v t
         | _ -> false
         end
@@ -452,8 +456,12 @@ let rec is_ground_public = function
   | _ -> false
 
 let rec is_public = function
-  | Var { link = TLink t } -> is_public t
-  | Var _ -> true
+  | Var v -> 
+      begin
+        match get_link v with 
+          | TLink t -> is_public t
+          | _ -> true
+      end
   | FunApp({ f_private = false; f_cat = (Eq _ | Tuple | Name _); _},args) -> List.for_all is_public args
   | _ -> false
 
@@ -501,8 +509,6 @@ let equal_facts f1 f2 =
 
 let get_default_link v = v.link.(0) [@@inline]
 
-let get_link v i = v.link.(i) [@@inline]
-
 let current_bound_vars = ref []
 
 let default_thread_id = 0 [@@inline]
@@ -537,16 +543,14 @@ let link ?(id_thread=0) v l =
     | _ -> ()
   end;
   current_bound_vars := v :: (!current_bound_vars);
-  v.link <- l
-
-let link_unsafe ?(id_thread=0) v l = v.link.(id_thread) <- l [@@inline]
+  link_unsafe ~id_thread v l
 
 let link_var t l = match t with
   |Var(v) -> link v l
   |_ -> internal_error __POS__ "[link_var] The term must be a variable"
 
 let cleanup () =
-  List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+  List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
   current_bound_vars := []
 
 let auto_cleanup f =
@@ -554,11 +558,11 @@ let auto_cleanup f =
   current_bound_vars := [];
   try
     let r = f () in
-    List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
     current_bound_vars := tmp_bound_vars;
     r
   with x ->
-    List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
     current_bound_vars := tmp_bound_vars;
     raise x
 
@@ -566,7 +570,7 @@ let auto_cleanup_noexception f =
   let tmp_bound_vars = !current_bound_vars in
   current_bound_vars := [];
   let r = f () in
-  List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+  List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
   current_bound_vars := tmp_bound_vars;
   r
 
@@ -578,7 +582,7 @@ let auto_cleanup_failure f =
     current_bound_vars := List.rev_append (!current_bound_vars) tmp_bound_vars;
     r
   with x ->
-    List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
     current_bound_vars := tmp_bound_vars;
     raise x
 
@@ -591,7 +595,7 @@ let auto_cleanup_save f =
     else
       match l with
       | a::r -> 
-          a.link <- NoLink;
+          link_unsafe a NoLink;
           reset r
       | [] -> assert false  
   in
@@ -610,12 +614,12 @@ let auto_cleanup_save f =
 let local_current_bound_vars = ref []
 
 let link_local v l = 
-  local_current_bound_vars := (v,v.link) :: !local_current_bound_vars;
-  v.link <- l 
+  local_current_bound_vars := (v,get_link v) :: !local_current_bound_vars;
+  link_unsafe v l
 
 let rec cleanup_local = function
   | [] -> ()
-  | (v,l)::q_v -> v.link <- l; cleanup_local q_v
+  | (v,l)::q_v -> link_unsafe v l; cleanup_local q_v
 
 let auto_cleanup_local_noexception f =
   let tmp_bound_vars = !local_current_bound_vars in
@@ -705,7 +709,7 @@ let rec generalize_vars_not_in vlist = function
     Var v ->
       begin
         if List.memq v vlist then Var v else
-        match v.link with
+        match get_link v with
         | NoLink ->
             let v' = FunApp(new_gen_var v.btype v.unfailing, []) in
             link v (TLink v');
@@ -720,7 +724,7 @@ let rec generalize_vars_in vlist = function
     Var v ->
       begin
         if not (List.memq v vlist) then Var v else
-        match v.link with
+        match get_link v with
           NoLink ->
             let v' = FunApp(new_gen_var v.btype v.unfailing, []) in
             link v (TLink v');
@@ -743,7 +747,7 @@ let rec copy_term term = match term with
       then term
       else FunApp(f, l')
   | Var v ->
-      match v.link with
+      match get_link v with
         NoLink ->
           let r = copy_var v in
           link v (VLink r);
@@ -824,7 +828,7 @@ let rec occur_check v t =
     Var v' ->
       begin
         if v == v' then raise Unify;
-        match v'.link with
+        match get_link v' with
           NoLink -> ()
         | TLink t' -> occur_check v t'
         | _ -> internal_error __POS__ "unexpected link in occur_check"
@@ -856,18 +860,20 @@ let rec unify t1 t2 =
     (Var v, Var v') when v == v' -> ()
   | (Var v, _) ->
       begin
-        match v.link with
+        match get_link v with
         | NoLink ->
             begin
               match t2 with
-              | Var {link = TLink t2'} -> unify t1 t2'
-              | Var v' when v.unfailing ->
-                       link v (TLink t2)
-              | Var v' when v'.unfailing ->
-                       link v' (TLink t1)
+                | Var v' -> 
+                  begin
+                    match get_link v' with
+                      | TLink t2' -> unify t1 t2'
+                      | _ when v.unfailing -> link v (TLink t2)
+                      | _ when v'.unfailing -> link v' (TLink t1)
+                      | _ when v'.vname.name = Param.def_var_name -> link v' (TLink t1)
+                      | _ -> occur_check v t2; link v (TLink t2)
+                  end
               | FunApp (f_symb,_) when f_symb.f_cat = Failure && v.unfailing = false -> raise Unify
-              | Var v' when v'.vname.name = Param.def_var_name ->
-                  link v' (TLink t1)
               | _ ->
                   occur_check v t2;
                        link v (TLink t2)
@@ -877,7 +883,7 @@ let rec unify t1 t2 =
       end
   | (FunApp(f_symb,_), Var v) ->
       begin
-        match v.link with
+        match get_link v with
           NoLink ->
             if v.unfailing = false && f_symb.f_cat = Failure
             then raise Unify
@@ -924,7 +930,7 @@ let rec copy_term2 = function
       let l' = List.mapq copy_term2 l in
       if l == l' then t else FunApp(f, l')
   | Var v ->
-      match v.link with
+      match get_link v with
         | NoLink ->
             let r = copy_var v in
             link v (VLink r);
@@ -1004,7 +1010,7 @@ let rec match_terms ?(id_thread=0) t1 t2 =
    match (t1,t2) with
      (Var v), t ->
        begin
-         match v.link with
+         match get_link v with
            NoLink ->
              if v.unfailing
              then link ~id_thread:id_thread v (TLink t)
@@ -1092,7 +1098,7 @@ let rec occurs_test_loop seen_vars v t =
          begin
            seen_vars := v' :: (!seen_vars);
            if v == v' then true else
-           match v'.link with
+           match get_link v' with
              NoLink -> false
            | TLink t' -> occurs_test_loop seen_vars v t'
            | _ -> internal_error __POS__ "unexpected link in occur_check"
@@ -1110,7 +1116,7 @@ let matchafactstrict finst fgen =
        an infinite number of different terms obtained by
        iterating the substitution. We should adjust the selection
        function to avoid this non-termination. *)
-    if List.exists (fun v -> match v.link with
+    if List.exists (fun v -> match get_link v with
     | TLink (Var _) -> false
     | TLink t -> occurs_test_loop (ref []) v t
     | _ -> false) (!current_bound_vars) then
@@ -1190,7 +1196,7 @@ let rec rev_assoc v2 = function
 let rec follow_link var_case = function
     Var v ->
       begin
-        match v.link with
+        match get_link v with
           TLink t -> follow_link var_case t
         | NoLink -> var_case v
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in follow_link"
@@ -1237,8 +1243,12 @@ let rec get_vars_acc_format vlist = function
 
 
 let rec get_unlinked_vars_acc vlist = function
-    Var { link = TLink t; _ } -> get_unlinked_vars_acc vlist t
-  | Var v -> if not (List.memq v (!vlist)) then vlist := v :: (!vlist)
+  | Var v -> 
+      begin
+        match get_link v with 
+        | TLink t -> get_unlinked_vars_acc vlist t
+        | _ -> if not (List.memq v (!vlist)) then vlist := v :: (!vlist)
+      end
   | FunApp(_,l) ->
     List.iter (get_unlinked_vars_acc vlist) l
 
@@ -1247,7 +1257,7 @@ let get_unlinked_vars_acc_constra vlist c = iter_constraints (get_unlinked_vars_
 
 let rec mark_variables = function
   | Var v ->
-      begin match v.link with
+      begin match get_link v with
       | VLink _ -> ()
       | NoLink -> link v (VLink v)
       | _ -> Parsing_helper.internal_error __POS__ "[Terms.mark_variables] Unexpected links"
@@ -1260,8 +1270,12 @@ let mark_variables_fact = function
 (* No assumption are made on the links in the variables *)
 
 let rec mark_variables_local = function
-  | Var { link = Marked; _} -> ()
-  | Var v -> link_local v Marked
+  | Var v -> 
+      begin
+        match get_link v with
+        | Marked -> ()
+        | _ -> link_local v Marked
+      end
   | FunApp(_,args) -> List.iter mark_variables_local args
 
 let mark_variables_local_fact = function
@@ -1300,9 +1314,13 @@ let get_vars_generic (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
 (* Get the variables following the TLink recursively *)
   
 let rec mark_variables_local4 = function
-  | Var { link = TLink t; _ } -> mark_variables_local4 t
-  | Var { link = Marked; _} -> ()
-  | Var v -> link_local v Marked
+  | Var v -> 
+      begin
+        match get_link v with 
+        | TLink t -> mark_variables_local4 t
+        | Marked -> ()
+        | _ -> link_local v Marked
+      end
   | FunApp(_,args) -> List.iter mark_variables_local4 args
 
 let mark_variables_local_fact4 = function
@@ -1317,9 +1335,13 @@ let get_vars_generic4 (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
 (* Inclusion of variables *)
 
 let rec are_variable_included2_aux = function
-  | Var { link = TLink t; _ } -> are_variable_included2_aux t
-  | Var { link = Marked; _ } -> true
-  | Var _ -> false
+  | Var v -> 
+      begin
+        match get_link v with
+        | TLink t -> are_variable_included2_aux t
+        | Marked -> true
+        | _ -> false
+      end
   | FunApp(_,args) -> List.for_all are_variable_included2_aux args
 
 let are_variable_included2 vl t = 
@@ -1342,7 +1364,7 @@ let rec copy_term3 = function
   | FunApp(f,l) as t ->
       let l' =  List.mapq copy_term3 l in
       if l == l' then t else FunApp(f, l')
-  | Var v as t -> match v.link with
+  | Var v as t -> match get_link v with
       | NoLink -> t
       | TLink l -> l
       | _ -> internal_error __POS__ "unexpected link in copy_term3"
@@ -1361,7 +1383,7 @@ let rec copy_term4 = function
   | FunApp(f,l) as t ->
       let l' = List.mapq copy_term4 l in
       if l == l' then t else FunApp(f, l')
-  | Var v as t-> match v.link with
+  | Var v as t -> match get_link v with
       | NoLink -> t
       | TLink l -> copy_term4 l
       | _ -> internal_error __POS__ "unexpected link in copy_term4"
@@ -1420,16 +1442,16 @@ let get_session_id_from_occurrence = function
 
 let rec put_constants = function
   | Var v ->
-      begin match v.link with
+      begin match get_link v with
         | TLink t -> ()
         | NoLink ->
-            v.link <- TLink (FunApp({ f_name = Renamable v.vname;
+            link_unsafe v (TLink (FunApp({ f_name = Renamable v.vname;
                                       f_type = [], v.btype;
                                       f_cat = SpecVar v;
                                       f_initial_cat = SpecVar v;
                                       f_private = false;
                                       f_options = 0;
-                                      f_record = Param.fresh_record () }, []));
+                                      f_record = Param.fresh_record () }, [])));
             current_bound_vars := v :: (!current_bound_vars)
         | _ -> internal_error __POS__ "[Terms.put_constants] Unexpected link."
       end
@@ -2426,7 +2448,7 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
     | [],[] -> [],[]
     | [],_ | _,[] -> internal_error __POS__ "The two lists should have the same length"
     | t::q, Var(v)::uq when v.unfailing ->
-        begin match v.link with
+        begin match get_link v with
           | NoLink ->
               link v (TLink t);
               remove_uni_fail_var q uq
@@ -2476,7 +2498,7 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
 
   let rec get_may_fail_vars varsl term = match term with
     | Var(v) ->
-        begin match v.link with
+        begin match get_link v with
           | NoLink -> if v.unfailing && not (List.memq v (!varsl)) then varsl := v :: (!varsl)
           | TLink(t) -> get_may_fail_vars varsl t
           | _ -> internal_error __POS__ "Unexpected link"
@@ -2487,10 +2509,26 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
   let rec simplify_one_neq term_left term_right = match term_left,term_right with
     | Var(vl),Var(vr) when vl==vr -> raise False_inequality
     | FunApp(f,_), FunApp(f',_) when f.f_cat = Failure && f'.f_cat = Failure -> raise False_inequality
-    | Var({link = TLink tl}),tr ->  simplify_one_neq tl tr
-    | tl, Var({link = TLink tr}) -> simplify_one_neq tl tr
-    | Var(v),FunApp(f,_) when v.unfailing = false && f.f_cat = Failure -> raise True_inequality
-    | FunApp(f,_), Var(v) when v.unfailing = false && f.f_cat = Failure -> raise True_inequality
+    | Var(v) as tl, tr -> 
+        begin 
+          match get_link v, tr with
+          | TLink tl', _ -> simplify_one_neq tl' tr
+          | _, Var(v') -> 
+                begin
+                  match get_link v' with
+                  | TLink tr' -> simplify_one_neq tl tr'
+                  | _ -> tl, tr
+                end
+          | _, FunApp(f,_) when v.unfailing = false && f.f_cat = Failure -> raise True_inequality
+          | _, _ -> tl, tr
+        end
+    | tl, (Var(v) as tr) ->
+        begin
+          match tl, get_link v with
+          | _, TLink tr' -> simplify_one_neq tl tr'
+          | FunApp(f,_), _ when v.unfailing = false && f.f_cat = Failure -> raise True_inequality
+          | _, _ -> tl, tr
+        end
     | FunApp(f,_),FunApp(f',_) when f'.f_cat = Failure -> raise True_inequality
     | FunApp(f,_),FunApp(f',_) when f.f_cat = Failure -> raise True_inequality
     | _,_ -> term_left,term_right
@@ -2713,4 +2751,4 @@ let rec iter_variables f = function
 let iter_term_fact f = function
   | Pred(_,args) -> List.iter f args
 
-let check_no_link = iter_variables (fun v -> if v.link <> NoLink then assert(false))
+let check_no_link = iter_variables (fun v -> if get_link v <> NoLink then assert(false))

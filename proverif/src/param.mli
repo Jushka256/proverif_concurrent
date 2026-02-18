@@ -126,6 +126,7 @@ val abbreviate_derivation : bool ref
 val explain_derivation : bool ref
 val reconstruct_trace : int ref
 val trace_backtracking : bool ref
+val num_cores : int ref
 val display_init_state : bool ref
 
 (* Parameters for recording features for the subsumption test *)

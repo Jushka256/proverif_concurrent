@@ -136,7 +136,7 @@ val simplify_constraints_optimal : (unit -> binder list) option -> (constraints 
     links recursively. *)
 
 val implies_constraints : (unit -> binder list) option -> constraints -> constraints -> bool
-val implies_constraints3 : (unit -> binder list) option -> constraints -> constraints -> bool
+val implies_constraints3 : ?id_thread:int -> (unit -> binder list) option -> constraints -> constraints -> bool
 val implies_constraints4 : (unit -> binder list) option -> constraints -> constraints -> bool
 
 (* [get_solution f_next constra] calls [f_next] after linking variables to
