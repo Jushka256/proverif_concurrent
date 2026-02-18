@@ -3,6 +3,12 @@ open Types
 open Funsymbhash
 open Utils
 
+(* List of functins that must be made concurrent:
+  - get_vars_generic
+
+*)
+
+
 (* TO DO The current code works, but in principle,
    it would be nicer if [tuple_table] was a field in
    [t_pi_state/t_horn_state], to avoid keeping tuple
@@ -498,6 +504,8 @@ let get_default_link v = v.link.(0) [@@inline]
 let get_link v i = v.link.(i) [@@inline]
 
 let current_bound_vars = ref []
+
+let default_thread_id = 0 [@@inline]
 
 let link ?(id_thread=0) v l =
   (* Check that message variables are linked only to messages,

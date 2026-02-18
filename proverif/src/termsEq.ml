@@ -5,6 +5,10 @@ open Parsing_helper
 open Funsymbhash
 open Clause
 
+(* List of functins that must be made concurrent:
+  - implies_constraints3
+*)
+
 let has_equations = ref false
 
 let hasEquations() =
