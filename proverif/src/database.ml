@@ -249,7 +249,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     let implies_internal_concurrent ?(id_thread=0) tok cl1 sub_data1 cl2 sub_data2 =
       try
-        Terms.auto_cleanup (fun () ->
+        Terms.auto_cleanup ~id_thread (fun () ->
           begin match cl1.C.conclusion with
             | Pred(p, []) when p == Param.bad_pred -> ()
             | _ -> Terms.match_facts ~id_thread:id_thread cl1.C.conclusion cl2.C.conclusion
@@ -570,7 +570,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       ) cl1.C.conclusion cl2.C.conclusion
 
     let implies_mod_eq_set cl1 cl2 =
-      assert (!current_bound_vars == []);
+      assert (!(current_bound_vars.(0)) == []);
 
       let keep_vars = lazy (Terms.get_vars_generic C.iter_term_exclude_constraint cl2) in
       let get_vars_op = Some (fun () -> Lazy.force keep_vars) in

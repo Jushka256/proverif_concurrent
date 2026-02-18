@@ -195,14 +195,14 @@ val copy_realquery : Pitypes.realquery -> Pitypes.realquery
 
    Furthermore, [cleanup_assoc_table_gen_and_ex] cleanup the association table.
  *)
-val current_bound_vars : binder list ref
+val current_bound_vars : binder list ref array
 val cleanup : unit -> unit
 val get_link : ?id_thread:int -> binder -> linktype
 val default_thread_id : int 
 val link : ?id_thread:int -> binder -> linktype -> unit
 val link_unsafe : ?id_thread:int -> binder -> linktype -> unit
 val link_var : term -> linktype -> unit
-val auto_cleanup : (unit -> 'a) -> 'a
+val auto_cleanup : ?id_thread:int -> (unit -> 'a) -> 'a
 val auto_cleanup_noexception : (unit -> 'a) -> 'a
 val auto_cleanup_failure : (unit -> 'a) -> 'a
 val auto_cleanup_save : (unit -> 'a) -> 'a
@@ -313,7 +313,7 @@ val get_vars_fact_list : fact list -> binder list
     ]}
     the call [get_vars_generic f_iter_term a] will return the variables in [!acc].
 *)
-val get_vars_generic : ((term -> unit) -> 'a -> unit) -> 'a -> binder list
+val get_vars_generic : ?id_thread:int -> ((term -> unit) -> 'a -> unit) -> 'a -> binder list
 
 (** Similar to [get_vars_generic f_iter_term a] but the function follows the [TLink]
     recursively before recording the variables. *)

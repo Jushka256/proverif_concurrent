@@ -509,7 +509,7 @@ let equal_facts f1 f2 =
 
 let get_default_link v = v.link.(0) [@@inline]
 
-let current_bound_vars = ref []
+let current_bound_vars = Array.make !Param.num_cores (ref []) [@@inline]
 
 let default_thread_id = 0 [@@inline]
 
@@ -542,7 +542,7 @@ let link ?(id_thread=0) v l =
     | TLink t -> assert (equal_types v.btype (get_term_type t))
     | _ -> ()
   end;
-  current_bound_vars := v :: (!current_bound_vars);
+  F := v :: !(current_bound_vars.(id_thread));
   link_unsafe ~id_thread v l
 
 let link_var t l = match t with
@@ -553,17 +553,17 @@ let cleanup () =
   List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
   current_bound_vars := []
 
-let auto_cleanup f =
-  let tmp_bound_vars = !current_bound_vars in
-  current_bound_vars := [];
+let auto_cleanup ?(id_thread=0) f =
+  let tmp_bound_vars = !current_bound_vars.(id_thread) in
+  current_bound_vars.(id_thread) := [];
   try
     let r = f () in
-    List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
-    current_bound_vars := tmp_bound_vars;
+    List.iter (fun v -> link_unsafe ~id_thread v NoLink) (!current_bound_vars.(id_thread));
+    current_bound_vars.(id_thread) := tmp_bound_vars;
     r
   with x ->
-    List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
-    current_bound_vars := tmp_bound_vars;
+    List.iter (fun v -> link_unsafe ~id_thread v NoLink) (!current_bound_vars.(id_thread));
+    current_bound_vars.(id_thread) := tmp_bound_vars;
     raise x
 
 let auto_cleanup_noexception f =
@@ -1305,7 +1305,7 @@ let get_vars_constra constra =
     List.rev_map fst !local_current_bound_vars
   )
   
-let get_vars_generic (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
+let get_vars_generic ?(id_thread=0) (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
   auto_cleanup_local_noexception (fun () ->
     f_iter_term mark_variables_local a;
     List.rev_map fst !local_current_bound_vars
