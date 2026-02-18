@@ -9,17 +9,20 @@ open Concurrent
 (* Functions to compute the size of facts and terms.
    Follows links.*)
 
-let rec term_size = function
-  | Var { link = TLink t } -> term_size t
-  | Var _ -> 0
-  | FunApp(_,args) -> 1 + term_list_size args
+let rec term_size id_thread = function
+  | Var v ->
+      begin match Terms.get_link ~id_thread v with 
+      | TLink t -> term_size id_thread t 
+      | _ -> 0
+      end
+  | FunApp(_,args) -> 1 + term_list_size id_thread args
 
-and term_list_size = function
+and term_list_size id_thread = function
   | [] -> 0
-  | a::l -> term_size a + term_list_size l
+  | a::l -> term_size id_thread a + term_list_size id_thread l
 
-let fact_size = function
-  | Pred(_,args) -> 1 + term_list_size args
+let fact_size id_thread = function
+  | Pred(_,args) -> 1 + term_list_size id_thread args
 
 (* Functions to compute the size of facts and terms.
    Records at the same time if there is a variable without link.
@@ -27,7 +30,7 @@ let fact_size = function
 
 let rec term_size_unbound has_unbound = function
   | Var v ->
-      if v.link = NoLink
+      if Terms.get_link v = NoLink
       then has_unbound := true;
       0
   | FunApp(_,args) -> 1 + term_list_size_unbound has_unbound args
@@ -137,30 +140,30 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
        unused elements of [passed_hyp] and [hyp2].
 
        [size1] is the size of [fact1] including the links, i.e. [fact1\sigma] *)
-    let rec match_fact_bound_with_hyp size1 fact1 passed_hyp = function
+    let rec match_fact_bound_with_hyp id_thread size1 fact1 passed_hyp = function
       | [] -> raise Terms.NoMatch
       | ((size2,fact2) as f2) :: fact_l2 ->
           (* Since [fact1] contains only variables from the conclusion, the instantiation of [fact1] must be
              equal to one of the facts in the hypotheses of the second clause. *)
           if size2 > size1
-          then match_fact_bound_with_hyp size1 fact1 (f2::passed_hyp) fact_l2
+          then match_fact_bound_with_hyp id_thread size1 fact1 (f2::passed_hyp) fact_l2
           else if size2 = size1
           then
             try
               (* Since [fact1] is bound, the matching actually creates no link *)
-              H.match_hyp fact1 fact2;
+              H.match_hyp ~id_thread fact1 fact2;
               List.rev_append passed_hyp fact_l2
             with Terms.NoMatch ->
-              match_fact_bound_with_hyp size1 fact1 (f2::passed_hyp) fact_l2
+              match_fact_bound_with_hyp id_thread size1 fact1 (f2::passed_hyp) fact_l2
           else raise Terms.NoMatch
 
-    let rec match_hyp_bound hyp1 hyp2_bound = match hyp1 with
+    let rec match_hyp_bound id_thread hyp1 hyp2_bound = match hyp1 with
       | [] -> hyp2_bound
       | (_,fact1) :: fact_l1 ->
-          let size1 = fact_size (H.get_fact fact1) in
-          let hyp2_bound' = match_fact_bound_with_hyp size1 fact1 [] hyp2_bound in
+          let size1 = fact_size id_thread (H.get_fact fact1) in
+          let hyp2_bound' = match_fact_bound_with_hyp id_thread size1 fact1 [] hyp2_bound in
           (* Success *)
-          match_hyp_bound fact_l1 hyp2_bound'
+          match_hyp_bound id_thread fact_l1 hyp2_bound'
           (** When [match_fact_bound_with_hyp size1 fact1 [] hyp2_bound] raises [NoMatch],
              [fact1] could not be matched with any fact in [hyp2_bound], we do not need to
              try the unbound hypotheses of clause 2 [hyp2_unbound] for the following reason.
@@ -203,7 +206,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
             | _ -> Terms.match_facts cl1.C.conclusion cl2.C.conclusion
           end;
 
-          let r2_bound_facts = match_hyp_bound sub_data1.bound_facts sub_data2.bound_facts in
+          let r2_bound_facts = match_hyp_bound Terms.default_thread_id sub_data1.bound_facts sub_data2.bound_facts in
 
           let keep_vars = lazy (Terms.get_vars_generic C.iter_term_exclude_constraint cl2) in
           let get_vars_op = Some (fun () -> Lazy.force keep_vars) in
@@ -225,21 +228,21 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     exception StopThread
 
-    let rec match_fact_with_hyp_concurrent nextf tok fact1 passed_hyp = function
+    let rec match_fact_with_hyp_concurrent nextf id_thread tok fact1 passed_hyp = function
       | [] -> raise Terms.NoMatch
       | ((_,fact2) as f2)::fact_l ->
           try
             Terms.auto_cleanup (fun () ->
-              H.match_hyp fact1 fact2;
+              H.match_hyp ~id_thread fact1 fact2;
               nextf (List.rev_append passed_hyp fact_l)
             )
           with Terms.NoMatch ->
-            match_fact_with_hyp_concurrent nextf tok fact1 (f2 :: passed_hyp) fact_l
+            match_fact_with_hyp_concurrent nextf id_thread tok fact1 (f2 :: passed_hyp) fact_l
 
-    let rec match_hyp_concurrent nextf tok hyp1 hyp2 = match hyp1 with
+    let rec match_hyp_concurrent nextf id_thread tok hyp1 hyp2 = match hyp1 with
       | [] -> nextf ()
       | (_,fact1) :: fact_l1 -> (*check here*)
-        Concurrent.check_token tok (fun () -> match_fact_with_hyp_concurrent (match_hyp_concurrent nextf tok fact_l1) tok fact1 [] hyp2) 
+        Concurrent.check_token tok (fun () -> match_fact_with_hyp_concurrent (match_hyp_concurrent nextf id_thread tok fact_l1) id_thread tok fact1 [] hyp2) 
           (fun () -> raise StopThread)
 
     (* Main function for subsumption of two clauses. *)
@@ -252,15 +255,15 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
             | _ -> Terms.match_facts ~id_thread:id_thread cl1.C.conclusion cl2.C.conclusion
           end;
 
-          let r2_bound_facts = match_hyp_bound sub_data1.bound_facts sub_data2.bound_facts in
+          let r2_bound_facts = match_hyp_bound id_thread sub_data1.bound_facts sub_data2.bound_facts in
           Concurrent.check_token tok (fun () -> 
-            let keep_vars = lazy (Terms.get_vars_generic C.iter_term_exclude_constraint cl2) in
+            let keep_vars = lazy (Terms.get_vars_generic ~id_thread C.iter_term_exclude_constraint cl2) in
             let get_vars_op = Some (fun () -> Lazy.force keep_vars) in
             (* All facts of [elt1.bound_facts] have been matched. *)
             match_hyp_concurrent (fun () ->
-              if not (TermsEq.implies_constraints3 get_vars_op cl2.constraints cl1.constraints)
+              if not (TermsEq.implies_constraints3 ~id_thread get_vars_op cl2.constraints cl1.constraints)
               then raise Terms.NoMatch;
-            ) tok sub_data1.unbound_facts (r2_bound_facts @ sub_data2.unbound_facts);
+            ) id_thread tok sub_data1.unbound_facts (r2_bound_facts @ sub_data2.unbound_facts);
             Concurrent.set_token tok;
             true 
           ) (fun () -> raise StopThread)
@@ -298,7 +301,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     let set_match_hyp_bound hyp1 hyp2_bound =
       List.iter (fun (_,hyp_fact1) ->
-        let size1 = fact_size (H.get_fact hyp_fact1) in
+        let size1 = fact_size Terms.default_thread_id (H.get_fact hyp_fact1) in
         set_match_fact_bound_with_hyp size1 hyp_fact1 hyp2_bound) hyp1
 
     let rec set_match_fact_with_hyp nextf fact1 = function
@@ -396,7 +399,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       | [] -> hyp2_bound
       | (_,hyp_fact1) :: fact_l1 ->
           let fact1 = H.get_fact hyp_fact1 in
-          let size1 = fact_size fact1 in
+          let size1 = fact_size Terms.default_thread_id fact1 in
           let (fact2, hyp2_bound') =
             try
               mixed_match_fact_bound_with_hyp size1 hyp_fact1 [] hyp2_bound
@@ -524,7 +527,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     let reorder hyp =
       if List.length hyp > 4 then
-        let hyp_rank = List.map (fun f -> (f, fact_size (H.get_fact f))) hyp in
+        let hyp_rank = List.map (fun f -> (f, fact_size Terms.default_thread_id (H.get_fact f))) hyp in
         let hyp_sorted = List.sort rank_compare hyp_rank in
         List.map (fun (f,_) -> f) hyp_sorted
       else
@@ -991,8 +994,11 @@ module MakeFeatureGeneration
       then !generation_data.(i).width_concl <- IMap.update w f_update !generation_data.(i).width_concl
 
     let rec feature_symbol_hyp has_unbound size depth width = function
-      | Var { link = NoLink; _ } -> has_unbound := true
-      | Var _ -> ()
+      | Var v ->
+          begin match Terms.get_link v with 
+          | NoLink -> has_unbound := true
+          | _ -> ()
+          end
       | FunApp({ f_type = (_,typ);_} as f, args) ->
           if f.f_record <= 0
           then incr occ_non_recorded_symbol (* [f] is non-recorded *)
@@ -1012,8 +1018,11 @@ module MakeFeatureGeneration
           feature_symbol_hyp_list has_unbound size depth (width + 1) q
 
     let rec feature_symbol_concl depth width = function
-      | Var ({ link = NoLink; _ } as v) -> Terms.link v (VLink v) (* Mark the variables*)
-      | Var _ -> ()
+      | Var v ->
+          begin match Terms.get_link v with
+          | NoLink -> Terms.link v (VLink v) (* Mark the variables*)
+          | _ -> ()
+          end
       | FunApp({ f_type = (_,typ);_} as f, args) ->
           if f.f_record <= 0
           then incr occ_non_recorded_symbol (* [f] is non-recorded *)
@@ -1160,7 +1169,7 @@ module FeatureTrie =
       | Empty, _ -> false
       | Node(_,elt_l), [] ->
           (* Only the elements with empty feature vector can be less or equal *)
-          Concurrent.list_exists flag p elt_l
+          Concurrent.list_exists flag p elt_l 
       | Node(fe_map,elt_l), (fe,v)::q_vec ->
           (* Since feature_vector are always sorted in increasing order w.r.t. compare_feature, we have
              that [fe_vec] is sorted in decreasing order w.r.t. FV.compare_fst.
@@ -1179,7 +1188,9 @@ module FeatureTrie =
           (* We need to look in fe_map the branches that have a feature smaller than fe. *)
 
           (* The elements with no positive features are smaller *)
-          Concurrent.or_function flag (fun _ _ -> Concurrent.list_exists flag p elt_l) (fun _ _ -> FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map)
+          Concurrent.list_exists_ext flag p (fun () ->
+            FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map
+          ) elt_l
 
     let rec iter f_iter = function
       | Empty -> ()
@@ -1807,7 +1818,7 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
           let rec existsrec q =
             match q with
               None -> false
-            | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun i tok -> existsrec q'.next)
+            | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun () -> existsrec q'.next)
           in
           existsrec queue.qstart
       )
