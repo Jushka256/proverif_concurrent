@@ -372,11 +372,11 @@ let rec search_first_rule tree = match tree.desc with
 
 let rec build_fact_tree = function
   | Empty(f) ->
-      let tmp_bound_vars = !current_bound_vars in
-      current_bound_vars := [];
+      let tmp_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
+      !current_bound_vars.(Terms.default_thread_id) <- [];
       let f' = copy_fact2 f in
       cleanup();
-      current_bound_vars := tmp_bound_vars;
+      !current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
       { desc = FEmpty; thefact = f' }
   | Any(n, h) ->
       let t = build_fact_tree h in
@@ -413,12 +413,12 @@ let rec build_fact_tree = function
   | HEquation(n,leq,req,h) ->
      let t = build_fact_tree h in
      (* Copy the facts *)
-     let tmp_bound_vars = !current_bound_vars in
-     current_bound_vars := [];
+     let tmp_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
+     !current_bound_vars.(Terms.default_thread_id) <- [];
      let leq' = copy_fact2 leq in
      let req' = copy_fact2 req in
      cleanup();
-     current_bound_vars := tmp_bound_vars;
+     !current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
      if n = -1 then
        begin
         begin
@@ -440,8 +440,8 @@ let rec build_fact_tree = function
          t
        end
   | Rule(n,descr,hyp,concl,constra) ->
-      let tmp_bound = !current_bound_vars in
-      current_bound_vars := [];
+      let tmp_bound = !current_bound_vars.(Terms.default_thread_id) in
+      !current_bound_vars.(Terms.default_thread_id) <- [];
       let rhyp = List.map copy_fact hyp in
       let rconcl = copy_fact concl in
       let rconstra = copy_constra constra in
@@ -452,7 +452,7 @@ let rec build_fact_tree = function
         | x -> x
       in
       cleanup();
-      current_bound_vars := tmp_bound;
+      !current_bound_vars.(Terms.default_thread_id) <- tmp_bound;
       {
         desc = FRule(n, rdescr, rconstra, List.map (fun f -> { desc = FEmpty; thefact = f }) rhyp, []);
         thefact = rconcl;
@@ -883,7 +883,7 @@ let display_derivation new_tree1 =
    Raises [Not_found] in case of failure *)
 
 let build_history recheck cl =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   if not (!Param.reconstruct_derivation) then
     begin
       if !Param.typed_frontend then
@@ -1153,9 +1153,9 @@ let simplify_tree_precise restwork_success restwork_failed err_msg_op constra tr
             TermsEq.collect_unset_vars useful_vars_ref t1;
             TermsEq.collect_unset_vars useful_vars_ref t2;
             let useful_vars' = !useful_vars_ref in
-            let record_current_bound_vars = !Terms.current_bound_vars in
+            let record_current_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
             TermsEq.unify_modulo_save (fun () ->
-              if record_current_bound_vars != !Terms.current_bound_vars && not (constraint_satisfiable constra)
+              if record_current_bound_vars != !Terms.current_bound_vars.(Terms.default_thread_id) && not (constraint_satisfiable constra)
               then raise Unify;
               restwork useful_vars'
             ) t1 t2
@@ -1164,9 +1164,9 @@ let simplify_tree_precise restwork_success restwork_failed err_msg_op constra tr
             List.iter (TermsEq.collect_unset_vars useful_vars_ref) l1;
             List.iter (TermsEq.collect_unset_vars useful_vars_ref) l2;
             let useful_vars' = !useful_vars_ref in
-            let record_current_bound_vars = !Terms.current_bound_vars in
+            let record_current_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
             TermsEq.unify_modulo_list_save (fun () ->
-              if record_current_bound_vars != !Terms.current_bound_vars && not (constraint_satisfiable constra)
+              if record_current_bound_vars != !Terms.current_bound_vars.(Terms.default_thread_id) && not (constraint_satisfiable constra)
               then raise Unify;
               restwork useful_vars'
             ) l1 l2
@@ -1259,11 +1259,11 @@ let simplify_tree_precise restwork_success restwork_failed err_msg_op constra tr
               ) useful_vars hypl
         in
 
-        let record_current_bound_vars = !Terms.current_bound_vars in
+        let record_current_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
 
         begin try
           check_coherent_tree (fun useful_vars' ->
-            if record_current_bound_vars == !Terms.current_bound_vars
+            if record_current_bound_vars == !Terms.current_bound_vars.(Terms.default_thread_id)
             then 
               (* No new unification *)
               restwork_success useful_vars'
@@ -1284,11 +1284,11 @@ let simplify_tree_precise restwork_success restwork_failed err_msg_op constra tr
           elements := (fact_id.factId,fact,fact_id.hyp_spec) :: !elements
         ) prev_hashtbl;
 
-        let record_current_bound_vars = !Terms.current_bound_vars in
+        let record_current_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
 
         let rec iter_tail useful_vars = function
           | [] -> 
-              if record_current_bound_vars == !Terms.current_bound_vars
+              if record_current_bound_vars == !Terms.current_bound_vars.(Terms.default_thread_id)
               then
                 (* No variable instantiated so new unification possible *)
                 restwork_success useful_vars
@@ -1314,14 +1314,14 @@ let rec simplify_tree_attacker restwork useful_vars constra tree =
             if t1 == t2 || not (Terms.is_public t1) || not (Terms.is_public t2)
             then restwork useful_vars
             else 
-              let record_current_bound_vars = !Terms.current_bound_vars in
+              let record_current_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
               begin try
                 let useful_vars_ref = ref useful_vars in
                 TermsEq.collect_unset_vars useful_vars_ref t1;
                 TermsEq.collect_unset_vars useful_vars_ref t2;
                 let useful_vars' = !useful_vars_ref in
                 TermsEq.unify_modulo_save (fun () ->
-                  if record_current_bound_vars != !Terms.current_bound_vars && not (constraint_satisfiable constra)
+                  if record_current_bound_vars != !Terms.current_bound_vars.(Terms.default_thread_id) && not (constraint_satisfiable constra)
                   then raise Unify;
                   restwork useful_vars'
                 ) t1 t2

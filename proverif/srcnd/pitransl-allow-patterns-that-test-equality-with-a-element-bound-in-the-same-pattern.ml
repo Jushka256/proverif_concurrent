@@ -373,7 +373,7 @@ let output_rule { hypothesis = prev_input; constra = constra; unif = unif;
       end;
       if !Param.key_compromise = 2 then
 	begin
-	  assert (!Terms.current_bound_vars == []);
+	  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
 	  (* substitutes session1 for session0, attacker_p1 for 
 	     attacker_p0 and mess_p1 for mess_p0 *)
@@ -1199,7 +1199,7 @@ let rules_for_red phase f red_rules =
 	 by just testunif((x1...xn),(M11...M1n)),
 	         testunif((x1...xn),(M21...M2n)),
 	         testunif((x1...xn),(M31...M3n)), etc. *)
-	assert (!Terms.current_bound_vars == []);
+	assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 	let hyp' = List.map (Terms.generalize_vars_not_in []) hyp in
 	Terms.cleanup();
 	
@@ -1356,7 +1356,7 @@ let weak_secret_clauses w =
 (* Handle key_compromise *)
 
 let comp_output_rule prev_input out_fact =
-  assert (!Terms.current_bound_vars == []);
+  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
   add_rule (List.map Terms.copy_fact2 prev_input)
     (Terms.copy_fact2 out_fact) [] LblComp;
   Terms.cleanup()

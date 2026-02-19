@@ -509,7 +509,7 @@ let equal_facts f1 f2 =
 
 let get_default_link v = v.link.(0) [@@inline]
 
-let current_bound_vars = Array.make !Param.num_cores (ref []) [@@inline]
+let current_bound_vars = ref (Array.make !Param.num_cores [])
 
 let default_thread_id = 0 [@@inline]
 
@@ -542,56 +542,56 @@ let link ?(id_thread=0) v l =
     | TLink t -> assert (equal_types v.btype (get_term_type t))
     | _ -> ()
   end;
-  F := v :: !(current_bound_vars.(id_thread));
+  !current_bound_vars.(id_thread) <- v :: !current_bound_vars.(id_thread);
   link_unsafe ~id_thread v l
 
 let link_var t l = match t with
-  |Var(v) -> link v l
+  | Var(v) -> link v l
   |_ -> internal_error __POS__ "[link_var] The term must be a variable"
 
 let cleanup () =
-  List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
-  current_bound_vars := []
+  List.iter (fun v -> link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
+  !current_bound_vars.(default_thread_id) <- []
 
 let auto_cleanup ?(id_thread=0) f =
   let tmp_bound_vars = !current_bound_vars.(id_thread) in
-  current_bound_vars.(id_thread) := [];
+  !current_bound_vars.(id_thread) <- [];
   try
     let r = f () in
     List.iter (fun v -> link_unsafe ~id_thread v NoLink) (!current_bound_vars.(id_thread));
-    current_bound_vars.(id_thread) := tmp_bound_vars;
+    !current_bound_vars.(id_thread) <- tmp_bound_vars;
     r
   with x ->
     List.iter (fun v -> link_unsafe ~id_thread v NoLink) (!current_bound_vars.(id_thread));
-    current_bound_vars.(id_thread) := tmp_bound_vars;
+    !current_bound_vars.(id_thread) <- tmp_bound_vars;
     raise x
 
 let auto_cleanup_noexception f =
-  let tmp_bound_vars = !current_bound_vars in
-  current_bound_vars := [];
+  let tmp_bound_vars = !current_bound_vars.(default_thread_id) in
+  !current_bound_vars.(default_thread_id) <- [];
   let r = f () in
-  List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
-  current_bound_vars := tmp_bound_vars;
+  List.iter (fun v -> link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
+  !current_bound_vars.(default_thread_id) <- tmp_bound_vars;
   r
 
 let auto_cleanup_failure f =
-  let tmp_bound_vars = !current_bound_vars in
-  current_bound_vars := [];
+  let tmp_bound_vars = !current_bound_vars.(default_thread_id) in
+  !current_bound_vars.(default_thread_id) <- [];
   try
     let r = f () in
-    current_bound_vars := List.rev_append (!current_bound_vars) tmp_bound_vars;
+    !current_bound_vars.(default_thread_id) <- List.rev_append (!current_bound_vars.(default_thread_id)) tmp_bound_vars;
     r
   with x ->
-    List.iter (fun v -> link_unsafe v NoLink) (!current_bound_vars);
-    current_bound_vars := tmp_bound_vars;
+    List.iter (fun v -> link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
+    !current_bound_vars.(default_thread_id) <- tmp_bound_vars;
     raise x
 
 let auto_cleanup_save f =
-  let tmp_bound_vars = !current_bound_vars in
+  let tmp_bound_vars = !current_bound_vars.(default_thread_id) in
 
   let rec reset l =
     if l == tmp_bound_vars
-    then current_bound_vars := l
+    then !current_bound_vars.(default_thread_id) <- l
     else
       match l with
       | a::r -> 
@@ -602,10 +602,10 @@ let auto_cleanup_save f =
 
   try
     let r = f () in
-    reset !current_bound_vars;
+    reset !current_bound_vars.(default_thread_id);
     r
   with x ->
-    reset !current_bound_vars;
+    reset !current_bound_vars.(default_thread_id);
     raise x
 
 (** A local cleanup that is able to "save" the current value of the link 
@@ -649,7 +649,7 @@ let in_auto_cleanup = ref false
 let link v l =
   if not (!in_auto_cleanup) then
     Parsing_helper.internal_error __POS__ "should be in auto_cleanup to use link";
-  current_bound_vars := v :: (!current_bound_vars);
+  current_bound_vars := v :: !current_bound_vars.(default_thread_id);
   v.link <- l
 
 let auto_cleanup f =
@@ -659,12 +659,12 @@ let auto_cleanup f =
   current_bound_vars := [];
   try
     let r = f () in
-    List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> v.link <- NoLink) !current_bound_vars.(default_thread_id);
     current_bound_vars := tmp_bound_vars;
     in_auto_cleanup := tmp_in_auto_cleanup;
     r
   with x ->
-    List.iter (fun v -> v.link <- NoLink) (!current_bound_vars);
+    List.iter (fun v -> v.link <- NoLink) !current_bound_vars.(default_thread_id);
     current_bound_vars := tmp_bound_vars;
     in_auto_cleanup := tmp_in_auto_cleanup;
     raise x
@@ -775,15 +775,15 @@ let copy_fact = function
 let copy_constra c = map_constraints copy_term c
 
 let copy_rule (hyp,concl,hist,constra) =
-  let tmp_bound = !current_bound_vars in
-  current_bound_vars := [];
+  let tmp_bound = !current_bound_vars.(default_thread_id) in
+  !current_bound_vars.(default_thread_id) <- [];
   let r = (List.mapq copy_fact hyp, copy_fact concl, hist, copy_constra constra) in
   cleanup();
-  current_bound_vars := tmp_bound;
+  !current_bound_vars.(default_thread_id) <- tmp_bound;
   r
 
 let copy_red (left_list, right, side_c) =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(default_thread_id) == []);
   let left_list' = List.mapq copy_term left_list in
   let right' = copy_term right in
   let side_c' = copy_constra side_c in
@@ -947,11 +947,11 @@ let copy_fact2 = function
 let rec copy_constra2 c = map_constraints copy_term2 c
 
 let copy_rule2 (hyp, concl, hist, constra) =
-  let tmp_bound = !current_bound_vars in
-  current_bound_vars := [];
+  let tmp_bound = !current_bound_vars.(default_thread_id) in
+  !current_bound_vars.(default_thread_id) <- [];
   let r = (List.mapq copy_fact2 hyp, copy_fact2 concl, hist, copy_constra2 constra) in
   cleanup();
-  current_bound_vars := tmp_bound;
+  !current_bound_vars.(default_thread_id) <- tmp_bound;
   r
 
 let copy_rule2_no_cleanup (hyp, concl, hist, constra) =
@@ -1076,7 +1076,7 @@ let match_facts_unblock_inj_phase_geq f1 f2 = match (f1,f2) with
       List.iter2 match_terms args1 args2
 
 let are_matched_facts f1 f2 =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(default_thread_id) == []);
   try
     match_facts f1 f2;
     cleanup();
@@ -1107,7 +1107,7 @@ let rec occurs_test_loop seen_vars v t =
    | FunApp(_,l) -> List.exists (occurs_test_loop seen_vars v) l
 
 let matchafactstrict finst fgen =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(default_thread_id) == []);
   try
     match_facts fgen finst;
     (* If a variable v is instantiated in the match into
@@ -1119,7 +1119,7 @@ let matchafactstrict finst fgen =
     if List.exists (fun v -> match get_link v with
     | TLink (Var _) -> false
     | TLink t -> occurs_test_loop (ref []) v t
-    | _ -> false) (!current_bound_vars) then
+    | _ -> false) (!current_bound_vars.(default_thread_id)) then
       begin
         cleanup();
         true
@@ -1452,7 +1452,7 @@ let rec put_constants = function
                                       f_private = false;
                                       f_options = 0;
                                       f_record = Param.fresh_record () }, [])));
-            current_bound_vars := v :: (!current_bound_vars)
+            !current_bound_vars.(default_thread_id) <- v :: (!current_bound_vars.(default_thread_id))
         | _ -> internal_error __POS__ "[Terms.put_constants] Unexpected link."
       end
   | FunApp(f,l) -> List.iter put_constants l

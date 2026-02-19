@@ -88,7 +88,7 @@ let add_rule_follow f_next hyp concl constra tags =
   Transl_helper.instantiate_may_fail (fun hyp concl constra tags ->
     if !min_choice_phase > 0 then
       begin
-        assert (!Terms.current_bound_vars == []);
+        assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
         try
           let hyp' = List.map mergelr hyp in
           let concl' = mergelr concl in

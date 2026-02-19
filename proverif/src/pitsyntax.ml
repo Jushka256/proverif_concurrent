@@ -2098,7 +2098,7 @@ let check_red tlist options =
 
                   let tuple = FunApp(tuple_symb, var_list) in
 
-                  assert (!Terms.current_bound_vars == []);
+                  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
                   let side_cond_neq =
                     List.map (fun (arg_list,_,_) ->
@@ -3764,7 +3764,7 @@ let check_process env p =
                              " but is here given " ^
                              (args_to_string type_list)) ext;
 
-              assert (!Terms.current_bound_vars == []);
+              assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
               proc_layer_list (fun l ->
                 if List.exists2 (fun t v ->

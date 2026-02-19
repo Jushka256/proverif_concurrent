@@ -799,7 +799,7 @@ let check_red tlist is_private =
     and fail = Terms.get_fail_term tyrhs
     and tuple_symb = Terms.get_tuple_fun tylhs in
     let tuple = FunApp(tuple_symb, var_list) in
-    assert (!Terms.current_bound_vars == []);
+    assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
     let side_cond_neq =
       List.map (fun (arg_list,_,_) ->
         [tuple,FunApp(tuple_symb, List.map (Terms.generalize_vars_not_in []) arg_list)]

@@ -912,7 +912,7 @@ and canonical_process process acc_unify = match process with
               )
         | _ ->
             (* Test current_bound_vars *)
-            assert (!Terms.current_bound_vars == []);
+            assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
             let pat_x,test_success = one_var_pattern_from_pattern pat in
 
@@ -1027,7 +1027,7 @@ and canonical_process process acc_unify = match process with
               )
         | _ ->
             (* Test current_bound_vars *)
-            assert (!Terms.current_bound_vars == []);
+            assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
 	    try
 	      let rec decompose_pat_term pat term (pat_accu, term_accu) =
@@ -1178,7 +1178,7 @@ and canonical_process process acc_unify = match process with
             Get(pat,term',verify_unification proc1 ((term, Terms.true_term)::acc_unify),canonical_process proc2 acc_unify,occ)
         | _ ->
             (* Test current_bound_vars *)
-            assert (!Terms.current_bound_vars == []);
+            assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
             let pat_x,test_success = one_var_pattern_from_pattern pat in
 

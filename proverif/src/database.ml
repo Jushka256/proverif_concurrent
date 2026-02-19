@@ -570,7 +570,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       ) cl1.C.conclusion cl2.C.conclusion
 
     let implies_mod_eq_set cl1 cl2 =
-      assert (!(current_bound_vars.(0)) == []);
+      assert (!current_bound_vars.(Terms.default_thread_id) == []);
 
       let keep_vars = lazy (Terms.get_vars_generic C.iter_term_exclude_constraint cl2) in
       let get_vars_op = Some (fun () -> Lazy.force keep_vars) in

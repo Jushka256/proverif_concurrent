@@ -195,7 +195,7 @@ val copy_realquery : Pitypes.realquery -> Pitypes.realquery
 
    Furthermore, [cleanup_assoc_table_gen_and_ex] cleanup the association table.
  *)
-val current_bound_vars : binder list ref array
+val current_bound_vars : binder list array ref
 val cleanup : unit -> unit
 val get_link : ?id_thread:int -> binder -> linktype
 val default_thread_id : int 

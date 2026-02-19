@@ -287,12 +287,12 @@ let close_rule_destr_eq restwork (hyp,concl,constra) =
   close_list_destr_eq close_fact_destr_eq true_constraints (fun accu_constra hyp' ->
     close_fact_destr_eq accu_constra (fun accu_constra' concl' ->
       close_constra_destr_eq accu_constra' (fun accu_constra'' constra' ->
-        let tmp_bound = !current_bound_vars in
-        current_bound_vars := [];
+        let tmp_bound = !current_bound_vars.(Terms.default_thread_id) in
+        !current_bound_vars.(Terms.default_thread_id) <- [];
         let r = (List.map copy_fact2 hyp', copy_fact2 concl', copy_constra2 (wedge_constraints accu_constra'' constra')) in
         cleanup();
         restwork r;
-        current_bound_vars := tmp_bound
+        !current_bound_vars.(Terms.default_thread_id) <- tmp_bound
       ) constra
     ) concl
   ) hyp
@@ -302,7 +302,7 @@ let close_rule_destr_eq restwork (hyp,concl,constra) =
 (* Copy an equation *)
 
 let copy_eq (leq, req) =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   let eq' = (copy_term2 leq, copy_term2 req) in
   cleanup();
   eq'
@@ -401,7 +401,7 @@ let rec build_rules_eq leq req f get_rule = function
    FunApp(f2,l) as t ->
       if f2 == f then
       begin
-	assert (!current_bound_vars == []);
+	assert (!current_bound_vars.(Terms.default_thread_id) == []);
         try
           unify t leq;
           get_rule req
@@ -418,7 +418,7 @@ and build_rules_eq_list leq req f get_rule = function
       build_rules_eq_list leq req f (fun concl_list -> get_rule (a::concl_list)) l
 
 let rec implies_eq (leq1, req1) (leq2, req2) =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   try
     if not (Terms.equal_types (Terms.get_term_type leq1) (Terms.get_term_type leq2)) then
       raise NoMatch;
@@ -1246,11 +1246,11 @@ is replaced by "f_k ()"
 *)
 
 let auto_cleanup_eq_tail f_apply f_next f_Unify f_NoBacktrack =
-  let tmp_bound_vars = !current_bound_vars in
+  let tmp_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
 
   let rec aux_reset l =
     if l == tmp_bound_vars
-    then current_bound_vars := l
+    then !current_bound_vars.(Terms.default_thread_id) <- l
     else
       match l with
       | [] -> assert false
@@ -1259,7 +1259,7 @@ let auto_cleanup_eq_tail f_apply f_next f_Unify f_NoBacktrack =
 	  aux_reset r
   in
   let reset() =
-    aux_reset (!current_bound_vars)
+    aux_reset !current_bound_vars.(default_thread_id)
   in
     
   f_apply
@@ -2537,7 +2537,7 @@ let rec close_disequation_eq restwork = function
 let unify_disequation nextf accu constra =
   let assoc_gen_with_var = ref [] in (* Association list general var * var *)
 
-  assert (!Terms.current_bound_vars == []);
+  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
   (* Get all classic variables *)
 
@@ -2558,7 +2558,7 @@ let unify_disequation nextf accu constra =
     with TrueConstraint -> cleanup ()
   ) constra';
 
-  assert (!Terms.current_bound_vars == [])
+  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == [])
 
 (** Elim_universal_variables *)
 
@@ -2811,7 +2811,7 @@ let simplify_constraints_simple keepvars_op c =
     simplify_constraints_keepvars
       (fun c1 -> c1)
       (fun c1 ->
-        (* The variables in !Terms.current_bound_vars are the variables
+        (* The variables in !Terms.current_bound_vars.(Terms.default_thread_id) are the variables
           that are made equal by the inequalities. We added inequalities to
           represents these equalities. *)
         let c1' =
@@ -2820,7 +2820,7 @@ let simplify_constraints_simple keepvars_op c =
                 let t' = Terms.copy_term4 t in
                 { acc with geq = (Var v,0,t')::(t',0,Var v)::acc.geq }
             | _ -> Parsing_helper.internal_error __POS__ "[termsEq.simplify_constraints_simple] variable should be linked."
-          ) c1 !Terms.current_bound_vars
+          ) c1 !Terms.current_bound_vars.(Terms.default_thread_id)
         in
         c1'
       )
@@ -3347,7 +3347,7 @@ let exists_distinct_subterms_equal_modulo term_list =
 (* Subsumption between rewrite rules with side conditions *)
 
 let implies_rew (leq1, req1, side_c1) (leq2, req2, side_c2) =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   try
     List.iter2 Terms.match_terms leq1 leq2;
     Terms.match_terms req1 req2;
@@ -3376,8 +3376,8 @@ let close_destr_eq f l =
       | [] -> internal_error __POS__ "should not be empty"
       | (req'::leq') ->
           close_constra_eq (fun side_c0 ->
-            let curr_bound_vars = !current_bound_vars in
-            current_bound_vars := [];
+            let curr_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
+            !current_bound_vars.(Terms.default_thread_id) <- [];
 
             let (leq1,req1, side_c1) =
               (List.map copy_term2 leq', copy_term2 req', copy_constra2 side_c0)
@@ -3413,7 +3413,7 @@ let close_destr_eq f l =
                     not(implies_rew rew2 rew3)) (!results));
               with FalseConstraint | Reduces -> ()
             end;
-            current_bound_vars := curr_bound_vars
+            !current_bound_vars.(Terms.default_thread_id) <- curr_bound_vars
         ) side_c
     ) (req::leq)
   ) l;

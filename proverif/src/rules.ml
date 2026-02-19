@@ -875,7 +875,7 @@ struct
     then next_stage cl
     else
       let res = 
-        assert(!Terms.current_bound_vars = []);
+        assert(!Terms.current_bound_vars.(Terms.default_thread_id) = []);
 
         try 
           Terms.auto_cleanup (fun () ->
@@ -891,13 +891,13 @@ struct
 
             match_redundant_hypotheses (fun () ->
               (* We check whether some match was found *)
-              let success = List.exists (fun v -> match Terms.get_link v with TLink _ -> true | _ -> false) !Terms.current_bound_vars in
+              let success = List.exists (fun v -> match Terms.get_link v with TLink _ -> true | _ -> false) !Terms.current_bound_vars.(Terms.default_thread_id) in
 
               if success
               then
                 begin
                   (* All variables in conclusion and hypotheses are linked either by a TLink or a VLink *)
-                  let all_vars = !Terms.current_bound_vars in
+                  let all_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
 
                   (* It remains to check the disequalities and inequalities *)
 
@@ -1467,7 +1467,7 @@ struct
         try 
           Terms.auto_cleanup (fun () ->
             match_for_lemma_hyp exists_vars hyp1 hyp2;
-            if !current_bound_vars = [] then no_instantiated_vars := true;
+            if !current_bound_vars.(Terms.default_thread_id) = [] then no_instantiated_vars := true;
             f_next ()
           )
         with NoMatch ->
@@ -1551,7 +1551,7 @@ struct
           (* Unify the equalities *)
           List.iter (fun (t1,t2) -> unify_for_lemma !exists_vars t1 t2) eqs_lem;
 
-          if instantiates_only_existential_vars !current_bound_vars
+          if instantiates_only_existential_vars !current_bound_vars.(Terms.default_thread_id)
           then
             (* We need to check that the added hyp already exists *)
             let hyp_to_add, is_hyp_added = generate_added_hyp fact_lem in
@@ -1684,7 +1684,7 @@ struct
   let normal_rule database lemmas cl =
 
     let rec normal_rule do_not_apply_lemma cl =
-      assert (!Terms.current_bound_vars == []);
+      assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
       simplify_conclusion (fun cl ->
         decompose_hyp_tuples_rule (fun cl ->
           simp_eq_rule (fun cl ->
@@ -1737,7 +1737,7 @@ struct
   let normal_rule_solving database lemmas cl =
 
     let rec normal_rule do_not_apply_lemma cl =
-      assert (!Terms.current_bound_vars == []);
+      assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
       decompose_hyp_tuples_rule (
         elim_not (
           W.simplify (
@@ -1783,7 +1783,7 @@ struct
         else (H.copy2 a)::(replace_and_copy2 l1 (n-1) hyp l)
 
   let compose_clause next_stage cl_solved cl_unsolved (sel_index,hyp) = 
-    assert (!current_bound_vars == []);
+    assert (!current_bound_vars.(Terms.default_thread_id) == []);
     try
       let cl_unsolved' = 
         Terms.auto_cleanup (fun () ->
@@ -2338,7 +2338,7 @@ let completion lemmas clauses =
     Parsing_helper.debug_msg (Printf.sprintf "Predicates for second saturation: %s" 
       (String.concat ", " (List.map (fun p -> p.p_name) !predicates_for_second_saturation))
     );
-    assert(!current_bound_vars = []);
+    assert(!current_bound_vars.(Terms.default_thread_id) = []);
     Parsing_helper.debug_msg "Checking successful"
   );
   
@@ -2794,7 +2794,7 @@ let main_analysis state goal_set =
 exception Satisfiable
 
 let is_hypothesis_unsatisfiable cl =
-  assert (!Terms.current_bound_vars == []);
+  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
   let rec apply_normal_rule cl =
     SimplificationRulesOrd.simp_eq_rule (

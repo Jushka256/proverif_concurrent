@@ -34,7 +34,7 @@ let rec contains_bound_name fl = function
 let unify_up_to_x next_stage t1 t2 =
   let vlsecr = List.map (fun f -> (f,Terms.new_var ~orig:false (Terms.get_fsymb_basename f) (snd f.f_type))) (!secret_vars) in
   let vl = ref vlsecr in
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   let t1' = replace_f_var vl t1 in
   let t2' = replace_f_var vl t2 in
   let fl = List.map fst (!vl) in
@@ -63,8 +63,8 @@ let unify_up_to_x next_stage t1 t2 =
     if not keep then
       cleanup()
     else
-      let t1simp = List.map (fun v2 -> rev_assoc v2 (!vl)) (!current_bound_vars) in
-      let t2simp = List.map (fun v2 -> follow_link (fun v2 -> rev_assoc v2 (!vl)) (Var v2)) (!current_bound_vars) in
+      let t1simp = List.map (fun v2 -> rev_assoc v2 (!vl)) !current_bound_vars.(default_thread_id) in
+      let t2simp = List.map (fun v2 -> follow_link (fun v2 -> rev_assoc v2 (!vl)) (Var v2)) !current_bound_vars.(default_thread_id) in
       cleanup();
       next_stage t1simp t2simp
   with Unify ->
@@ -167,7 +167,7 @@ struct
   (* Simplifications *)
 
   let swap_with_copy next_stage hypbefore hypafter concl hist constra l1 l2 =
-    assert (!Terms.current_bound_vars == []);
+    assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
     let l1', l2' = swap [] [] l1 l2 in
     let hypbefore', hypafter', concl', constra' = 
       Terms.auto_cleanup_noexception (fun () ->
@@ -253,7 +253,7 @@ struct
 
     let vlsecr = List.map (fun f -> (f,Terms.new_var ~orig:false (Terms.get_fsymb_basename f) (snd f.f_type))) (!secret_vars) in
     let vl = ref vlsecr in
-    assert (!current_bound_vars == []);
+    assert (!current_bound_vars.(Terms.default_thread_id) == []);
     let t1' = List.map (replace_f_var vl) t1 in
     let t2' = List.map (replace_f_var vl) t2 in
     try
@@ -367,7 +367,7 @@ struct
             }
         ) hypbefore' hypafter' concl' hist constra' l1' l2'
     in
-    assert (!Terms.current_bound_vars == []);
+    assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
     List.iter2 (fun l1 l2 ->
       match (l1,l2) with
         (Var v1), (FunApp(f,l))
@@ -386,11 +386,11 @@ struct
                   if (do_instantiate descr) &&
                     (Terms.equal_types (snd s.f_type) v1.btype)
                   then
-                    let curr_bound_vars = !Terms.current_bound_vars in
-                    Terms.current_bound_vars := [];
+                    let curr_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
+                    !Terms.current_bound_vars.(Terms.default_thread_id) <- [];
                     Terms.link v1 (TLink (FunApp(s,[])));
                     redo_optim();
-                    Terms.current_bound_vars := curr_bound_vars
+                    !Terms.current_bound_vars.(Terms.default_thread_id) <- curr_bound_vars
                             ) (!secret_vars_with_sets);
                 let lvar = Terms.var_gen (List.map Terms.get_term_type l) in
                 Terms.link v1 (TLink (FunApp(f, lvar)));
@@ -438,16 +438,16 @@ struct
               let rec unifyinset = function
                   [] -> raise Unify
                 | (au::lu) ->
-                    let curr_bound_vars = !current_bound_vars in
-                    current_bound_vars := [];
+                    let curr_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
+                    !current_bound_vars.(Terms.default_thread_id) <- [];
                     try
                       unify (Var v) au;
                       unify_secrets todo l;
                       cleanup();
-                      current_bound_vars := curr_bound_vars
+                      !current_bound_vars.(Terms.default_thread_id) <- curr_bound_vars
                     with Unify ->
                       cleanup();
-                      current_bound_vars := curr_bound_vars;
+                      !current_bound_vars.(Terms.default_thread_id) <- curr_bound_vars;
                       unifyinset lu
               in
               unifyinset s
@@ -455,7 +455,7 @@ struct
   let secr_in_sets t1 t2 =
     let vlsecr = List.map (fun f -> (f,Terms.new_var ~orig:false (Terms.get_fsymb_basename f) (snd f.f_type))) (!secret_vars) in
     let vl = ref vlsecr in
-    assert (!current_bound_vars == []);
+    assert (!current_bound_vars.(Terms.default_thread_id) == []);
     let t1' = List.map (replace_f_var vl) t1 in
     let t2' = List.map (replace_f_var vl) t2 in
     try
@@ -481,7 +481,7 @@ struct
   (* Calls to [simplify] are prevented on standard clauses (clauses such that
       [is_standard_clause] returns true) in rules.ml *)
   let simplify next_stage repeat_next_stage cl =
-    assert (!Terms.current_bound_vars == []);
+    assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
     if (not (!non_interference)) then
       next_stage cl
     else

@@ -825,7 +825,7 @@ let rec check_process add_in_glob_table env = function
 			 (Terms.tl_to_string ", " ptype) ^
 			 " but is given arguments of type " ^
 			 (Terms.tl_to_string ", " tyl)) ext;
-	  if !Terms.current_bound_vars != [] then
+	  if !Terms.current_bound_vars.(Terms.default_thread_id) != [] then
 	    Parsing_helper.internal_error "bound vars should be cleaned up (pitsyntax)";
 	  List.iter2 (fun t p -> Terms.link p (TLink t)) tl param;
 	  let p'' = copy_process add_in_glob_table p' in

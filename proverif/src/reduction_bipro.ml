@@ -46,22 +46,22 @@ exception Reduced of (term * term) reduc_state
 *)
 
 let auto_cleanup_red f =
-  let tmp_bound_vars = !current_bound_vars in
-  current_bound_vars := [];
+  let tmp_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
+  !current_bound_vars.(Terms.default_thread_id) <- [];
   try
     let r = f () in
-    List.iter (fun v -> Terms.link_unsafe v NoLink) (!current_bound_vars);
-    current_bound_vars := tmp_bound_vars;
+    List.iter (fun v -> Terms.link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
+    !current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
     r
   with
     Reduced s ->
       (* Do not delete the links when the exception [Reduced] is raised.
          Keep them in [current_bound_vars] so that they are deleted later if needed *)
-      current_bound_vars := List.rev_append tmp_bound_vars (!current_bound_vars);
+      !current_bound_vars.(Terms.default_thread_id) <- List.rev_append tmp_bound_vars !current_bound_vars.(default_thread_id);
       raise (Reduced s)
   | x ->
-      List.iter (fun v -> Terms.link_unsafe v NoLink) (!current_bound_vars);
-      current_bound_vars := tmp_bound_vars;
+      List.iter (fun v -> Terms.link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
+      !current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
       raise x
 
 

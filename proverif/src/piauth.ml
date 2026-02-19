@@ -1416,7 +1416,7 @@ let rec clause_match_realquery restwork lemmas initial_nb_premise clause (* (((h
       in
 
       (* Replace all variables in the clause with constants "SpecVar" *)
-      assert (!current_bound_vars == []);
+      assert (!current_bound_vars.(Terms.default_thread_id) == []);
       Ord.iter_term Terms.put_constants clause;
       let clause' = Ord.copy2 clause in
       cleanup ();
@@ -1692,7 +1692,7 @@ and check_inj_query ?(close_equation=true) ?(contain_nested=false) restwork disp
 (* Main verification functions *)
 
 let verify_inj_query display_when_true nested list_started all_lemmas (Before(evl,_) as query) =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   let request_rule = generate_initial_request_rule query in
 
   let initial_nb_premise = Query.number_of_facts_in_premise evl in
@@ -1803,7 +1803,7 @@ let verify_inj_query display_when_true nested list_started all_lemmas (Before(ev
   res
 
 let verify_non_inj_query display_when_true nested list_started lemmas (Before(evl,_) as query) =
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
   let request_rule = generate_initial_request_rule query in
 
   let initial_nb_premise = Query.number_of_facts_in_premise evl in
@@ -1858,7 +1858,7 @@ let verify_query display_query lemmas ind_lemmas qdisp (Before(el, _) as q) =
         );
   traces_to_reconstruct := !Param.reconstruct_trace;
   shown_stop := false;
-  assert (!current_bound_vars == []);
+  assert (!current_bound_vars.(Terms.default_thread_id) == []);
 
   let list_started = ref false in
   let result =

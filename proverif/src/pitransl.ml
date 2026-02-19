@@ -347,7 +347,7 @@ let output_rule cur_state out_fact = match cur_state.record_fun_opt with
         end;
         if !Param.key_compromise = 2 then
           begin
-            assert (!Terms.current_bound_vars == []);
+            assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
 
             (* substitutes session1 for session0, attacker_p1 for
                attacker_p0 and mess_p1 for mess_p0 *)
@@ -405,51 +405,51 @@ let current_bound_vars_destructor = ref ([] : binder list)
    current_bounds_vars_destructor. Moreover, before running [f], the function
    saves the variables in Terms.current_bound_vars in current_bound_vars_destructor *)
 let save_bound_vars f =
-  let tmp_bound_vars = !Terms.current_bound_vars in
+  let tmp_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
   let tmp_bound_vars_dest = !current_bound_vars_destructor in
-  Terms.current_bound_vars := [];
+  !Terms.current_bound_vars.(Terms.default_thread_id) <- [];
   current_bound_vars_destructor := List.rev_append tmp_bound_vars !current_bound_vars_destructor;
   try
     let r = f () in
-    List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
-    Terms.current_bound_vars := tmp_bound_vars;
+    List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars.(Terms.default_thread_id);
+    !Terms.current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
     current_bound_vars_destructor := tmp_bound_vars_dest;
     r
   with
     | Terms.Unify | TermsEq.FalseConstraint ->
-        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
-        Terms.current_bound_vars := tmp_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars.(Terms.default_thread_id);
+        !Terms.current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest
     | x ->
-        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
-        Terms.current_bound_vars := tmp_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars.(Terms.default_thread_id);
+        !Terms.current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest;
         raise x
 
 let cleanup_bound_vars f =
-  let tmp_bound_vars = !Terms.current_bound_vars in
+  let tmp_bound_vars = !Terms.current_bound_vars.(Terms.default_thread_id) in
   let tmp_bound_vars_dest = !current_bound_vars_destructor in
-  Terms.current_bound_vars := [];
+  !Terms.current_bound_vars.(Terms.default_thread_id) <- [];
   current_bound_vars_destructor := [];
   try
     let r = f () in
-    List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
-    Terms.current_bound_vars := tmp_bound_vars;
+    List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars.(Terms.default_thread_id);
+    !Terms.current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
     current_bound_vars_destructor := tmp_bound_vars_dest;
     r
   with
     | Terms.Unify | TermsEq.FalseConstraint ->
-        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
-        Terms.current_bound_vars := tmp_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars.(Terms.default_thread_id);
+        !Terms.current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest
     | x ->
-        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars;
-        Terms.current_bound_vars := tmp_bound_vars;
+        List.iter (fun v -> Terms.link_unsafe v NoLink) !Terms.current_bound_vars.(Terms.default_thread_id);
+        !Terms.current_bound_vars.(Terms.default_thread_id) <- tmp_bound_vars;
         current_bound_vars_destructor := tmp_bound_vars_dest;
         raise x
 
 let get_bound_vars () =
-  List.rev_append !Terms.current_bound_vars !current_bound_vars_destructor
+  List.rev_append !Terms.current_bound_vars.(Terms.default_thread_id) !current_bound_vars_destructor
 
 let link_mapping_vars (f,v) = Terms.unify (FunApp(f,[])) (Var v)
 
@@ -1800,7 +1800,7 @@ let rules_for_red pi_state phase f red_rules =
          by just testunif((x1...xn),(M11...M1n)),
                  testunif((x1...xn),(M21...M2n)),
                  testunif((x1...xn),(M31...M3n)), etc. *)
-        assert (!Terms.current_bound_vars == []);
+        assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
         let hyp' = List.map (Terms.generalize_vars_not_in []) hyp in
         Terms.cleanup();
 
@@ -1952,7 +1952,7 @@ let weak_secret_clauses pi_state my_types w =
 (* Handle key_compromise *)
 
 let comp_output_rule prev_input out_fact =
-  assert (!Terms.current_bound_vars == []);
+  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
   add_rule (List.map Terms.copy_fact2 prev_input)
     (Terms.copy_fact2 out_fact) Terms.true_constraints LblComp;
   Terms.cleanup()

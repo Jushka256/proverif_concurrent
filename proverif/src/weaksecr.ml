@@ -280,7 +280,7 @@ struct
         try
           auto_cleanup (fun () ->
             inst cl.hypotheses;
-            if !Terms.current_bound_vars != []
+            if !Terms.current_bound_vars.(Terms.default_thread_id) != []
             then Some(true,C.copy2 cl)
             else Some(false,cl)
           )
