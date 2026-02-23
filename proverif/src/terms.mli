@@ -178,7 +178,7 @@ val generalize_vars_not_in : binder list -> term -> term
 val generalize_vars_in : binder list -> term -> term
 
 (* Copies. Variables must be linked only to other variables, with VLink. *)
-val copy_term : term -> term
+val copy_term : ?id_thread:int -> term -> term
 val copy_term_e : Pitypes.term_e -> Pitypes.term_e
 val copy_term_option : term option -> term option
 val copy_term_e_option : Pitypes.term_e option -> Pitypes.term_e option
@@ -196,7 +196,7 @@ val copy_realquery : Pitypes.realquery -> Pitypes.realquery
    Furthermore, [cleanup_assoc_table_gen_and_ex] cleanup the association table.
  *)
 val current_bound_vars : binder list array ref
-val cleanup : unit -> unit
+val cleanup : ?id_thread:int -> unit -> unit
 val get_link : ?id_thread:int -> binder -> linktype
 val default_thread_id : int 
 val link : ?id_thread:int -> binder -> linktype -> unit
@@ -255,13 +255,13 @@ val matchafactstrict : fact -> fact -> bool
 (* Copy of terms and constraints after matching.
    Variables can be linked to terms with TLink, but the link
    is followed only once, not recursively *)
-val copy_term3 : term -> term
+val copy_term3 : ?id_thread:int -> term -> term
 val copy_fact3 : fact -> fact
 val copy_constra3 : constraints -> constraints
 
 (* [copy_term4] follows links [Tlink] recursively,
    but does not rename variables *)
-val copy_term4 : term -> term
+val copy_term4 : ?id_thread: int -> term -> term
 val copy_fact4 : fact -> fact
 val copy_constra4: constraints -> constraints
 

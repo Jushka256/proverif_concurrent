@@ -3,7 +3,7 @@ open Types
 open Funsymbhash
 open Utils
 
-(* List of functins that must be made concurrent:
+(* List of functions that must be made concurrent:
   - get_vars_generic
 
 *)
@@ -549,9 +549,9 @@ let link_var t l = match t with
   | Var(v) -> link v l
   |_ -> internal_error __POS__ "[link_var] The term must be a variable"
 
-let cleanup () =
-  List.iter (fun v -> link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
-  !current_bound_vars.(default_thread_id) <- []
+let cleanup ?(id_thread=0) () =
+  List.iter (fun v -> link_unsafe ~id_thread v NoLink) !current_bound_vars.(id_thread);
+  !current_bound_vars.(id_thread) <- []
 
 let auto_cleanup ?(id_thread=0) f =
   let tmp_bound_vars = !current_bound_vars.(id_thread) in
@@ -740,17 +740,17 @@ let rec generalize_vars_in vlist = function
               Copy term functions
 ****************************************************)
 
-let rec copy_term term = match term with
+let rec copy_term ?(id_thread=0) term = match term with
   | FunApp(f,l) ->
-      let l' = List.mapq copy_term l in
+      let l' = List.mapq (copy_term ~id_thread) l in
       if l == l'
       then term
       else FunApp(f, l')
   | Var v ->
-      match get_link v with
+      match get_link ~id_thread v with
         NoLink ->
           let r = copy_var v in
-          link v (VLink r);
+          link ~id_thread v (VLink r);
           Var r
       | VLink l -> Var l
       | _ -> internal_error __POS__ "Unexpected link in copy_term"
@@ -823,17 +823,17 @@ and copy_conclusion_query = function
 
 exception Unify
 
-let rec occur_check v t =
+let rec occur_check ?(id_thread=0) v t =
   match t with
     Var v' ->
       begin
         if v == v' then raise Unify;
-        match get_link v' with
+        match get_link ~id_thread v' with
           NoLink -> ()
-        | TLink t' -> occur_check v t'
+        | TLink t' -> occur_check ~id_thread v t'
         | _ -> internal_error __POS__ "unexpected link in occur_check"
       end
-  | (FunApp(_,l)) -> List.iter (occur_check v) l
+  | (FunApp(_,l)) -> List.iter (occur_check ~id_thread v) l
 
 let term_string = function
     FunApp(f,l) ->
@@ -845,7 +845,7 @@ let term_string = function
      if l = [] then name else name ^ "(...)"
   | Var(b) -> string_of_id b.vname
 
-let rec unify t1 t2 =
+let rec unify ?(id_thread=0) t1 t2 =
   (* Commented out this typing checking test for speed
   if not (Param.get_ignore_types()) then
   begin
@@ -860,44 +860,44 @@ let rec unify t1 t2 =
     (Var v, Var v') when v == v' -> ()
   | (Var v, _) ->
       begin
-        match get_link v with
+        match get_link ~id_thread v with
         | NoLink ->
             begin
               match t2 with
                 | Var v' -> 
                   begin
-                    match get_link v' with
-                      | TLink t2' -> unify t1 t2'
-                      | _ when v.unfailing -> link v (TLink t2)
-                      | _ when v'.unfailing -> link v' (TLink t1)
-                      | _ when v'.vname.name = Param.def_var_name -> link v' (TLink t1)
-                      | _ -> occur_check v t2; link v (TLink t2)
+                    match get_link ~id_thread v' with
+                      | TLink t2' -> unify ~id_thread t1 t2'
+                      | _ when v.unfailing -> link ~id_thread v (TLink t2)
+                      | _ when v'.unfailing -> link ~id_thread v' (TLink t1)
+                      | _ when v'.vname.name = Param.def_var_name -> link ~id_thread v' (TLink t1)
+                      | _ -> occur_check ~id_thread v t2; link ~id_thread v (TLink t2)
                   end
               | FunApp (f_symb,_) when f_symb.f_cat = Failure && v.unfailing = false -> raise Unify
               | _ ->
-                  occur_check v t2;
-                       link v (TLink t2)
+                  occur_check ~id_thread v t2;
+                       link ~id_thread v (TLink t2)
             end
-        | TLink t1' -> unify t1' t2
+        | TLink t1' -> unify ~id_thread t1' t2
         | _ -> internal_error __POS__ "Unexpected link in unify 1"
       end
   | (FunApp(f_symb,_), Var v) ->
       begin
-        match get_link v with
+        match get_link ~id_thread v with
           NoLink ->
             if v.unfailing = false && f_symb.f_cat = Failure
             then raise Unify
             else
               begin
-                     occur_check v t1;
-                link v (TLink t1)
+                occur_check ~id_thread v t1;
+                link ~id_thread v (TLink t1)
               end
-        | TLink t2' -> unify t1 t2'
+        | TLink t2' -> unify ~id_thread t1 t2'
         | _ -> internal_error __POS__ "Unexpected link in unify 2"
       end
   | (FunApp(f1, l1), FunApp(f2,l2)) ->
       if f1 != f2 then raise Unify;
-      List.iter2 unify l1 l2
+      List.iter2 (unify ~id_thread) l1 l2
 
 let unify_facts f1 f2 =
   match (f1,f2) with
@@ -1010,7 +1010,7 @@ let rec match_terms ?(id_thread=0) t1 t2 =
    match (t1,t2) with
      (Var v), t ->
        begin
-         match get_link v with
+         match get_link ~id_thread v with
            NoLink ->
              if v.unfailing
              then link ~id_thread:id_thread v (TLink t)
@@ -1019,7 +1019,7 @@ let rec match_terms ?(id_thread=0) t1 t2 =
                         match t with
                    | Var v' when v'.unfailing -> raise NoMatch
                    | FunApp(f_symb,_) when f_symb.f_cat = Failure -> raise NoMatch
-                   | _ -> link v (TLink t)
+                   | _ -> link ~id_thread v (TLink t)
                end
          | TLink t' -> if not (equal_terms t t') then raise NoMatch
          | _  -> internal_error __POS__ "Bad link in match_terms"
@@ -1360,11 +1360,11 @@ let are_variable_included_fact2 vl fact =
 
 (* Copy of terms and constraints after matching *)
 
-let rec copy_term3 = function
+let rec copy_term3 ?(id_thread=0) = function
   | FunApp(f,l) as t ->
-      let l' =  List.mapq copy_term3 l in
+      let l' =  List.mapq (copy_term3 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
-  | Var v as t -> match get_link v with
+  | Var v as t -> match get_link ~id_thread v with
       | NoLink -> t
       | TLink l -> l
       | _ -> internal_error __POS__ "unexpected link in copy_term3"
@@ -1379,13 +1379,13 @@ let rec copy_constra3 c = map_constraints copy_term3 c
 (* [copy_term4] follows links [Tlink] recursively,
    but does not rename variables *)
 
-let rec copy_term4 = function
+let rec copy_term4 ?(id_thread=0) = function
   | FunApp(f,l) as t ->
-      let l' = List.mapq copy_term4 l in
+      let l' = List.mapq (copy_term4 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
-  | Var v as t -> match get_link v with
+  | Var v as t -> match get_link ~id_thread v with
       | NoLink -> t
-      | TLink l -> copy_term4 l
+      | TLink l -> copy_term4 ~id_threead l
       | _ -> internal_error __POS__ "unexpected link in copy_term4"
 
 let copy_fact4 = function
@@ -1393,7 +1393,7 @@ let copy_fact4 = function
       let args' = List.mapq copy_term4 args in
       if args' == args then fact else Pred(p,args')
 
-let copy_constra4 c = map_constraints copy_term4 c
+let copy_constra4 ?(id_thread=0) c = map_constraints (copy_term4 ~id_thread) c
 
 (* Do not select blocking facts or pred_TUPLE(vars) *)
 

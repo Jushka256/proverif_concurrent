@@ -1808,7 +1808,7 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
     let implies queue (cl, vector, sub_data) =
       let test_fun i tok elt =
         let (elt_cl,_,elt_sub_data) = elt.annot_clause in
-      elt.active && S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
+        elt.active && S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in
       Concurrent.run_concurrent (fun () -> 

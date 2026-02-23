@@ -317,22 +317,22 @@ let swap_eq (leq, req) = (req, leq)
 let rewrite_system = ref []
 let order = ref []
 
-let rec normal_form = function
+let rec normal_form ?(id_thread=0) = function
     Var v -> Var v
   | FunApp(f,l) ->
-      let t' = FunApp(f, List.map normal_form l) in
+      let t' = FunApp(f, List.map (normal_form ~id_thread) l) in
       let rec find_red = function
         [] -> t'
       | ((leq,req)::redl) ->
          try
            if not (Terms.equal_types (Terms.get_term_type leq) (Terms.get_term_type t')) then
       raise NoMatch;
-           Terms.match_terms leq t';
-           let r = copy_term3 req in
-           Terms.cleanup();
-           normal_form r
+           Terms.match_terms ~id_thread leq t';
+           let r = copy_term3 ~id_thread req in
+           Terms.cleanup ~id_thread ();
+           normal_form ~id_thread:r
          with NoMatch ->
-           Terms.cleanup();
+           Terms.cleanup ~id_thread ();
            find_red redl
       in
       find_red (!rewrite_system)
@@ -1104,13 +1104,13 @@ let get_syntactic f =
     HashtblSymbol.add syntactic_table f f';
     f'
 
-let rec put_syntactic = function
-  | FunApp(f,l) -> FunApp(get_syntactic f, List.map put_syntactic l)
+let rec put_syntactic ?(id_thread=0) = function
+  | FunApp(f,l) -> FunApp(get_syntactic f, List.map (put_syntactic ~id_thread) l)
   | Var v ->
-      match Terms.get_link v with
+      match Terms.get_link ~id_thread v with
       |	NoLink ->
           let r = Terms.copy_var v in
-          link v (VLink r);
+          link ~id_thread v (VLink r);
           Var r
       | VLink l -> Var l
       | _ -> internal_error __POS__ "Unexpected link in put_syntactic"
@@ -1245,21 +1245,21 @@ f_0 f_1 ... f_n and in the definition of f, any "raise exp_k"
 is replaced by "f_k ()"
 *)
 
-let auto_cleanup_eq_tail f_apply f_next f_Unify f_NoBacktrack =
-  let tmp_bound_vars = !current_bound_vars.(Terms.default_thread_id) in
+let auto_cleanup_eq_tail ?(id_thread=0) f_apply f_next f_Unify f_NoBacktrack =
+  let tmp_bound_vars = !current_bound_vars.(id_thread) in
 
   let rec aux_reset l =
     if l == tmp_bound_vars
-    then !current_bound_vars.(Terms.default_thread_id) <- l
+    then !current_bound_vars.(id_thread) <- l
     else
       match l with
       | [] -> assert false
       | a::r ->
-	  Terms.link_unsafe a NoLink;
+	  Terms.link_unsafe ~id_thread a NoLink;
 	  aux_reset r
   in
   let reset() =
-    aux_reset !current_bound_vars.(default_thread_id)
+    aux_reset !current_bound_vars.(id_thread)
   in
     
   f_apply
@@ -1335,11 +1335,11 @@ and occur_check_list_eq_modulo_tail restwork restwork_occurs f_clean f_Unify f_N
 and occur_check_eq_modulo_tail restwork f_clean f_Unify f_NoBacktrack v t =
   occur_check_eq_modulo_aux_tail restwork (fun f_clean' f_Unify' f_NoBacktrack' -> f_Unify' ()) f_clean f_Unify f_NoBacktrack v t
 
-and close_term_eq_synt_tail restwork f_clean f_Unify f_NoBacktrack = function
+and close_term_eq_synt_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack = function
   | (Var x) as t ->
     begin
-      match Terms.get_link x with
-        | TLink t -> close_term_eq_synt_tail restwork f_clean f_Unify f_NoBacktrack t
+      match Terms.get_link ~id_thread x with
+        | TLink t -> close_term_eq_synt_tail ~id_thread restwork f_clean f_Unify f_NoBacktrack t
         | NoLink -> restwork f_clean f_Unify f_NoBacktrack t
         | _ -> internal_error __POS__ "unexpected link in close_term_eq_synt"
     end
@@ -1349,17 +1349,17 @@ and close_term_eq_synt_tail restwork f_clean f_Unify f_NoBacktrack = function
          because we make a tail call. *)
       restwork f_clean f_Unify f_NoBacktrack t
   | (FunApp(f,l) as t) ->
-      auto_cleanup_eq_tail (fun f_clean' f_Unify' f_NoBacktrack' ->
+      auto_cleanup_eq_tail ~id_thread (fun f_clean' f_Unify' f_NoBacktrack' ->
         restwork f_clean' f_Unify' f_NoBacktrack' t
       ) f_clean (fun () -> match f.f_cat with
         | Eq eqlist ->
             let rec reweqlist = function
               | (leq, req) :: lrew ->
-                  let leq', req'  = auto_cleanup (fun () ->
-                    List.map put_syntactic leq,
-                    put_syntactic req)
+                  let leq', req'  = auto_cleanup ~id_thread (fun () ->
+                    List.map (put_syntactic ~id_thread) leq,
+                    put_syntactic ~id_thread req)
                   in
-                  auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
+                  auto_cleanup_eq_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
                     unify_modulo_list_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
                       restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 req'
                     ) f_clean_1 f_Unify_1 f_NoBacktrack_1 l leq'
@@ -1486,7 +1486,7 @@ and unify_modulo_list_internal_tail restwork f_clean f_Unify f_NoBacktrack l1 l2
    the root symbols as much as possible when they do not use an
    equational theory. *)
 
-and unify_modulo_list_tail restwork f_clean f_Unify f_NoBacktrack l1 l2 =
+and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack l1 l2 =
   let rec add_unif_term restwork f_clean f_Unify f_NoBacktrack unif_to_do_left unif_to_do_right t1 t2 =
     match t1, t2 with
       FunApp(f1, l1), FunApp(f2,l2) when f_has_no_eq f1 && f_has_no_eq f2 ->
@@ -1604,13 +1604,13 @@ and unify_modulo_list_tail restwork f_clean f_Unify f_NoBacktrack l1 l2 =
   to clean all links created in close_term_eq_synt_tail / unify_modulo_list_tail
   before raising it again.
 *)
-let close_term_eq_synt restwork t =
-  close_term_eq_synt_tail (fun f_clean f_Unify f_NoBacktrack t' ->
+let close_term_eq_synt ?(id_thread=0) restwork t =
+  close_term_eq_synt_tail ~id_thread (fun f_clean f_Unify f_NoBacktrack t' ->
     try
-      let r = 
-        auto_cleanup (fun () ->
-          restwork t' 
-        ) 
+      let r =
+        auto_cleanup ~id_thread (fun () ->
+          restwork t'
+        )
       in
       f_clean ();
       r
@@ -1622,8 +1622,8 @@ let close_term_eq_synt restwork t =
           raise x
   ) (fun () -> ()) (fun () -> raise Unify) (fun r -> raise (NoBacktrack r)) t
 
-let unify_modulo_list_save (restwork:unit -> 'a) (l1:term list) (l2:term list) =
-  unify_modulo_list_tail (fun f_clean f_Unify f_NoBacktrack ->
+let unify_modulo_list_save ?(id_thread=0) (restwork:unit -> 'a) (l1:term list) (l2:term list) =
+  unify_modulo_list_tail ~id_thread (fun f_clean f_Unify f_NoBacktrack ->
     try
       let r = restwork () in
       f_clean ();
@@ -1636,14 +1636,14 @@ let unify_modulo_list_save (restwork:unit -> 'a) (l1:term list) (l2:term list) =
           raise x
   ) (fun () -> ()) (fun () -> raise Unify) (fun r -> raise (NoBacktrack r)) l1 l2
 
-let unify_modulo_save restwork t1 t2 =
-    unify_modulo_list_save restwork [t1] [t2]
+let unify_modulo_save ?(id_thread=0) restwork t1 t2 =
+    unify_modulo_list_save ~id_thread restwork [t1] [t2]
 
 let unify_modulo_list restwork l1 l2 =
   unify_modulo_list_save (fun () -> auto_cleanup restwork) l1 l2
 
-let unify_modulo restwork t1 t2 = 
-  unify_modulo_save (fun () -> auto_cleanup restwork) t1 t2
+let unify_modulo ?(id_thread=0) restwork t1 t2 = 
+  unify_modulo_save ~id_thread (fun () -> auto_cleanup ~id_thread restwork) t1 t2
 
 let close_geq_eq_synt restwork (t1,n,t2) =
   close_term_eq_synt (fun t1' ->
@@ -1766,7 +1766,7 @@ exception FalseConstraint
     If not and it is a natural number variable, then it adds [v]
     to [accu_nat_vars].
     [nat_vars] contains the list of natural number variables. *)
-let elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v =
+let elim_var_if_possible ?(id_thread=0) has_gen_var keep_vars accu_nat_vars nat_vars v =
   if not (List.memq v keep_vars) then
   begin
     if List.memq v nat_vars
@@ -1780,9 +1780,9 @@ let elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v =
       then raise TrueConstraint
       else
         begin
-          match Terms.get_link v with
+          match Terms.get_link ~id_thread v with
           | NoLink ->
-              Terms.link v (TLink (FunApp(
+              Terms.link ~id_thread v (TLink (FunApp(
                 { f_name = Renamable (Terms.new_id ~orig:false "any_val");
                   f_type = [], v.btype;
                   f_cat = Eq []; (* Should not be a name to avoid bad interaction with any_name_fsymb *)
@@ -1795,9 +1795,9 @@ let elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v =
         end
   end
 
-let rec check_vars_occurs has_gen_var keep_vars accu_nat_vars nat_vars = function
-  | FunApp(_,l) -> List.iter (check_vars_occurs has_gen_var keep_vars accu_nat_vars nat_vars) l
-  | Var v -> elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v
+let rec check_vars_occurs ?(id_thread=0) has_gen_var keep_vars accu_nat_vars nat_vars = function
+  | FunApp(_,l) -> List.iter (check_vars_occurs ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars) l
+  | Var v -> elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v
 
 let rec has_gen_var = function
     Var v -> false
@@ -1806,17 +1806,17 @@ let rec has_gen_var = function
 
 (** [elim_var_notelsewhere] expects contraints with a variable on the left part
     of the disequation *)
-let elim_var_notelsewhere has_gen_var keep_vars accu_nat_vars nat_vars = function
+let elim_var_notelsewhere ?(id_thread=0) has_gen_var keep_vars accu_nat_vars nat_vars = function
   | Var v1, Var v2 ->
       assert(v1 != v2);
-      elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v1;
-      elim_var_if_possible has_gen_var keep_vars accu_nat_vars nat_vars v2
+      elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v1;
+      elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v2
       (* constraints Neq(x,t), where x does not appear in the keep_vars and t is not a variable, are true
          Note that, if t was a universally quantified variable, it would have been removed by swap.
       *)
   | Var v, t ->
-      elim_var_if_possible false keep_vars accu_nat_vars nat_vars v;
-      check_vars_occurs has_gen_var keep_vars accu_nat_vars nat_vars t
+      elim_var_if_possible ~id_thread false keep_vars accu_nat_vars nat_vars v;
+      check_vars_occurs ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars t
   | c ->
       Display.Text.display_constra [c];
       Parsing_helper.internal_error __POS__ "unexpected constraint in simplify_simple_constraint: t <> t', t not variable"
@@ -1831,36 +1831,36 @@ type status_nat =
 
 (* [get_status_natural_number] and [can_be_natural_number] do not take into
    account the equational theory. *)
-let rec get_status_natural_number nat_vars = function
+let rec get_status_natural_number ?(id_thread=0) nat_vars = function
   | Var v ->
       begin
-        match Terms.get_link v with
-        | TLink t -> get_status_natural_number nat_vars t
+        match Terms.get_link ~id_thread v with
+        | TLink t -> get_status_natural_number ~id_thread nat_vars t
         | _ ->
             if Param.get_ignore_types() then
               if List.memq v nat_vars then IsNat else CanBeNat v
             else
               if equal_types v.btype Param.nat_type then IsNat else NeverNat
       end
-  | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> get_status_natural_number nat_vars t
+  | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> get_status_natural_number ~id_thread nat_vars t
   | FunApp(f,[]) when (non_syntactic f) == Terms.zero_cst -> IsNat
   | _ -> NeverNat
 
-let rec can_be_natural_number = function
+let rec can_be_natural_number ?(id_thread=0) = function
   | Var v -> 
       begin
-        match Terms.get_link v with
-        | TLink t -> can_be_natural_number t
+        match Terms.get_link ~id_thread v with
+        | TLink t -> can_be_natural_number ~id_thread t
         | _ -> equal_types v.btype Param.nat_type
       end
-  | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> can_be_natural_number t
+  | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> can_be_natural_number ~id_thread t
   | FunApp(f,[]) when (non_syntactic f) == Terms.zero_cst -> true
   | _ -> false
 
-let rec elim_var_in_is_not_nat accu_vars accu_keep_nat_vars keep_vars nat_vars = function
+let rec elim_var_in_is_not_nat ?(id_thread=0) accu_vars accu_keep_nat_vars keep_vars nat_vars = function
   | Var v -> 
       begin
-        match Terms.get_link v with
+        match Terms.get_link ~id_thread v with
           | TLink t -> t
               (* In such a case, [t] is in fact a name any_val. *)
           | NoLink ->
@@ -1893,13 +1893,13 @@ let rec elim_var_in_is_not_nat accu_vars accu_keep_nat_vars keep_vars nat_vars =
                           f_options = 0;
                           f_record = Param.fresh_record () }, [])
                     in
-                    Terms.link v (TLink t);
+                    Terms.link ~id_thread v (TLink t);
                     t
                   end
 
           | _ -> Parsing_helper.internal_error __POS__ "[termsEq.elim_var_in_is_not_nat] Unexpected link."
           end
-  | FunApp(f,args) -> FunApp(f,List.map (elim_var_in_is_not_nat accu_vars accu_keep_nat_vars keep_vars nat_vars) args)
+  | FunApp(f,args) -> FunApp(f,List.map (elim_var_in_is_not_nat ~id_thread accu_vars accu_keep_nat_vars keep_vars nat_vars) args)
 
 let rec check_is_nat accu_vars = function
   | Var v ->
@@ -1935,23 +1935,23 @@ let rec simplify_geq accu_vars (t1,n,t2) =
 
 (* The reference [accu_keep_vars] accumulates the natural variables in the predicates
    is_not_nat *)
-let rec simplify_is_not_nat accu_keep_vars nat_vars = function
+let rec simplify_is_not_nat ?(id_thread=0) accu_keep_vars nat_vars = function
   | [] -> []
   | t :: q ->
-      let t1 = normal_form t in
+      let t1 = normal_form ~id_thread t in
 
       let accu_vars = ref [] in
       let accu_keep_nat_vars = ref [] in
-      let t2 = elim_var_in_is_not_nat accu_vars accu_keep_nat_vars !accu_keep_vars nat_vars t1 in
-      Terms.cleanup ();
+      let t2 = elim_var_in_is_not_nat ~id_thread accu_vars accu_keep_nat_vars !accu_keep_vars nat_vars t1 in
+      Terms.cleanup ~id_thread ();
 
       let can_be_nat = ref false in
       try
-        close_term_eq_synt (fun t3 -> match get_status_natural_number nat_vars t3 with
+        close_term_eq_synt ~id_thread (fun t3 -> match get_status_natural_number ~id_thread nat_vars t3 with
           | IsNat ->
               (* When t1 is for sure a natural number, we check that the variables of [t] have not been
                 instantiated. In such a case, we know that [t] is for sur a natural number. *)
-              if List.for_all (fun v -> match Terms.get_link v with NoLink -> true | _ -> false) !accu_vars
+              if List.for_all (fun v -> match Terms.get_link ~id_thread v with NoLink -> true | _ -> false) !accu_vars
               then raise FalseConstraint;
               can_be_nat := true;
               raise Unify
@@ -1966,9 +1966,9 @@ let rec simplify_is_not_nat accu_keep_vars nat_vars = function
         then
           begin
             accu_keep_vars := !accu_keep_nat_vars @ !accu_keep_vars;
-            t::(simplify_is_not_nat accu_keep_vars nat_vars q)
+            t::(simplify_is_not_nat ~id_thread accu_keep_vars nat_vars q)
           end
-        else simplify_is_not_nat accu_keep_vars nat_vars q
+        else simplify_is_not_nat ~id_thread accu_keep_vars nat_vars q
 
 let check_is_not_nat nat_vars t =
   let accu_vars = ref [] in
@@ -2250,12 +2250,12 @@ let get_edges number_vertices distance =
 
 (*** Remove disequalities on natural numbers ***)
 
-let can_never_be_natural_number_diseq t =
+let can_never_be_natural_number_diseq ?(id_thread=0) t =
   (* In this function, we replace the general variables by normal variables and see if
      [t] can never become a natural number. *)
   try
-    close_term_eq_synt (fun t1 ->
-      if not (can_be_natural_number t1)
+    close_term_eq_synt ~id_thread (fun t1 ->
+      if not (can_be_natural_number ~id_thread t1)
       then raise Unify
     ) (Terms.replace_f_var (ref []) t);
     false
@@ -2265,12 +2265,12 @@ let can_never_be_natural_number_diseq t =
      Returns a boolean [is_instantiated]
      and the new value of [keepvars] ***)
 
-let update_keepvars keep_vars =
+let update_keepvars ?(id_thread=0) keep_vars =
   let is_instantiated = ref false in
   let keep_ref = ref [] in
   let new_terms = ref [] in
 
-  List.iter (fun v -> match Terms.get_link v with
+  List.iter (fun v -> match Terms.get_link ~id_thread v with
     | NoLink -> keep_ref := v :: !keep_ref
     | TLink t ->
         new_terms := t :: !new_terms;
@@ -2289,16 +2289,16 @@ type status_term =
   | NeverNat2 (* the term is never a natural number *)
   | Unknown
 
-let rec get_term_status nat_vars depth = function
+let rec get_term_status ?(id_thread=0) nat_vars depth = function
   | Var v ->
       if (not v.unfailing) && (if Param.get_ignore_types() then List.memq v nat_vars else equal_types v.btype Param.nat_type)
       then NatVar(v,depth)
       else Unknown
-  | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> get_term_status nat_vars (depth+1) t
+  | FunApp(f,[t]) when (non_syntactic f) == Terms.succ_fun -> get_term_status ~id_thread nat_vars (depth+1) t
   | FunApp(f,[]) when (non_syntactic f) == Terms.zero_cst -> Nat depth
   | FunApp({f_cat = General_var | General_mayfail_var; _} as f,_) -> General(depth,f)
   | t ->
-      if can_never_be_natural_number_diseq t
+      if can_never_be_natural_number_diseq ~id_thread t
       then NeverNat2
       else Unknown
 
@@ -2398,7 +2398,7 @@ let remove_nat_diseq_neq_conj_exc f_next f_next_geq f_next_inst nat_vars neq =
   explore_conj [] neq
 
 
-let remove_nat_diseq_neq_conj f_next f_next_geq f_next_inst nat_vars keep_vars neq =
+let remove_nat_diseq_neq_conj ?(id_thread=0) f_next f_next_geq f_next_inst nat_vars keep_vars neq =
 
   let rec explore_disj f_next f_next_geq f_next_inst = function
     | [] -> f_next false
@@ -2409,7 +2409,7 @@ let remove_nat_diseq_neq_conj f_next f_next_geq f_next_inst nat_vars keep_vars n
 	     (we leave the inequality unchanged---which is sound for any term) *)
         if List.memq v1 nat_vars
         then
-          let status2 = get_term_status nat_vars 0 t2 in
+          let status2 = get_term_status ~id_thread nat_vars 0 t2 in
           match status2 with
             | Nat n2 ->
                 (* Case of v1 <> n2 *)
@@ -2418,9 +2418,9 @@ let remove_nat_diseq_neq_conj f_next f_next_geq f_next_inst nat_vars keep_vars n
                 (* Second case: v1 < n2 *)
                 f_next_geq (Terms.zero_term,(n2-1),Var v1);
                 (* Last case v1 = n2 *)
-                Terms.auto_cleanup (fun () ->
-                  link v1 (TLink (Terms.generate_nat n2));
-                  let (is_instantiated,keep_vars1) = update_keepvars keep_vars in
+                Terms.auto_cleanup ~id_thread (fun () ->
+                  link ~id_thread v1 (TLink (Terms.generate_nat n2));
+                  let (is_instantiated,keep_vars1) = update_keepvars ~id_thread keep_vars in
                   f_next_inst keep_vars1 is_instantiated
                 )
             | NatVar(v2,n2) ->
@@ -2430,9 +2430,9 @@ let remove_nat_diseq_neq_conj f_next f_next_geq f_next_inst nat_vars keep_vars n
                 (* Second case: v1 < v2 + n2 *)
                 f_next_geq (Var v2,(n2-1),Var v1);
                 (* Last case v1 = v2 + n2 *)
-                Terms.auto_cleanup (fun () ->
-                  Terms.link v1 (TLink (Terms.sum_nat_term (Var v2) n2));
-                  let (is_instantiated,keep_vars1) = update_keepvars keep_vars in
+                Terms.auto_cleanup ~id_thread (fun () ->
+                  Terms.link ~id_thread v1 (TLink (Terms.sum_nat_term (Var v2) n2));
+                  let (is_instantiated,keep_vars1) = update_keepvars ~id_thread keep_vars in
                   f_next_inst keep_vars1 is_instantiated
                 )
             | General(n2,f) ->
@@ -2440,11 +2440,11 @@ let remove_nat_diseq_neq_conj f_next f_next_geq f_next_inst nat_vars keep_vars n
 		(* First case: v1 < n2 *)
                 f_next_geq (Terms.zero_term,(n2-1),Var v1);
 		(* Second case: v1 = n2 + v' for a fresh variable v' *)
-                Terms.auto_cleanup (fun () ->
+                Terms.auto_cleanup ~id_thread (fun () ->
                   let v' = Terms.new_var_def Param.nat_type in
                   let t = Terms.sum_nat_term (Var v') n2 in
-                  Terms.link v1 (TLink t);
-                  let (is_instantiated,keep_vars1) = update_keepvars keep_vars in
+                  Terms.link ~id_thread v1 (TLink t);
+                  let (is_instantiated,keep_vars1) = update_keepvars ~id_thread keep_vars in
                   f_next_inst keep_vars1 is_instantiated
                 )
             | NeverNat2 -> f_next true
@@ -2515,11 +2515,11 @@ let rev_assoc2 keep_vars assoc_gen_var v =
 
 (** [make_disequation_from_unify] create the list of simple constraint
         corresponding to $\bigvee_j x_j \neq \sigma_k x_j$*)
-let rec make_disequation_from_unify keep_vars assoc_gen_with_var = function
+let rec make_disequation_from_unify ?(id_thread=0) keep_vars assoc_gen_with_var = function
   | [] -> []
   | (var::l) ->
-      let l' = make_disequation_from_unify keep_vars assoc_gen_with_var l in
-      match Terms.get_link var with
+      let l' = make_disequation_from_unify ~id_thread keep_vars assoc_gen_with_var l in
+      match Terms.get_link ~id_thread var with
         | NoLink -> l'
         | TLink _ -> (rev_assoc2 keep_vars assoc_gen_with_var var, follow_link (rev_assoc2 keep_vars assoc_gen_with_var) (Var var)) :: l'
         | _ -> internal_error __POS__ "unexpected link in make_disequation_from_unify"
@@ -2534,10 +2534,10 @@ let rec close_disequation_eq restwork = function
         ) t1 t2
       with Unify -> ()
 
-let unify_disequation nextf accu constra =
+let unify_disequation ?(id_thread=0) nextf accu constra =
   let assoc_gen_with_var = ref [] in (* Association list general var * var *)
 
-  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == []);
+  assert (!Terms.current_bound_vars.(id_thread) == []);
 
   (* Get all classic variables *)
 
@@ -2550,15 +2550,15 @@ let unify_disequation nextf accu constra =
   let var_list = ref [] in
   List.iter (fun (t1,t2) -> get_vars_acc var_list t1; get_vars_acc var_list t2) constra';
 
-  close_disequation_eq (fun () ->
+  close_disequation_eq ~id_thread (fun () ->
     try
-      let new_disequation = make_disequation_from_unify !keep_vars assoc_gen_with_var !var_list in
-      cleanup ();
+      let new_disequation = make_disequation_from_unify ~id_thread !keep_vars assoc_gen_with_var !var_list in
+      cleanup ~id_thread ();
       accu := (nextf new_disequation) :: (!accu)
-    with TrueConstraint -> cleanup ()
+    with TrueConstraint -> cleanup ~id_thread ()
   ) constra';
 
-  assert (!Terms.current_bound_vars.(Terms.default_thread_id) == [])
+  assert (!Terms.current_bound_vars.(id_thread) == [])
 
 (** Elim_universal_variables *)
 
@@ -2594,9 +2594,9 @@ let elim_universal_variable constra =
 
 (*** Combining the simplification ***)
 
-let copy_neq_list3 = List.map (fun (t1,t2) -> copy_term3 t1, copy_term3 t2)
+let copy_neq_list3 ?(id_thread=0) = List.map (fun (t1,t2) -> copy_term3 ~id_thread t1, copy_term3 ~id_thread t2)
 
-let feed_new_constra accu_keep_vars nat_vars accu constra =
+let feed_new_constra ?(id_thread=0) accu_keep_vars nat_vars accu constra =
   (* TO DO do not keep "syntactic" terms after unification modulo?
    let constra = remove_syntactic_constra constra in *)
   try
@@ -2604,8 +2604,8 @@ let feed_new_constra accu_keep_vars nat_vars accu constra =
     let accu_nat_vars = ref [] in
     List.iter (elim_var_notelsewhere constra_has_gen_var !accu_keep_vars accu_nat_vars nat_vars) constra;
 
-    let constrasimp = copy_neq_list3 constra in
-    Terms.cleanup();
+    let constrasimp = copy_neq_list3 ~id_thread constra in
+    Terms.cleanup ~id_thread ();
     if constrasimp = [] then
       raise FalseConstraint
     else if List.exists (fun a'' -> implies_constraint a'' constrasimp) (!accu) then
@@ -2616,14 +2616,14 @@ let feed_new_constra accu_keep_vars nat_vars accu constra =
         accu := constrasimp :: (List.filter (fun a'' -> not (implies_constraint constrasimp a'')) (!accu))
       end
   with TrueConstraint ->
-    Terms.cleanup()
+    Terms.cleanup ~id_thread ()
 
-let simplify_neq_conj accu_keep_vars nat_vars neq_conj =
-  Terms.auto_cleanup (fun () ->
+let simplify_neq_conj ?(id_thread=0) accu_keep_vars nat_vars neq_conj =
+  Terms.auto_cleanup ~id_thread (fun () ->
     let accu = ref [] in
-    List.iter (unify_disequation elim_universal_variable accu) neq_conj;
+    List.iter (unify_disequation ~id_thread elim_universal_variable accu) neq_conj;
     let accu' = ref [] in
-    List.iter (feed_new_constra accu_keep_vars nat_vars accu') (!accu);
+    List.iter (feed_new_constra ~id_thread accu_keep_vars nat_vars accu') (!accu);
     !accu'
   )
 
@@ -2676,7 +2676,7 @@ let simplify_neq_conj2 neq_conj =
    Note however, that simplify_constraints_keepvars may instantiate some of the variables in
    keep_vars due to inequalities. *)
 
-let simplify_constraints_keepvars f_next f_next_inst keep_vars c =
+let simplify_constraints_keepvars ?(id_thread=0) f_next f_next_inst keep_vars c =
   let nat_vars = ref [] in
 
   (* Check the predicates is_nat *)
@@ -2689,32 +2689,32 @@ let simplify_constraints_keepvars f_next f_next_inst keep_vars c =
   (* Simplify the inequalities *)
   get_equalities (fun eq_left eq_right assoc number_vertices distance ->
 
-    Terms.auto_cleanup (fun () ->
-      List.iter2 Terms.unify eq_left eq_right;
-      let (is_instantiated, keep_vars1) = update_keepvars keep_vars in
+    Terms.auto_cleanup ~id_thread (fun () ->
+      List.iter2 (Terms.unify ~id_thread) eq_left eq_right;
+      let (is_instantiated, keep_vars1) = update_keepvars ~id_thread keep_vars in
 
       (* Simplify the predicates is_not_nat. Moreover, we remove from keep_vars the
          variables that have been instantiated. *)
       let is_not_nat1 =
         if eq_left <> []
-        then List.map copy_term4 c.is_not_nat
+        then List.map copy_term4 ~id_thread c.is_not_nat
         else c.is_not_nat
       in
 
       let accu_keep_vars = ref keep_vars1 in
 
-      let is_not_nat2 = Terms.auto_cleanup (fun () -> simplify_is_not_nat accu_keep_vars !nat_vars is_not_nat1) in
+      let is_not_nat2 = Terms.auto_cleanup ~id_thread (fun () -> simplify_is_not_nat ~id_thread accu_keep_vars !nat_vars is_not_nat1) in
 
       (* At this point, [accu_keep_vars] contains the variables of [keep_vars] and the
          natural variables that still occur in is_not_nat2. *)
 
       let neq_conj1 =
         if eq_left <> []
-        then List.map (List.map (fun (t1,t2) -> copy_term4 t1, copy_term4 t2)) c.neq
+        then List.map (List.map (fun (t1,t2) -> copy_term4 ~id_thread t1, copy_term4 ~id_thread t2)) c.neq
         else c.neq
       in
 
-      let neq_conj2 = simplify_neq_conj accu_keep_vars !nat_vars neq_conj1 in
+      let neq_conj2 = simplify_neq_conj ~id_thread accu_keep_vars !nat_vars neq_conj1 in
 
       let geq2 = rearrange_inequalities distance assoc number_vertices !accu_keep_vars in
 
@@ -2749,7 +2749,7 @@ let get_vars_facts l =
   List.iter (Terms.get_vars_acc_fact vars) l;
   !vars
 
-let rec simplify_after_inst f_next f_next_inst added_nat keep_vars constra =
+let rec simplify_after_inst ?(id_thread=0) f_next f_next_inst added_nat keep_vars constra =
   try
     let nat_vars = ref added_nat in
     List.iter (check_is_nat nat_vars) constra.is_nat;
@@ -2757,9 +2757,9 @@ let rec simplify_after_inst f_next f_next_inst added_nat keep_vars constra =
 
     (* Change to have one function that does not gather keepvars *)
     let dummy_keep_vars = ref keep_vars in
-    let neq1 = simplify_neq_conj dummy_keep_vars !nat_vars constra.neq in
+    let neq1 = simplify_neq_conj ~id_thread dummy_keep_vars !nat_vars constra.neq in
 
-    remove_nat_diseq_neq_conj (fun neq2 ->
+    remove_nat_diseq_neq_conj ~id_thread (fun neq2 ->
       (* Case where nothing is changed *)
       try
 	(* A bit of work is repeated here (check_is_nat, simplify_geq)
@@ -2773,7 +2773,7 @@ let rec simplify_after_inst f_next f_next_inst added_nat keep_vars constra =
       (* Case where a substitution has been applied *)
       let constra1 = Terms.copy_constra4 { constra with geq = geq1 ; neq = neq2 } in
 
-      simplify_after_inst (if is_instantiated then f_next_inst else f_next)
+      simplify_after_inst ~id_thread (if is_instantiated then f_next_inst else f_next)
 	f_next_inst added_nat keep_vars1 constra1
     ) !nat_vars keep_vars neq1
   with FalseConstraint -> ()
@@ -3191,8 +3191,8 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
           let keep_vars = match get_vars_op with
             | Some f -> f ()
             | None ->
-                Terms.auto_cleanup (fun () ->
-                  Terms.get_vars_generic (fun f (c1,c2) -> 
+                Terms.auto_cleanup ~id_thread (fun () ->
+                  Terms.get_vars_generic ~id_thread (fun f (c1,c2) -> 
                     Terms.iter_constraints f c1; 
                     Terms.iter_constraints f c2
                   ) (constraints1,constraints2'') 
