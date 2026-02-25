@@ -1,0 +1,172 @@
+
+Database
+
+implies (1598, 1808)
+- FeatureTrie.exists_leq
+  - 
+- test_fun done
+  - implies_no_test_concurrent done
+    - implies_internal_concurrent done 
+      - Terms.auto_cleanup
+      - Terms.match_facts
+      - match_hyp_bound done
+        - fact_size done 
+          - term_list_size done
+          - term_size done
+            - Terms.get_link
+        - match_fact_bound_with_hyp done
+          - H.match_hyp??
+      - Terms.get_vars_generic
+      - mach_hyp_concurrent done
+      - TermsEq.implies_constraints3
+
+
+Terms
+
+auto_cleanup
+match_facts
+get_link
+get_vars_generic
+
+
+TermsEq
+
+implies_constraints3
+- implies_constraints_copy2
+  - implies_constraint POTENTIALLY CLEAR DOWN
+    - search_for_implied_constraint FINE
+      - implies_simple_constraint FINE
+        - implies_list_terms FINE
+          - Terms.equal_terms FINE
+  - Terms.equal_terms FINE
+  - is_true_constraints FINE
+  - algo_BellmanFord
+    - algo_BellmanFord_core FINE
+  - Terms.iter_constraints FINE
+  - simplify_after_inst
+    - check_is_nat FINE
+      - Terms.equal_types FINE
+      - Terms.succ_fun FINE
+      - Terms.zero_cst FINE
+    - simplify_geq
+      - check_and_decompose
+        - Terms.equal_types ABOVE
+    - simplify_neq_conj NEED
+      - Terms.auto_cleanup NEED
+      - unify_disequation DONE
+        - Gets current_bound_vars, needs ID_THREAD
+        - get_vars_acc NO NEED
+        - replace_f_var NO NEED
+        - close_disequation_eq DONE
+          - unify_modulo DONE
+            - unify_modulo_save DONE
+              - unify_modulo_list_save DONE
+                - unify_modulo_list_tail
+                  - NEED NEED WORK, BUT BELOW
+            - Terms.auto_cleanup NEED
+        - make_disequation_from_unify DONE
+          - Terms.get_link NEED
+          - rev_assoc2
+            - Terms.new_get_var NO NEED
+        - Terms.cleanup NEED
+      - elim_universal_variable DONE
+        - replace_name NO NEED
+      - feed_new_constra NEED
+        - has_gen_var NO NEED
+        - elim_var_notelsewhere NEED DONE
+          - elim_var_if_possible
+            - hasEquations NO NEED
+            - Terms.get_link NEED
+          - check_vars_occurs NEED
+            - elim_var_if_possible NEED 
+        - copy_neq_list3 DONE
+          - Terms.copy_term3 DONE
+            - Terms.get_link NEED
+        - Terms.cleanup NEED
+        - implies_constraint CLEAR
+          - search_for_implied_constraint_in CLEAR
+            - implies_simple_constraint CLEAR
+              - implies_list_terms CLEAR
+                - equal_terms NO NEED
+    - remove_nat_diseq_neq_conj DONE
+      - Terms.auto_cleanup NEED
+      - get_term_status DONE
+        - equal_types FINE
+        - can_never_be_natural_number_diseq 
+          - close_term_eq_synt DONE
+            - close_term_eq_synt_tail DONE
+              - Terms.get_link NEED
+              - auto_cleanup_eq_tail DONE
+                - CURRENT_BOUND_VARS NEED
+                - Terms.link_unsafe NEED
+              - put_syntactic DONE
+                - get_syntactic FINE
+                - Terms.get_link NEED
+                - Terms.copy_var FINE
+                - Terms.link NEED
+              - Terms.auto_cleanup NEED
+              - unify_modulo_list_tail BELOW
+            - Terms.auto_cleanup NEED
+          - can_be_natural_number DONE
+            - Terms.get_link NEED
+            - Terms.equal_types FINE
+            - non_syntactic FINE
+          - Terms.replace_f_var FINE
+      - Terms.generate_nat FINE
+      - Terms.link NEED
+      - update_keepvars DONE
+        - Terms.get_link NEED
+        - Terms.get_vars UNSURE WORK LATER
+      - Terms.new_var_def FINE
+      - Terms.sum_nat_term FINE
+    - simplify_constraints_keepvars
+      - check_is_nat FINE
+      - simplify_geq FINE
+      - get_equalities FINE
+        - algo_BellmanFord FINE
+        - Terms.sum_nat_term FINE
+      - Terms.auto_cleanup NEED
+      - Terms.unify DONE
+        - occur_check DONE
+          - Terms.get_link NEED
+      - update_keepvars NEED
+      - Terms.copy_term4 NEED
+      - simplify_is_not_nat DONE
+        - normal_form DONE
+          - Terms.equal_types FINE
+          - Terms.get_term_type FINE
+          - Terms.match_terms NEED
+          - Terms.copy_term3 NEED
+          - Terms.cleanup NEED
+        - elim_var_in_is_not_nat DONE
+          - Terms.get_link NEED
+          - Terms.new_id FINE
+          - Terms.link NEED
+        - Terms.cleanup NEED
+        - close_term_eq_synt NEED
+        - get_status_natural_number DONE
+          - Terms.get_link NEED
+          - Terms.equal_types FINE
+          - non_syntactic FINE
+        - Terms.get_link NEED
+      - simplify_neq_conj NEED
+      - rearrange_inequalities
+        - Terms.equal_terms FINE
+        - compare_sons START HERE NEXT TIME LINE IS LONG SO THAT IT POPS OUT OF EVERYTHING
+        - get_sons
+        - update_hist_and_remove_edge
+      - get_vars_acc FINE
+    - simplify_after_geq
+    - Terms.copy_constra4 DONE
+      - Terms.map_constraints FINE
+        - mapq_neq FINE
+        - mapq_geq FINE
+      - Terms.copy_term4 NEED
+        - get_link NEED
+
+   unify_modulo_list_save ->
+   close_term_eq_synt_tail ->
+unify_modulo_list_tail
+
+
+Terms.get_vars
