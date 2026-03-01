@@ -1679,52 +1679,52 @@ let rec get_list l1 l2 =
 (* Implication between constraints. Use this after simplification
    to get the best possible precision. *)
 
-let assoc_gen_with_term = ref []
+let assoc_gen_with_term = ref (Array.make !Param.num_cores [])
 
-let rec implies_list_terms nextf l_t1 l_t2 = match (l_t1,l_t2) with
+let rec implies_list_terms ?(id_thread=0) nextf l_t1 l_t2 = match (l_t1,l_t2) with
   | [], [] -> nextf ()
   | ((FunApp(f1,[]))::l1, t2::l2) when f1.f_cat = General_var ->
     begin
       try
-        let t = List.assq f1 (!assoc_gen_with_term) in
+        let t = List.assq f1 (!assoc_gen_with_term.(id_thread)) in
         if not (equal_terms t t2) then raise NoMatch;
 
-        implies_list_terms nextf l1 l2
+        implies_list_terms ~id_thread nextf l1 l2
 
       with Not_found ->
-        assoc_gen_with_term := (f1, t2) :: (!assoc_gen_with_term);
+        !assoc_gen_with_term.(id_thread) <- (f1, t2) :: (!assoc_gen_with_term.(id_thread));
         try
-          let r = implies_list_terms nextf l1 l2 in
-          assoc_gen_with_term := List.tl (!assoc_gen_with_term);
+          let r = implies_list_terms ~id_thread nextf l1 l2 in
+          !assoc_gen_with_term.(id_thread) <- List.tl (!assoc_gen_with_term.(id_thread));
           r
         with NoMatch ->
-          assoc_gen_with_term := List.tl (!assoc_gen_with_term);
+          !assoc_gen_with_term.(id_thread) <- List.tl (!assoc_gen_with_term.(id_thread));
           raise NoMatch
     end
 
   | ((Var v1)::l1), ((Var v2)::l2) when v1 == v2 ->
-      implies_list_terms nextf l1 l2
+      implies_list_terms ~id_thread nextf l1 l2
   | ((FunApp (f1,l1'))::l1, (FunApp (f2,l2'))::l2) ->
       if f1 != f2 then raise NoMatch;
-      implies_list_terms nextf (l1' @ l1) (l2' @ l2)
+      implies_list_terms ~id_thread nextf (l1' @ l1) (l2' @ l2)
   | _,_ -> raise NoMatch
 
-let implies_simple_constraint nextf (t1,t1') (t2, t2') =
-  implies_list_terms nextf [t1;t1'] [t2;t2']
+let implies_simple_constraint ?(id_thread=0) nextf (t1,t1') (t2, t2') =
+  implies_list_terms ~id_thread nextf [t1;t1'] [t2;t2']
 
-let rec search_for_implied_constraint_in nextf sc1 = function
+let rec search_for_implied_constraint_in ?(id_thread=0) nextf sc1 = function
     [] -> raise NoMatch
   | (sc2::sc_l2) ->
         try
-          implies_simple_constraint nextf sc1 sc2
+          implies_simple_constraint ~id_thread nextf sc1 sc2
         with NoMatch ->
-          search_for_implied_constraint_in nextf sc1 sc_l2
+          search_for_implied_constraint_in ~id_thread nextf sc1 sc_l2
 
-let implies_constraint sc_list1 sc_list2 =
+let implies_constraint ?(id_thread=0) sc_list1 sc_list2 =
   let rec sub_implies_constraint sc_list1 sc_list2 () =
     match sc_list1 with
     | [] -> ()
-    | sc1::sc_l1 -> search_for_implied_constraint_in (sub_implies_constraint sc_l1 sc_list2) sc1 sc_list2
+    | sc1::sc_l1 -> search_for_implied_constraint_in ~id_thread (sub_implies_constraint sc_l1 sc_list2) sc1 sc_list2
   in
   try
     sub_implies_constraint sc_list1 sc_list2 ();
@@ -2602,18 +2602,18 @@ let feed_new_constra ?(id_thread=0) accu_keep_vars nat_vars accu constra =
   try
     let constra_has_gen_var = List.exists (fun (_,t) -> has_gen_var t) constra in
     let accu_nat_vars = ref [] in
-    List.iter (elim_var_notelsewhere constra_has_gen_var !accu_keep_vars accu_nat_vars nat_vars) constra;
+    List.iter (elim_var_notelsewhere ~id_thread constra_has_gen_var !accu_keep_vars accu_nat_vars nat_vars) constra;
 
     let constrasimp = copy_neq_list3 ~id_thread constra in
     Terms.cleanup ~id_thread ();
     if constrasimp = [] then
       raise FalseConstraint
-    else if List.exists (fun a'' -> implies_constraint a'' constrasimp) (!accu) then
+    else if List.exists (fun a'' -> implies_constraint ~id_thread a'' constrasimp) (!accu) then
       ()
     else
       begin
         accu_keep_vars := !accu_nat_vars @ !accu_keep_vars;
-        accu := constrasimp :: (List.filter (fun a'' -> not (implies_constraint constrasimp a'')) (!accu))
+        accu := constrasimp :: (List.filter (fun a'' -> not (implies_constraint ~id_thread constrasimp a'')) (!accu))
       end
   with TrueConstraint ->
     Terms.cleanup ~id_thread ()
@@ -3064,7 +3064,7 @@ let index_of_term assoc t =
 
     [geq1_data] and [edges] are functions that ensure that we only compute once
     the matrix [distance] and the edges of [distance]. *)
-let implies_constraints nat_vars1 geq1_data constraints1 constraints2 =
+let implies_constraints ?(id_thread=0) nat_vars1 geq1_data constraints1 constraints2 =
   (* Retrieve nat variables and check implication of natural variables  *)
   let nat_vars2 = ref [] in
   List.iter (get_vars_acc nat_vars2) constraints2.is_nat;
@@ -3079,7 +3079,7 @@ let implies_constraints nat_vars1 geq1_data constraints1 constraints2 =
   (* We check the implication of disequalities *)
   if not
       (List.for_all (fun neq_disj2 ->
-        List.exists (fun neq_disj1 -> implies_constraint neq_disj1 neq_disj2) constraints1.neq
+        List.exists (fun neq_disj1 -> implies_constraint ~id_thread neq_disj1 neq_disj2) constraints1.neq
           ) constraints2.neq) then raise NoMatch;
 
   (* We check the implication of inequalities *)
@@ -3140,7 +3140,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
         let neq2 = simplify_neq_conj2 constraints2'.neq in
         let neq2' =
           List.filter (fun neq_disj2 ->
-            not (List.exists (fun neq_disj1 -> implies_constraint neq_disj1 neq_disj2) constraints1.neq)
+            not (List.exists (fun neq_disj1 -> implies_constraint ~id_thread neq_disj1 neq_disj2) constraints1.neq)
           ) neq2
         in
 
@@ -3201,7 +3201,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
           try
             simplify_after_inst ~id_thread (fun constraints2''' ->
               try
-                implies_constraints nat_vars1 geq1_data constraints1 constraints2''';
+                implies_constraints ~id_thread nat_vars1 geq1_data constraints1 constraints2''';
                 raise Implied
               with NoMatch -> ()
             ) (fun _ ->
@@ -3219,7 +3219,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
     else true
   with NoMatch -> false 
 
-let implies_constraints = implies_constraints_copy2 (fun c -> c)
+let implies_constraints ?(id_thread=0) = implies_constraints_copy2 ~id_thread (fun c -> c)
 let implies_constraints3 ?(id_thread=0) = implies_constraints_copy2 ~id_thread Terms.copy_constra3
 let implies_constraints4 = implies_constraints_copy2 Terms.copy_constra4
 

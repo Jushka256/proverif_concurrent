@@ -135,7 +135,7 @@ val simplify_constraints_optimal : (unit -> binder list) option -> (constraints 
   - [implies_constraints4] uses [Terms.copy_constra4], so it copies
     links recursively. *)
 
-val implies_constraints : (unit -> binder list) option -> constraints -> constraints -> bool
+val implies_constraints : ?id_thread:int -> (unit -> binder list) option -> constraints -> constraints -> bool
 val implies_constraints3 : ?id_thread:int -> (unit -> binder list) option -> constraints -> constraints -> bool
 val implies_constraints4 : (unit -> binder list) option -> constraints -> constraints -> bool
 
