@@ -1015,16 +1015,16 @@ let transl_premise_event next_f pi_state = function
             | None -> Var(Terms.new_var ~orig:false "o" Param.occurrence_type)
             | Some occ -> occ (* It should also be a variable *)
         in
-        TermsEq.close_term_eq (fun t1 -> 
+        TermsEq.close_term_eq Terms.default_thread_id (fun t1 -> 
           next_f (Pred(Param.inj_event_pred,[t1;occ]))
         ) t
       else
-        TermsEq.close_term_eq (fun t1 ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t1 ->
           next_f (Pred(Param.event_pred,[t1]))
         ) t
   | QSEvent2(_,t1,t2) ->
-      TermsEq.close_term_eq (fun t1' ->
-        TermsEq.close_term_eq (fun t2' ->
+      TermsEq.close_term_eq Terms.default_thread_id (fun t1' ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t2' ->
           next_f (Pred(Param.event2_pred,[t1';t2']))
         ) t2
       ) t1
@@ -1073,17 +1073,17 @@ let rec transl_conclusion_query next_f pi_state cur_state = function
           | None -> Var(Terms.new_var ~orig:false "o" Param.occurrence_type)
           | Some occ -> occ
         in
-        TermsEq.close_term_eq (fun t1 ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t1 ->
           next_f { cur_state with l_facts = (Pred(Param.inj_event_pred_block,[t1;occ]),eord_fun) :: cur_state.l_facts }
         ) t
       else
-        TermsEq.close_term_eq (fun t1 ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t1 ->
           next_f { cur_state with l_facts = (Pred(Param.event_pred_block,[t1]),eord_fun) :: cur_state.l_facts }
         ) t
   | QEvent(QSEvent _) -> Parsing_helper.internal_error __POS__ "[transl_conclusion] Unexpected event"
   | QEvent(QSEvent2(ord_data,t1,t2)) ->
-      TermsEq.close_term_eq (fun t1' ->
-        TermsEq.close_term_eq (fun t2' ->
+      TermsEq.close_term_eq Terms.default_thread_id (fun t1' ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t2' ->
           next_f { cur_state with l_facts = (Pred(Param.event2_pred_block,[t1';t2']),ord_data.ord_target) :: cur_state.l_facts }
         ) t2
       ) t1
@@ -1096,20 +1096,20 @@ let rec transl_conclusion_query next_f pi_state cur_state = function
   | QEvent(QNeq((t1,_),(t2,_))) -> next_f { cur_state with l_constra = { cur_state.l_constra with neq = [t1,t2] :: cur_state.l_constra.neq } }
   | QEvent(QGeq((t1,_),(t2,_))) ->
       assert(Terms.get_term_type t1 == Param.nat_type);
-      TermsEq.close_term_eq (fun t1' ->
-        TermsEq.close_term_eq (fun t2' ->
+      TermsEq.close_term_eq Terms.default_thread_id (fun t1' ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t2' ->
           next_f { cur_state with l_constra = { cur_state.l_constra with geq = (t1',0,t2') :: cur_state.l_constra.geq } }
         ) t2
       ) t1
   | QEvent(QGr _) -> Parsing_helper.internal_error __POS__ "[transl_conclusion] Lemma should not contain strict inequalities."
   | QEvent(QIsNat t) ->
       assert(Terms.get_term_type t == Param.nat_type);
-      TermsEq.close_term_eq (fun t' ->
+      TermsEq.close_term_eq Terms.default_thread_id (fun t' ->
         next_f { cur_state with l_constra = { cur_state.l_constra with is_nat = t' :: cur_state.l_constra.is_nat } }
       ) t
   | QEvent(QEq((t1,_),(t2,_))) ->
-      TermsEq.close_term_eq (fun t1' ->
-        TermsEq.close_term_eq (fun t2' ->
+      TermsEq.close_term_eq Terms.default_thread_id (fun t1' ->
+        TermsEq.close_term_eq Terms.default_thread_id (fun t2' ->
           try
             Terms.auto_cleanup (fun () ->
               Terms.unify t1' t2';
@@ -1451,13 +1451,13 @@ let rec match_conclusion_query restwork state constra = function
   | QEvent (QNeq((t1,_),(t2,_))) ->
       restwork { constra with neq = [t1,t2]::constra.neq }
   | QEvent (QGeq((t1,_),(t2,_))) ->
-      TermsEq.close_term_eq_synt (fun t1' ->
-        TermsEq.close_term_eq_synt (fun t2' ->
+      TermsEq.close_term_eq_synt Terms.default_thread_id (fun t1' ->
+        TermsEq.close_term_eq_synt Terms.default_thread_id (fun t2' ->
           restwork { constra with geq = (t1',0,t2)::constra.geq }
         ) t2
       ) t1
   | QEvent (QIsNat t) ->
-      TermsEq.close_term_eq_synt (fun t' ->
+      TermsEq.close_term_eq_synt Terms.default_thread_id (fun t' ->
         restwork { constra with is_nat = t'::constra.is_nat }
       ) t
   | QEvent ev ->

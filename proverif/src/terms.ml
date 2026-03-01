@@ -417,16 +417,16 @@ let get_link ?(id_thread=0) v = v.link.(id_thread) [@@inline]
 
 let link_unsafe ?(id_thread=0) v l = v.link.(id_thread) <- l [@@inline]
 
-let rec occurs_vars_follows v = function
+let rec occurs_vars_follows ?(id_thread=0) v = function
   | Var v' -> 
       if v' == v 
       then true
       else 
-        begin match get_link v' with 
-        | TLink t -> occurs_vars_follows v t
+        begin match get_link ~id_thread v' with 
+        | TLink t -> occurs_vars_follows ~id_thread v t
         | _ -> false
         end
-  | FunApp(_,l) -> List.exists (occurs_vars_follows v) l
+  | FunApp(_,l) -> List.exists (occurs_vars_follows ~id_thread v) l
 
 
 (* [occurs_f f t] determines whether the function symbol [f] occurs in the term [t] *)
@@ -455,10 +455,10 @@ let rec is_ground_public = function
   | FunApp({ f_private = false; f_cat = (Eq _ | Tuple | Name _); _},args) -> List.for_all is_ground_public args
   | _ -> false
 
-let rec is_public = function
+let rec is_public ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link v with 
+        match get_link ~id_thread v with 
           | TLink t -> is_public t
           | _ -> true
       end
@@ -545,8 +545,8 @@ let link ?(id_thread=0) v l =
   !current_bound_vars.(id_thread) <- v :: !current_bound_vars.(id_thread);
   link_unsafe ~id_thread v l
 
-let link_var t l = match t with
-  | Var(v) -> link v l
+let link_var ?(id_thread=0) t l = match t with
+  | Var(v) -> link ~id_thread v l
   |_ -> internal_error __POS__ "[link_var] The term must be a variable"
 
 let cleanup ?(id_thread=0) () =
@@ -566,80 +566,80 @@ let auto_cleanup ?(id_thread=0) f =
     !current_bound_vars.(id_thread) <- tmp_bound_vars;
     raise x
 
-let auto_cleanup_noexception f =
-  let tmp_bound_vars = !current_bound_vars.(default_thread_id) in
-  !current_bound_vars.(default_thread_id) <- [];
+let auto_cleanup_noexception ?(id_thread=0) f =
+  let tmp_bound_vars = !current_bound_vars.(id_thread) in
+  !current_bound_vars.(id_thread) <- [];
   let r = f () in
-  List.iter (fun v -> link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
-  !current_bound_vars.(default_thread_id) <- tmp_bound_vars;
+  List.iter (fun v -> link_unsafe ~id_thread v NoLink) !current_bound_vars.(id_thread);
+  !current_bound_vars.(id_thread) <- tmp_bound_vars;
   r
 
-let auto_cleanup_failure f =
-  let tmp_bound_vars = !current_bound_vars.(default_thread_id) in
-  !current_bound_vars.(default_thread_id) <- [];
+let auto_cleanup_failure ?(id_thread=0) f =
+  let tmp_bound_vars = !current_bound_vars.(id_thread) in
+  !current_bound_vars.(id_thread) <- [];
   try
     let r = f () in
-    !current_bound_vars.(default_thread_id) <- List.rev_append (!current_bound_vars.(default_thread_id)) tmp_bound_vars;
+    !current_bound_vars.(id_thread) <- List.rev_append (!current_bound_vars.(id_thread)) tmp_bound_vars;
     r
   with x ->
-    List.iter (fun v -> link_unsafe v NoLink) !current_bound_vars.(default_thread_id);
-    !current_bound_vars.(default_thread_id) <- tmp_bound_vars;
+    List.iter (fun v -> link_unsafe ~id_thread v NoLink) !current_bound_vars.(id_thread);
+    !current_bound_vars.(id_thread) <- tmp_bound_vars;
     raise x
 
-let auto_cleanup_save f =
-  let tmp_bound_vars = !current_bound_vars.(default_thread_id) in
+let auto_cleanup_save ?(id_thread=0) f =
+  let tmp_bound_vars = !current_bound_vars.(id_thread) in
 
   let rec reset l =
     if l == tmp_bound_vars
-    then !current_bound_vars.(default_thread_id) <- l
+    then !current_bound_vars.(id_thread) <- l
     else
       match l with
       | a::r -> 
-          link_unsafe a NoLink;
+          link_unsafe ~id_thread a NoLink;
           reset r
       | [] -> assert false  
   in
 
   try
     let r = f () in
-    reset !current_bound_vars.(default_thread_id);
+    reset !current_bound_vars.(id_thread);
     r
   with x ->
-    reset !current_bound_vars.(default_thread_id);
+    reset !current_bound_vars.(id_thread);
     raise x
 
 (** A local cleanup that is able to "save" the current value of the link 
     and allow it to be modified *)
 
-let local_current_bound_vars = ref []
+let local_current_bound_vars = ref (Array.make !Param.num_cores [])
 
-let link_local v l = 
-  local_current_bound_vars := (v,get_link v) :: !local_current_bound_vars;
-  link_unsafe v l
+let link_local ?(id_thread=0) v l = 
+  !local_current_bound_vars.(id_thread) <- (v,get_link ~id_thread v) :: !local_current_bound_vars.(id_thread);
+  link_unsafe ~id_thread v l
 
-let rec cleanup_local = function
+let rec cleanup_local ?(id_thread=0) = function
   | [] -> ()
-  | (v,l)::q_v -> link_unsafe v l; cleanup_local q_v
+  | (v,l)::q_v -> link_unsafe ~id_thread v l; cleanup_local ~id_thread q_v
 
-let auto_cleanup_local_noexception f =
-  let tmp_bound_vars = !local_current_bound_vars in
-  local_current_bound_vars := [];
+let auto_cleanup_local_noexception ~id_thread f =
+  let tmp_bound_vars = !local_current_bound_vars.(id_thread) in
+  !local_current_bound_vars.(id_thread) <- [];
   let r = f () in
-  cleanup_local !local_current_bound_vars;
-  local_current_bound_vars := tmp_bound_vars;
+  cleanup_local ~id_thread !local_current_bound_vars.(id_thread);
+  !local_current_bound_vars.(id_thread) <- tmp_bound_vars;
   r
 
-let auto_cleanup_local f =
-  let tmp_bound_vars = !local_current_bound_vars in
-  local_current_bound_vars := [];
+let auto_cleanup_local ?(id_thread=0) f =
+  let tmp_bound_vars = !local_current_bound_vars.(id_thread) in
+  !local_current_bound_vars.(id_thread) <- [];
   try
     let r = f () in
-    cleanup_local !local_current_bound_vars;
-    local_current_bound_vars := tmp_bound_vars;
+    cleanup_local ~id_thread !local_current_bound_vars.(id_thread);
+    !local_current_bound_vars.(id_thread) <- tmp_bound_vars;
     r
   with x ->
-    cleanup_local !local_current_bound_vars;
-    local_current_bound_vars := tmp_bound_vars;
+    cleanup_local ~id_thread !local_current_bound_vars.(id_thread);
+    !local_current_bound_vars.(id_thread) <- tmp_bound_vars;
     raise x
 
 (* We could also define the following functions instead of cleanup:
@@ -705,35 +705,35 @@ let new_gen_var t may_fail =
     f_options = 0;
     f_record = Param.fresh_record () }
 
-let rec generalize_vars_not_in vlist = function
+let rec generalize_vars_not_in ?(id_thread=0) vlist = function
     Var v ->
       begin
         if List.memq v vlist then Var v else
-        match get_link v with
+        match get_link ~id_thread v with
         | NoLink ->
             let v' = FunApp(new_gen_var v.btype v.unfailing, []) in
-            link v (TLink v');
+            link ~id_thread v (TLink v');
             v'
         | TLink l -> l
         | _ -> internal_error __POS__ "Unexpected link in generalize_vars"
       end
   | FunApp(f, l) ->
-      FunApp(f, List.map (generalize_vars_not_in vlist) l)
+      FunApp(f, List.map (generalize_vars_not_in ~id_thread vlist) l)
 
-let rec generalize_vars_in vlist = function
+let rec generalize_vars_in ?(id_thread=0) vlist = function
     Var v ->
       begin
         if not (List.memq v vlist) then Var v else
-        match get_link v with
+        match get_link ~id_thread v with
           NoLink ->
             let v' = FunApp(new_gen_var v.btype v.unfailing, []) in
-            link v (TLink v');
+            link ~id_thread v (TLink v');
             v'
         | TLink l -> l
         | _ -> internal_error __POS__ "Unexpected link in generalize_vars"
       end
   | FunApp(f, l) ->
-      FunApp(f, List.map (generalize_vars_in vlist) l)
+      FunApp(f, List.map (generalize_vars_in ~id_thread vlist) l)
 
 
 (***************************************************
@@ -755,69 +755,69 @@ let rec copy_term ?(id_thread=0) term = match term with
       | VLink l -> Var l
       | _ -> internal_error __POS__ "Unexpected link in copy_term"
 
-let copy_term_e (t,ext) = (copy_term t, ext)
+let copy_term_e ?(id_thread=0) (t,ext) = (copy_term ~id_thread t, ext)
 
-let copy_term_option = function
+let copy_term_option ?(id_thread=0) = function
   | None -> None
   | (Some t) as t_opt ->
-      let t' = copy_term t in
+      let t' = copy_term ~id_thread t in
       if t == t' then t_opt else Some t'
 
-let copy_term_e_option = function
+let copy_term_e_option ?(id_thread=0)= function
   | None -> None
-  | Some t -> Some (copy_term_e t)
+  | Some t -> Some (copy_term_e ~id_thread t)
 
-let copy_fact = function
+let copy_fact ?(id_thread=0) = function
     Pred(chann, args) as fact ->
-      let args' = List.mapq copy_term args in
+      let args' = List.mapq (copy_term ~id_thread) args in
       if args == args' then fact else Pred(chann, args')
 
-let copy_constra c = map_constraints copy_term c
+let copy_constra ?(id_thread=0) c = map_constraints (copy_term ~id_thread) c
 
-let copy_rule (hyp,concl,hist,constra) =
-  let tmp_bound = !current_bound_vars.(default_thread_id) in
-  !current_bound_vars.(default_thread_id) <- [];
-  let r = (List.mapq copy_fact hyp, copy_fact concl, hist, copy_constra constra) in
-  cleanup();
-  !current_bound_vars.(default_thread_id) <- tmp_bound;
+let copy_rule ?(id_thread=0) (hyp,concl,hist,constra) =
+  let tmp_bound = !current_bound_vars.(id_thread) in
+  !current_bound_vars.(id_thread) <- [];
+  let r = (List.mapq (copy_fact ~id_thread) hyp, copy_fact ~id_thread concl, hist, copy_constra ~id_thread constra) in
+  cleanup ~id_thread ();
+  !current_bound_vars.(id_thread) <- tmp_bound;
   r
 
-let copy_red (left_list, right, side_c) =
-  assert (!current_bound_vars.(default_thread_id) == []);
-  let left_list' = List.mapq copy_term left_list in
-  let right' = copy_term right in
-  let side_c' = copy_constra side_c in
-  cleanup();
+let copy_red ?(id_thread=0) (left_list, right, side_c) =
+  assert (!current_bound_vars.(id_thread) == []);
+  let left_list' = List.mapq (copy_term ~id_thread) left_list in
+  let right' = copy_term ~id_thread right in
+  let side_c' = copy_constra ~id_thread side_c in
+  cleanup ~id_thread ();
   (left_list', right', side_c')
 
-let copy_ordering_data ord_data = 
+let copy_ordering_data ?(id_thread=0) ord_data = 
   { ord_data with 
-    Pitypes.temp_var = copy_term_e_option ord_data.Pitypes.temp_var
+    Pitypes.temp_var = copy_term_e_option ~id_thread ord_data.Pitypes.temp_var
   }
 
-let copy_event = function
-    Pitypes.QSEvent(b,ord,occ,t) -> Pitypes.QSEvent(b, copy_ordering_data ord,copy_term_option occ, copy_term t)
-  | Pitypes.QSEvent2(ord,t1,t2) -> Pitypes.QSEvent2(copy_ordering_data ord,copy_term t1, copy_term t2)
-  | Pitypes.QFact(p,ord,tl) -> Pitypes.QFact(p,copy_ordering_data ord,List.map copy_term tl)
-  | Pitypes.QNeq(t1,t2) -> Pitypes.QNeq(copy_term_e t1, copy_term_e t2)
-  | Pitypes.QEq(t1,t2) -> Pitypes.QEq(copy_term_e t1, copy_term_e t2)
-  | Pitypes.QGeq(t1,t2) -> Pitypes.QGeq(copy_term_e t1, copy_term_e t2)
-  | Pitypes.QGr(t1,t2) -> Pitypes.QGr(copy_term_e t1, copy_term_e t2)
-  | Pitypes.QIsNat(t) -> Pitypes.QIsNat(copy_term t)
-  | Pitypes.QMax(t,args) -> Pitypes.QMax(copy_term t, List.map copy_term args)
-  | Pitypes.QMaxq(t,args) -> Pitypes.QMaxq(copy_term t, List.map copy_term args)
+let copy_event ?(id_thread=0) = function
+    Pitypes.QSEvent(b,ord,occ,t) -> Pitypes.QSEvent(b, copy_ordering_data ~id_thread ord,copy_term_option ~id_thread occ, copy_term ~id_thread t)
+  | Pitypes.QSEvent2(ord,t1,t2) -> Pitypes.QSEvent2(copy_ordering_data ~id_thread ord,copy_term ~id_thread t1, copy_term ~id_thread t2)
+  | Pitypes.QFact(p,ord,tl) -> Pitypes.QFact(p,copy_ordering_data ~id_thread ord,List.map (copy_term ~id_thread) tl)
+  | Pitypes.QNeq(t1,t2) -> Pitypes.QNeq(copy_term_e ~id_thread t1, copy_term_e ~id_thread t2)
+  | Pitypes.QEq(t1,t2) -> Pitypes.QEq(copy_term_e ~id_thread t1, copy_term_e ~id_thread t2)
+  | Pitypes.QGeq(t1,t2) -> Pitypes.QGeq(copy_term_e ~id_thread t1, copy_term_e ~id_thread t2)
+  | Pitypes.QGr(t1,t2) -> Pitypes.QGr(copy_term_e ~id_thread t1, copy_term_e ~id_thread t2)
+  | Pitypes.QIsNat(t) -> Pitypes.QIsNat(copy_term ~id_thread t)
+  | Pitypes.QMax(t,args) -> Pitypes.QMax(copy_term ~id_thread t, List.map (copy_term ~id_thread) args)
+  | Pitypes.QMaxq(t,args) -> Pitypes.QMaxq(copy_term ~id_thread t, List.map (copy_term ~id_thread) args)
 
-let rec copy_realquery = function
-    Pitypes.Before(el, concl_q) -> Pitypes.Before(List.map copy_event el, copy_conclusion_query concl_q)
+let rec copy_realquery ?(id_thread=0) = function
+    Pitypes.Before(el, concl_q) -> Pitypes.Before(List.map (copy_event ~id_thread) el, copy_conclusion_query ~id_thread concl_q)
 
-and copy_conclusion_query = function
+and copy_conclusion_query ?(id_thread=0) = function
   | Pitypes.QTrue -> Pitypes.QTrue
   | Pitypes.QFalse -> Pitypes.QFalse
-  | Pitypes.QConstraints c -> Pitypes.QConstraints(copy_constra c)
-  | Pitypes.QEvent e -> Pitypes.QEvent(copy_event e)
-  | Pitypes.NestedQuery q -> Pitypes.NestedQuery (copy_realquery q)
-  | Pitypes.QAnd(concl1,concl2) -> Pitypes.QAnd(copy_conclusion_query concl1,copy_conclusion_query concl2)
-  | Pitypes.QOr(concl1,concl2) -> Pitypes.QOr(copy_conclusion_query concl1,copy_conclusion_query concl2)
+  | Pitypes.QConstraints c -> Pitypes.QConstraints(copy_constra ~id_thread c)
+  | Pitypes.QEvent e -> Pitypes.QEvent(copy_event ~id_thread e)
+  | Pitypes.NestedQuery q -> Pitypes.NestedQuery (copy_realquery ~id_thread q)
+  | Pitypes.QAnd(concl1,concl2) -> Pitypes.QAnd(copy_conclusion_query ~id_thread concl1,copy_conclusion_query ~id_thread concl2)
+  | Pitypes.QOr(concl1,concl2) -> Pitypes.QOr(copy_conclusion_query ~id_thread concl1,copy_conclusion_query ~id_thread concl2)
 
 (* Unification *)
 
@@ -899,22 +899,22 @@ let rec unify ?(id_thread=0) t1 t2 =
       if f1 != f2 then raise Unify;
       List.iter2 (unify ~id_thread) l1 l2
 
-let unify_facts f1 f2 =
+let unify_facts ?(id_thread=0) f1 f2 =
   match (f1,f2) with
     Pred(chann1, t1),Pred(chann2,t2) ->
       if chann1 != chann2 then raise Unify;
-      List.iter2 unify t1 t2
+      List.iter2 (unify ~id_thread) t1 t2
 
-let unify_facts_phase f1 f2 =
+let unify_facts_phase ?(id_thread=0) f1 f2 =
   match (f1,f2) with
     Pred(chann1, t1),Pred(chann2,t2) ->
       if not (is_sub_predicate chann1 chann2) then raise Unify;
-      List.iter2 unify t1 t2
+      List.iter2 (unify ~id_thread) t1 t2
 
-let are_unifiable_facts f1 f2 =
+let are_unifiable_facts ?(id_thread=0) f1 f2 =
   try
-    auto_cleanup (fun () ->
-      unify_facts f1 f2;
+    auto_cleanup ~id_thread (fun () ->
+      unify_facts ~id_thread f1 f2;
       true
     )
   with Unify -> false
@@ -925,82 +925,82 @@ let are_unifiable_facts f1 f2 =
       if not (is_sub_predicate chann2 chann1) then raise Unify;
       List.iter2 unify t1 t2*)
 
-let rec copy_term2 = function
+let rec copy_term2 ?(id_thread=0) = function
   | FunApp(f,l) as t ->
-      let l' = List.mapq copy_term2 l in
+      let l' = List.mapq (copy_term2 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
   | Var v ->
-      match get_link v with
+      match get_link ~id_thread v with
         | NoLink ->
             let r = copy_var v in
-            link v (VLink r);
+            link ~id_thread v (VLink r);
             Var r
-        | TLink l -> copy_term2 l
+        | TLink l -> copy_term2 ~id_thread l
         | VLink r -> Var r
   | _ -> internal_error __POS__ "unexpected link in copy_term2"
 
-let copy_fact2 = function
+let copy_fact2 ?(id_thread=0) = function
     Pred(chann, t) as fact ->
-      let t' = List.mapq copy_term2 t in
+      let t' = List.mapq (copy_term2 ~id_thread) t in
       if t == t' then fact else Pred(chann, t')
 
-let rec copy_constra2 c = map_constraints copy_term2 c
+let rec copy_constra2 ?(id_thread=0) c = map_constraints (copy_term2 ~id_thread) c
 
-let copy_rule2 (hyp, concl, hist, constra) =
-  let tmp_bound = !current_bound_vars.(default_thread_id) in
-  !current_bound_vars.(default_thread_id) <- [];
-  let r = (List.mapq copy_fact2 hyp, copy_fact2 concl, hist, copy_constra2 constra) in
-  cleanup();
-  !current_bound_vars.(default_thread_id) <- tmp_bound;
+let copy_rule2 ?(id_thread=0) (hyp, concl, hist, constra) =
+  let tmp_bound = !current_bound_vars.(id_thread) in
+  !current_bound_vars.(id_thread) <- [];
+  let r = (List.mapq (copy_fact2 ~id_thread) hyp, copy_fact2 ~id_thread concl, hist, copy_constra2 ~id_thread constra) in
+  cleanup ~id_thread ();
+  !current_bound_vars.(id_thread) <- tmp_bound;
   r
 
-let copy_rule2_no_cleanup (hyp, concl, hist, constra) =
-  (List.map copy_fact2 hyp, copy_fact2 concl, hist, copy_constra2 constra)
+let copy_rule2_no_cleanup ?(id_thread=0) (hyp, concl, hist, constra) =
+  (List.map (copy_fact2 ~id_thread) hyp, (copy_fact2 ~id_thread) concl, hist, (copy_constra2 ~id_thread) constra)
 
-let copy_ordered_rule2 ord_rule =
-  let rule = copy_rule2 ord_rule.rule in
+let copy_ordered_rule2 ?(id_thread=0) ord_rule =
+  let rule = copy_rule2 ~id_thread ord_rule.rule in
   { ord_rule with rule = rule }
 
-let copy_term_e2 (t,ext) = (copy_term2 t, ext)
+let copy_term_e2 ?(id_thread=0) (t,ext) = (copy_term2 ~id_thread t, ext)
 
-let copy_term_option2 = function
+let copy_term_option2 ?(id_thread=0) = function
   | None -> None
   | (Some t) as t_opt ->
-      let t' = copy_term2 t in
+      let t' = copy_term2 ~id_thread t in
       if t == t' then t_opt else Some t'
 
-let copy_term_e_option2 = function
+let copy_term_e_option2 ?(id_thread=0) = function
   | None -> None
-  | Some t -> Some (copy_term_e2 t)
+  | Some t -> Some (copy_term_e2 ~id_thread t)
 
-let copy_ordering_data2 ord_data = 
+let copy_ordering_data2 ?(id_thread=0) ord_data = 
   { ord_data with 
-    Pitypes.temp_var = copy_term_e_option2 ord_data.Pitypes.temp_var
+    Pitypes.temp_var = copy_term_e_option2 ~id_thread ord_data.Pitypes.temp_var
   }
 
-let copy_event2 = function
-    Pitypes.QSEvent(b,ord,occ,t) -> Pitypes.QSEvent(b,copy_ordering_data2 ord,copy_term_option2 occ,copy_term2 t)
-  | Pitypes.QSEvent2(ord,t1,t2) -> Pitypes.QSEvent2(copy_ordering_data2 ord,copy_term2 t1, copy_term2 t2)
-  | Pitypes.QFact(p,ord,tl) -> Pitypes.QFact(p,copy_ordering_data2 ord,List.map copy_term2 tl)
-  | Pitypes.QNeq(t1,t2) -> Pitypes.QNeq(copy_term_e2 t1, copy_term_e2 t2)
-  | Pitypes.QEq(t1,t2) -> Pitypes.QEq(copy_term_e2 t1, copy_term_e2 t2)
-  | Pitypes.QGeq(t1,t2) -> Pitypes.QGeq(copy_term_e2 t1, copy_term_e2 t2)
-  | Pitypes.QGr(t1,t2) -> Pitypes.QGr(copy_term_e2 t1, copy_term_e2 t2)
-  | Pitypes.QIsNat(t) -> Pitypes.QIsNat(copy_term2 t)
-  | Pitypes.QMax(t,args) -> Pitypes.QMax(copy_term2 t, List.map copy_term2 args)
-  | Pitypes.QMaxq(t,args) -> Pitypes.QMaxq(copy_term2 t, List.map copy_term2 args)
+let copy_event2 ?(id_thread=0) = function
+    Pitypes.QSEvent(b,ord,occ,t) -> Pitypes.QSEvent(b,copy_ordering_data2 ~id_thread ord,copy_term_option2 ~id_thread occ,copy_term2 ~id_thread t)
+  | Pitypes.QSEvent2(ord,t1,t2) -> Pitypes.QSEvent2(copy_ordering_data2 ~id_thread ord,copy_term2 ~id_thread t1, copy_term2 ~id_thread t2)
+  | Pitypes.QFact(p,ord,tl) -> Pitypes.QFact(p,copy_ordering_data2 ~id_thread ord,List.map (copy_term2 ~id_thread) tl)
+  | Pitypes.QNeq(t1,t2) -> Pitypes.QNeq(copy_term_e2 ~id_thread t1, copy_term_e2 ~id_thread t2)
+  | Pitypes.QEq(t1,t2) -> Pitypes.QEq(copy_term_e2 ~id_thread t1, copy_term_e2 ~id_thread t2)
+  | Pitypes.QGeq(t1,t2) -> Pitypes.QGeq(copy_term_e2 ~id_thread t1, copy_term_e2 ~id_thread t2)
+  | Pitypes.QGr(t1,t2) -> Pitypes.QGr(copy_term_e2 ~id_thread t1, copy_term_e2 ~id_thread t2)
+  | Pitypes.QIsNat(t) -> Pitypes.QIsNat(copy_term2 ~id_thread t)
+  | Pitypes.QMax(t,args) -> Pitypes.QMax(copy_term2 ~id_thread t, List.map (copy_term2 ~id_thread) args)
+  | Pitypes.QMaxq(t,args) -> Pitypes.QMaxq(copy_term2 ~id_thread t, List.map (copy_term2 ~id_thread) args)
 
-let rec copy_realquery2 = function
-    Pitypes.Before(el, concl_q) -> Pitypes.Before(List.map copy_event2 el, copy_conclusion_query2 concl_q)
+let rec copy_realquery2 ?(id_thread=0) = function
+    Pitypes.Before(el, concl_q) -> Pitypes.Before(List.map (copy_event2 ~id_thread) el, copy_conclusion_query2 ~id_thread concl_q)
 
-and copy_conclusion_query2 = function
+and copy_conclusion_query2 ?(id_thread=0) = function
   | Pitypes.QTrue -> Pitypes.QTrue
   | Pitypes.QFalse -> Pitypes.QFalse
-  | Pitypes.QConstraints q -> Pitypes.QConstraints(copy_constra2 q)
-  | Pitypes.QEvent e -> Pitypes.QEvent(copy_event2 e)
-  | Pitypes.NestedQuery q -> Pitypes.NestedQuery (copy_realquery2 q)
-  | Pitypes.QAnd(concl1,concl2) -> Pitypes.QAnd(copy_conclusion_query2 concl1,copy_conclusion_query2 concl2)
-  | Pitypes.QOr(concl1,concl2) -> Pitypes.QOr(copy_conclusion_query2 concl1,copy_conclusion_query2 concl2)
+  | Pitypes.QConstraints q -> Pitypes.QConstraints(copy_constra2 ~id_thread q)
+  | Pitypes.QEvent e -> Pitypes.QEvent(copy_event2 ~id_thread e)
+  | Pitypes.NestedQuery q -> Pitypes.NestedQuery (copy_realquery2 ~id_thread q)
+  | Pitypes.QAnd(concl1,concl2) -> Pitypes.QAnd(copy_conclusion_query2 ~id_thread concl1,copy_conclusion_query2 ~id_thread concl2)
+  | Pitypes.QOr(concl1,concl2) -> Pitypes.QOr(copy_conclusion_query2 ~id_thread concl1,copy_conclusion_query2 ~id_thread concl2)
 
 (* Matching *)
 
@@ -1013,7 +1013,7 @@ let rec match_terms ?(id_thread=0) t1 t2 =
          match get_link ~id_thread v with
            NoLink ->
              if v.unfailing
-             then link ~id_thread:id_thread v (TLink t)
+             then link ~id_thread v (TLink t)
              else
                begin
                         match t with
@@ -1026,63 +1026,63 @@ let rec match_terms ?(id_thread=0) t1 t2 =
        end
    | (FunApp (f1,l1')), (FunApp (f2,l2')) ->
        if f1 != f2 then raise NoMatch;
-       List.iter2 (match_terms ~id_thread:id_thread) l1' l2'
+       List.iter2 (match_terms ~id_thread) l1' l2'
    | _,_ -> raise NoMatch
 
 let match_facts ?(id_thread=0) f1 f2 =
   match (f1,f2) with
     Pred(chann1, t1),Pred(chann2, t2) ->
       if chann1 != chann2 then raise NoMatch;
-      List.iter2 (match_terms ~id_thread:id_thread) t1 t2
+      List.iter2 (match_terms ~id_thread) t1 t2
 
 (* Same as match_facts except that f1 of phase n can be matched with f2 of phase m with n >= m when they are attacker facts.
    Used to apply Lemmas. *)
-let match_facts_phase_geq f1 f2 = match f1,f2 with
+let match_facts_phase_geq ?(id_thread=0) f1 f2 = match f1,f2 with
   | Pred(p1,t1), Pred(p2, t2) ->
       if not (is_sub_predicate p1 p2) then raise NoMatch;
-      List.iter2 match_terms t1 t2
+      List.iter2 (match_terms ~id_thread) t1 t2
 
-let match_facts_phase_leq f1 f2 = match f1,f2 with
+let match_facts_phase_leq ?(id_thread=0) f1 f2 = match f1,f2 with
   | Pred(p1,t1), Pred(p2, t2) ->
       if not (is_sub_predicate p2 p1) then raise NoMatch;
-      List.iter2 match_terms t1 t2
+      List.iter2 (match_terms ~id_thread) t1 t2
 
-let match_facts_unblock f1 f2 = match (f1,f2) with
+let match_facts_unblock ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,args1), Pred(p2,args2) ->
       if (unblock_predicate p1) != (unblock_predicate p2) then raise NoMatch;
-      List.iter2 match_terms args1 args2
+      List.iter2 (match_terms ~id_thread) args1 args2
 
-let match_facts_unblock_phase_geq f1 f2 = match (f1,f2) with
+let match_facts_unblock_phase_geq ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,args1), Pred(p2,args2) ->
       if not (is_sub_predicate (unblock_predicate p1) (unblock_predicate p2)) then raise NoMatch;
-      List.iter2 match_terms args1 args2
+      List.iter2 (match_terms ~id_thread) args1 args2
 
-let match_facts_unblock_inj f1 f2 = match (f1,f2) with
+let match_facts_unblock_inj ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,[ev1]), Pred(p2,[ev2;_]) when 
       unblock_predicate p1 == Param.event_pred &&
       unblock_predicate p2 == Param.inj_event_pred ->
-      match_terms ev1 ev2
+      match_terms ~id_thread ev1 ev2
   | Pred(p1,args1), Pred(p2,args2) ->
       if (unblock_predicate p1) != (unblock_predicate p2) then raise NoMatch;
-      List.iter2 match_terms args1 args2
+      List.iter2 (match_terms ~id_thread) args1 args2
 
-let match_facts_unblock_inj_phase_geq f1 f2 = match (f1,f2) with
+let match_facts_unblock_inj_phase_geq ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,[ev1]), Pred(p2,[ev2;_]) when 
       unblock_predicate p1 == Param.event_pred &&
       unblock_predicate p2 == Param.inj_event_pred ->
-      match_terms ev1 ev2
+      match_terms ~id_thread ev1 ev2
   | Pred(p1,args1), Pred(p2,args2) ->
       if not (is_sub_predicate (unblock_predicate p1) (unblock_predicate p2)) then raise NoMatch;
-      List.iter2 match_terms args1 args2
+      List.iter2 (match_terms ~id_thread) args1 args2
 
-let are_matched_facts f1 f2 =
-  assert (!current_bound_vars.(default_thread_id) == []);
+let are_matched_facts ?(id_thread=0) f1 f2 =
+  assert (!current_bound_vars.(id_thread) == []);
   try
-    match_facts f1 f2;
-    cleanup();
+    match_facts ~id_thread f1 f2;
+    cleanup ~id_thread ();
     true
   with NoMatch ->
-    cleanup();
+    cleanup ~id_thread ();
     false
 
 (* [occurs_test_loop seen_vars v t] returns true when
@@ -1090,7 +1090,7 @@ let are_matched_facts f1 f2 =
    inside terms. It uses the list [seen_vars] to avoid
    loops. [seen_vars] should be initialized to [ref []]. *)
 
-let rec occurs_test_loop seen_vars v t =
+let rec occurs_test_loop ?(id_thread=0) seen_vars v t =
    match t with
      Var v' ->
        begin
@@ -1098,39 +1098,39 @@ let rec occurs_test_loop seen_vars v t =
          begin
            seen_vars := v' :: (!seen_vars);
            if v == v' then true else
-           match get_link v' with
+           match get_link ~id_thread v' with
              NoLink -> false
-           | TLink t' -> occurs_test_loop seen_vars v t'
+           | TLink t' -> occurs_test_loop ~id_thread seen_vars v t'
            | _ -> internal_error __POS__ "unexpected link in occur_check"
          end
        end
-   | FunApp(_,l) -> List.exists (occurs_test_loop seen_vars v) l
+   | FunApp(_,l) -> List.exists (occurs_test_loop ~id_thread seen_vars v) l
 
-let matchafactstrict finst fgen =
-  assert (!current_bound_vars.(default_thread_id) == []);
+let matchafactstrict ?(id_thread=0) finst fgen =
+  assert (!current_bound_vars.(id_thread) == []);
   try
-    match_facts fgen finst;
+    match_facts ~id_thread fgen finst;
     (* If a variable v is instantiated in the match into
        a term that is not a variable and that contains v, then
        by repeated resolution, the term will be instantiated into
        an infinite number of different terms obtained by
        iterating the substitution. We should adjust the selection
        function to avoid this non-termination. *)
-    if List.exists (fun v -> match get_link v with
+    if List.exists (fun v -> match get_link ~id_thread v with
     | TLink (Var _) -> false
-    | TLink t -> occurs_test_loop (ref []) v t
-    | _ -> false) (!current_bound_vars.(default_thread_id)) then
+    | TLink t -> occurs_test_loop ~id_thread (ref []) v t
+    | _ -> false) (!current_bound_vars.(id_thread)) then
       begin
-        cleanup();
+        cleanup ~id_thread ();
         true
       end
     else
       begin
-        cleanup();
+        cleanup ~id_thread ();
         false
       end
   with NoMatch ->
-    cleanup();
+    cleanup ~id_thread ();
     false
 
 (* Size *)
@@ -1193,15 +1193,15 @@ let rec rev_assoc v2 = function
    and returns the resulting term. Variables are translated
    by the function [var_case] *)
 
-let rec follow_link var_case = function
+let rec follow_link ?(id_thread=0) var_case = function
     Var v ->
       begin
-        match get_link v with
-          TLink t -> follow_link var_case t
+        match get_link ~id_thread v with
+          TLink t -> follow_link ~id_thread var_case t
         | NoLink -> var_case v
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in follow_link"
       end
-  | FunApp(f,l) -> FunApp(f, List.map (follow_link var_case) l)
+  | FunApp(f,l) -> FunApp(f, List.map (follow_link ~id_thread var_case) l)
 
 (* [replace_name f t t'] replaces all occurrences of the name f (ie f[]) with t
    in t' *)
@@ -1242,119 +1242,119 @@ let rec get_vars_acc_format vlist = function
   | FFunApp(_,args) -> List.iter (get_vars_acc_format vlist) args
 
 
-let rec get_unlinked_vars_acc vlist = function
+let rec get_unlinked_vars_acc ?(id_thread=0) vlist = function
   | Var v -> 
       begin
-        match get_link v with 
-        | TLink t -> get_unlinked_vars_acc vlist t
+        match get_link ~id_thread v with 
+        | TLink t -> get_unlinked_vars_acc ~id_thread vlist t
         | _ -> if not (List.memq v (!vlist)) then vlist := v :: (!vlist)
       end
   | FunApp(_,l) ->
-    List.iter (get_unlinked_vars_acc vlist) l
+    List.iter (get_unlinked_vars_acc ~id_thread vlist) l
 
-let get_unlinked_vars_acc_constra vlist c = iter_constraints (get_unlinked_vars_acc vlist) c
+let get_unlinked_vars_acc_constra ?(id_thread=0) vlist c = iter_constraints (get_unlinked_vars_acc ~id_thread vlist) c
 
 
-let rec mark_variables = function
+let rec mark_variables ?(id_thread=0) = function
   | Var v ->
-      begin match get_link v with
+      begin match get_link ~id_thread v with
       | VLink _ -> ()
-      | NoLink -> link v (VLink v)
+      | NoLink -> link ~id_thread v (VLink v)
       | _ -> Parsing_helper.internal_error __POS__ "[Terms.mark_variables] Unexpected links"
       end
-  | FunApp(f,args) -> List.iter mark_variables args
+  | FunApp(f,args) -> List.iter (mark_variables ~id_thread) args
 
-let mark_variables_fact = function
-  | Pred(_,args) -> List.iter mark_variables args
+let mark_variables_fact ?(id_thread=0) = function
+  | Pred(_,args) -> List.iter (mark_variables ~id_thread) args
 
 (* No assumption are made on the links in the variables *)
 
-let rec mark_variables_local = function
+let rec mark_variables_local ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link v with
+        match get_link ~id_thread v with
         | Marked -> ()
-        | _ -> link_local v Marked
+        | _ -> link_local ~id_thread v Marked
       end
-  | FunApp(_,args) -> List.iter mark_variables_local args
+  | FunApp(_,args) -> List.iter (mark_variables_local ~id_thread) args
 
-let mark_variables_local_fact = function
-  | Pred(_,args) -> List.iter mark_variables_local args
+let mark_variables_local_fact ?(id_thread=0) = function
+  | Pred(_,args) -> List.iter (mark_variables_local ~id_thread) args
   
-let get_vars t =
-  auto_cleanup_local_noexception (fun () -> 
-    mark_variables_local t;
-    List.rev_map fst !local_current_bound_vars
+let get_vars ?(id_thread=0) t =
+  auto_cleanup_local_noexception ~id_thread (fun () -> 
+    mark_variables_local ~id_thread t;
+    List.rev_map fst !local_current_bound_vars.(id_thread)
   )
 
-let get_vars_fact fact =
-  auto_cleanup_local_noexception (fun () -> 
-    mark_variables_local_fact fact; 
-    List.rev_map fst !local_current_bound_vars
+let get_vars_fact ?(id_thread=0) fact =
+  auto_cleanup_local_noexception ~id_thread (fun () -> 
+    mark_variables_local_fact ~id_thread fact; 
+    List.rev_map fst !local_current_bound_vars.(id_thread)
   )
 
-let get_vars_fact_list fact_l =
-  auto_cleanup_local_noexception (fun () ->
-    List.iter  mark_variables_local_fact fact_l; 
-    List.rev_map fst !local_current_bound_vars
+let get_vars_fact_list ?(id_thread=0) fact_l =
+  auto_cleanup_local_noexception ~id_thread (fun () ->
+    List.iter  (mark_variables_local_fact ~id_thread) fact_l; 
+    List.rev_map fst !local_current_bound_vars.(id_thread)
   )
 
-let get_vars_constra constra =
-  auto_cleanup_local_noexception (fun () -> 
-    iter_constraints mark_variables_local constra; 
-    List.rev_map fst !local_current_bound_vars
+let get_vars_constra ?(id_thread=0) constra =
+  auto_cleanup_local_noexception ~id_thread (fun () -> 
+    iter_constraints (mark_variables_local ~id_thread) constra; 
+    List.rev_map fst !local_current_bound_vars.(id_thread)
   )
   
 let get_vars_generic ?(id_thread=0) (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
-  auto_cleanup_local_noexception (fun () ->
-    f_iter_term mark_variables_local a;
-    List.rev_map fst !local_current_bound_vars
+  auto_cleanup_local_noexception ~id_thread (fun () ->
+    f_iter_term (mark_variables_local ~id_thread) a;
+    List.rev_map fst !local_current_bound_vars.(id_thread)
   )
 
 (* Get the variables following the TLink recursively *)
   
-let rec mark_variables_local4 = function
+let rec mark_variables_local4 ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link v with 
-        | TLink t -> mark_variables_local4 t
+        match get_link ~id_thread v with 
+        | TLink t -> mark_variables_local4 ~id_thread t
         | Marked -> ()
-        | _ -> link_local v Marked
+        | _ -> link_local ~id_thread v Marked
       end
-  | FunApp(_,args) -> List.iter mark_variables_local4 args
+  | FunApp(_,args) -> List.iter (mark_variables_local4 ~id_thread) args
 
-let mark_variables_local_fact4 = function
-  | Pred(_,args) -> List.iter mark_variables_local4 args
+let mark_variables_local_fact4 ?(id_thread=0) = function
+  | Pred(_,args) -> List.iter (mark_variables_local4 ~id_thread) args
   
-let get_vars_generic4 (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
-  auto_cleanup_local_noexception (fun () ->
-    f_iter_term mark_variables_local4 a;
-    List.rev_map fst !local_current_bound_vars
+let get_vars_generic4 ?(id_thread=0) (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
+  auto_cleanup_local_noexception ~id_thread (fun () ->
+    f_iter_term (mark_variables_local4 ~id_thread) a;
+    List.rev_map fst !local_current_bound_vars.(id_thread)
   )
 
 (* Inclusion of variables *)
 
-let rec are_variable_included2_aux = function
+let rec are_variable_included2_aux ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link v with
-        | TLink t -> are_variable_included2_aux t
+        match get_link ~id_thread v with
+        | TLink t -> are_variable_included2_aux ~id_thread t
         | Marked -> true
         | _ -> false
       end
-  | FunApp(_,args) -> List.for_all are_variable_included2_aux args
+  | FunApp(_,args) -> List.for_all (are_variable_included2_aux ~id_thread) args
 
-let are_variable_included2 vl t = 
-  auto_cleanup_noexception (fun () ->
-    List.iter (fun v -> link v Marked) vl;
-    are_variable_included2_aux t
+let are_variable_included2 ?(id_thread=0) vl t = 
+  auto_cleanup_noexception ~id_thread (fun () ->
+    List.iter (fun v -> link ~id_thread v Marked) vl;
+    are_variable_included2_aux ~id_thread t
   )
 
-let are_variable_included_fact2 vl fact = 
-  auto_cleanup_noexception (fun () ->
-    List.iter (fun v -> link v Marked) vl;
+let are_variable_included_fact2 ?(id_thread=0) vl fact = 
+  auto_cleanup_noexception ~id_thread (fun () ->
+    List.iter (fun v -> link ~id_thread v Marked) vl;
     let Pred(_,args) = fact in
-    List.for_all are_variable_included2_aux args
+    List.for_all (are_variable_included2_aux ~id_thread) args
   )
   
 
@@ -1369,12 +1369,12 @@ let rec copy_term3 ?(id_thread=0) = function
       | TLink l -> l
       | _ -> internal_error __POS__ "unexpected link in copy_term3"
 
-let copy_fact3 = function
+let copy_fact3 ?(id_thread=0) = function
     Pred(p,l) as fact ->
-      let l' = List.mapq copy_term3 l in
+      let l' = List.mapq (copy_term3 ~id_thread) l in
       if l == l' then fact else Pred(p, l')
 
-let rec copy_constra3 c = map_constraints copy_term3 c
+let rec copy_constra3 ?(id_thread=0) c = map_constraints (copy_term3 ~id_thread) c
 
 (* [copy_term4] follows links [Tlink] recursively,
    but does not rename variables *)
@@ -1385,12 +1385,12 @@ let rec copy_term4 ?(id_thread=0) = function
       if l == l' then t else FunApp(f, l')
   | Var v as t -> match get_link ~id_thread v with
       | NoLink -> t
-      | TLink l -> copy_term4 ~id_threead l
+      | TLink l -> copy_term4 ~id_thread l
       | _ -> internal_error __POS__ "unexpected link in copy_term4"
 
-let copy_fact4 = function
+let copy_fact4 ?(id_thread=0) = function
   | Pred(p,args) as fact ->
-      let args' = List.mapq copy_term4 args in
+      let args' = List.mapq (copy_term4 ~id_thread) args in
       if args' == args then fact else Pred(p,args')
 
 let copy_constra4 ?(id_thread=0) c = map_constraints (copy_term4 ~id_thread) c
@@ -1440,25 +1440,25 @@ let get_session_id_from_occurrence = function
 
 (* Link all variables by new constants of type "SpecVar" *)
 
-let rec put_constants = function
+let rec put_constants ?(id_thread=0) = function
   | Var v ->
-      begin match get_link v with
+      begin match get_link ~id_thread v with
         | TLink t -> ()
         | NoLink ->
-            link_unsafe v (TLink (FunApp({ f_name = Renamable v.vname;
+            link_unsafe ~id_thread v (TLink (FunApp({ f_name = Renamable v.vname;
                                       f_type = [], v.btype;
                                       f_cat = SpecVar v;
                                       f_initial_cat = SpecVar v;
                                       f_private = false;
                                       f_options = 0;
                                       f_record = Param.fresh_record () }, [])));
-            !current_bound_vars.(default_thread_id) <- v :: (!current_bound_vars.(default_thread_id))
+            !current_bound_vars.(id_thread) <- v :: (!current_bound_vars.(id_thread))
         | _ -> internal_error __POS__ "[Terms.put_constants] Unexpected link."
       end
-  | FunApp(f,l) -> List.iter put_constants l
+  | FunApp(f,l) -> List.iter (put_constants ~id_thread) l
 
-let put_constants_fact = function
-  | Pred(p,l) -> List.iter put_constants l
+let put_constants_fact ?(id_thread=0) = function
+  | Pred(p,l) -> List.iter (put_constants ~id_thread) l
 
 let rec specvar_to_var = function
   | Var v
@@ -2438,7 +2438,7 @@ exception True_inequality
 exception False_inequality
 
 
-let generate_destructor_with_side_cond prev_args lht_list rht ext =
+let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext =
 
   (* Given an inequality [for all (may-fail variabless in uni_term_list), term_list <> uni_term_list],
      [remove_uni_fail_var] returns [(l1,l2)] representing an inequality [l1 <> l2] equivalent
@@ -2448,9 +2448,9 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
     | [],[] -> [],[]
     | [],_ | _,[] -> internal_error __POS__ "The two lists should have the same length"
     | t::q, Var(v)::uq when v.unfailing ->
-        begin match get_link v with
+        begin match get_link ~id_thread v with
           | NoLink ->
-              link v (TLink t);
+              link ~id_thread v (TLink t);
               remove_uni_fail_var q uq
           | TLink t' ->
               let (list_left,list_right) = remove_uni_fail_var q uq in
@@ -2482,8 +2482,8 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
 
         (* Generalize the variables *)
         let term_list' =
-          auto_cleanup (fun () ->
-            List.map (generalize_vars_in message_var_list) term_list
+          auto_cleanup ~id_thread (fun () ->
+            List.map (generalize_vars_in ~id_thread message_var_list) term_list
           )
         in
 
@@ -2498,7 +2498,7 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
 
   let rec get_may_fail_vars varsl term = match term with
     | Var(v) ->
-        begin match get_link v with
+        begin match get_link ~id_thread v with
           | NoLink -> if v.unfailing && not (List.memq v (!varsl)) then varsl := v :: (!varsl)
           | TLink(t) -> get_may_fail_vars varsl t
           | _ -> internal_error __POS__ "Unexpected link"
@@ -2511,11 +2511,11 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
     | FunApp(f,_), FunApp(f',_) when f.f_cat = Failure && f'.f_cat = Failure -> raise False_inequality
     | Var(v) as tl, tr -> 
         begin 
-          match get_link v, tr with
+          match get_link ~id_thread v, tr with
           | TLink tl', _ -> simplify_one_neq tl' tr
           | _, Var(v') -> 
                 begin
-                  match get_link v' with
+                  match get_link ~id_thread v' with
                   | TLink tr' -> simplify_one_neq tl tr'
                   | _ -> tl, tr
                 end
@@ -2524,7 +2524,7 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
         end
     | tl, (Var(v) as tr) ->
         begin
-          match tl, get_link v with
+          match tl, get_link ~id_thread v with
           | _, TLink tr' -> simplify_one_neq tl tr'
           | FunApp(f,_), _ when v.unfailing = false && f.f_cat = Failure -> raise True_inequality
           | _, _ -> tl, tr
@@ -2575,13 +2575,13 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
     if may_fail_var_list = []
     then
       (* If no more may-fail variables in inequalities then return the destructor *)
-      auto_cleanup (fun () ->
-        let rht' = copy_term2 rht
-        and lht' = List.map copy_term2 lht_list
+      auto_cleanup ~id_thread (fun () ->
+        let rht' = copy_term2 ~id_thread rht
+        and lht' = List.map (copy_term2 ~id_thread) lht_list
         and side_neq =
           List.map (fun (left_l, right_l) ->
-            let left_l' = List.map copy_term2 left_l
-            and right_l' = List.map copy_term2 right_l in
+            let left_l' = List.map (copy_term2 ~id_thread) left_l
+            and right_l' = List.map (copy_term2 ~id_thread) right_l in
 
             let type_list = List.map get_term_type left_l' in
             let tuple_symb = get_tuple_fun type_list in
@@ -2605,9 +2605,9 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
         let mf_var = List.hd may_fail_var_list in
 
         (* Replace the may-fail variable by Fail *)
-        auto_cleanup (fun () ->
+        auto_cleanup ~id_thread (fun () ->
           let fail = get_fail_term mf_var.btype in
-          link mf_var (TLink fail);
+          link ~id_thread mf_var (TLink fail);
           try
             remove_may_fail_term_neq list_neq'
           with
@@ -2615,9 +2615,9 @@ let generate_destructor_with_side_cond prev_args lht_list rht ext =
         );
 
         (* Replace the may-fail variable by a message variable *)
-        auto_cleanup (fun () ->
+        auto_cleanup ~id_thread (fun () ->
           let x = new_var_def_term mf_var.btype in
-          link mf_var (TLink x);
+          link ~id_thread mf_var (TLink x);
           try
             remove_may_fail_term_neq list_neq'
           with
@@ -2721,7 +2721,7 @@ let get_rewrite_rule_status (l,r,constra) =
 
   ToCheck(index_to_check,index_to_execute)
 
-let get_all_rewrite_rules_status =
+let get_all_rewrite_rules_status ?(id_thread=0) =
   let hashsymb = HashtblSymbol.create 7 in
 
   fun f ->
@@ -2740,7 +2740,7 @@ let get_all_rewrite_rules_status =
         HashtblSymbol.add hashsymb f rw_status';
         rw_status'
     in
-    List.map (fun (s,rw) -> (s,auto_cleanup (fun _ -> copy_red rw))) rw_status
+    List.map (fun (s,rw) -> (s,auto_cleanup ~id_thread (fun _ -> copy_red rw))) rw_status
 
 (** Tools *)
 
@@ -2751,4 +2751,4 @@ let rec iter_variables f = function
 let iter_term_fact f = function
   | Pred(_,args) -> List.iter f args
 
-let check_no_link = iter_variables (fun v -> if get_link v <> NoLink then assert(false))
+let check_no_link ?(id_thread=0) = iter_variables (fun v -> if get_link ~id_thread v <> NoLink then assert(false))

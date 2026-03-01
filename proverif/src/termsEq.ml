@@ -27,35 +27,35 @@ let non_syntactic f =
 
  We assume here that terms do not contain destructor function symbols. *)
 
-let rec close_list_eq close_elt restwork = function
+let rec close_list_eq ?(id_thread=0) close_elt restwork = function
   | [] -> restwork []
   | elt::q ->
-      close_elt (fun elt' ->
-        close_list_eq close_elt (fun q' ->
+      close_elt id_thread (fun elt' ->
+        close_list_eq ~id_thread close_elt (fun q' ->
           restwork (elt'::q')
         ) q
       ) elt
 
-let rec close_term_eq restwork = function
+let rec close_term_eq id_thread restwork = function
     Var x ->
       begin
-        match Terms.get_link x with
-          TLink t -> close_term_eq restwork t
+        match Terms.get_link ~id_thread x with
+          TLink t -> close_term_eq id_thread restwork t
         (* TO DO should I always recursively close links modulo equations? *)
         | NoLink -> restwork (Var x)
         | _ -> internal_error __POS__ "unexpected link in close_term_eq"
       end
 
   | FunApp(f,l) ->
-      close_list_eq close_term_eq (fun l' ->
+      close_list_eq ~id_thread close_term_eq (fun l' ->
         restwork (FunApp(f,l'));
         match f.f_cat with
         | Eq eqlist ->
             List.iter (fun (lhd,rhs) ->
-              Terms.auto_cleanup (fun () ->
+              Terms.auto_cleanup ~id_thread (fun () ->
                 let (leq', req',_) = copy_red (lhd,rhs,true_constraints) in
                 try
-                  List.iter2 unify l' leq';
+                  List.iter2 (unify ~id_thread) l' leq';
                   restwork req'
                 with Unify -> ()
                     )
@@ -63,19 +63,19 @@ let rec close_term_eq restwork = function
          | _ -> ()
       ) l
 
-let close_term_list_eq = close_list_eq close_term_eq
+let close_term_list_eq ?(id_thread=0) = close_list_eq ~id_thread close_term_eq
 
-let close_geq_eq restwork (t1,n,t2) =
-  close_term_eq (fun t1' ->
-    close_term_eq (fun t2' ->
+let close_geq_eq id_thread restwork (t1,n,t2) =
+  close_term_eq id_thread (fun t1' ->
+    close_term_eq id_thread (fun t2' ->
       restwork (t1',n,t2')
     ) t2
   ) t1
 
-let close_constra_eq restwork c =
+let close_constra_eq ?(id_thread=0) restwork c =
   (* Disequalities and predicates is_not_nat are not closed modulo the equational theory. *)
-  close_term_list_eq (fun is_nat ->
-    close_list_eq close_geq_eq (fun geq ->
+  close_term_list_eq ~id_thread (fun is_nat ->
+    close_list_eq ~id_thread close_geq_eq (fun geq ->
       restwork { c with is_nat = is_nat; geq = geq }
     ) c.geq
   ) c.is_nat
@@ -97,13 +97,13 @@ struct
   type clause = C.clause
 
   open C
-  
-  let close_hyp_modulo_eq restwork hyp = 
-    close_fact_eq (fun f' -> 
+
+  let close_hyp_modulo_eq id_thread restwork hyp =
+    close_fact_eq (fun f' ->
       restwork (H.map_fact (fun _ -> f') hyp)
     ) (H.get_fact hyp)
 
-  let close_hyp_list_modulo_eq = close_list_eq close_hyp_modulo_eq
+  let close_hyp_list_modulo_eq ?(id_thread=0) = close_list_eq ~id_thread close_hyp_modulo_eq
 
   let close_modulo_eq restwork cl =
     close_hyp_list_modulo_eq (fun hyp_l ->
@@ -184,8 +184,8 @@ end
 module Std = Make(Hyp)(Std)
 module Ord = Make(HypOrd)(Ord)
 
-let close_term_eq restwork t =
-  if hasEquations() then close_term_eq restwork t else restwork t
+let close_term_eq id_thread restwork t =
+  if hasEquations() then close_term_eq id_thread restwork t else restwork t
 
 let close_term_list_eq restwork t =
   if hasEquations() then close_term_list_eq restwork t else restwork t
@@ -214,7 +214,7 @@ let rec close_term_destr_eq accu_constra restwork = function
         match Terms.get_link x with
           TLink t ->
           (* TO DO should I always recursively close links modulo equations? *)
-            close_term_eq (fun t' -> restwork accu_constra t') t
+            close_term_eq Terms.default_thread_id (fun t' -> restwork accu_constra t') t
         | NoLink -> restwork accu_constra (Var x)
         | _ -> internal_error __POS__ "unexpected link in close_term_destr_eq"
       end
@@ -330,16 +330,16 @@ let rec normal_form ?(id_thread=0) = function
            Terms.match_terms ~id_thread leq t';
            let r = copy_term3 ~id_thread req in
            Terms.cleanup ~id_thread ();
-           normal_form ~id_thread:r
+           normal_form ~id_thread r
          with NoMatch ->
            Terms.cleanup ~id_thread ();
            find_red redl
       in
       find_red (!rewrite_system)
 
-let normal_form t =
+let normal_form ?(id_thread=0) t =
   try
-    normal_form t
+    normal_form ~id_thread t
   with Stack_overflow ->
     Parsing_helper.user_error "Stack overflow. The most likely cause for this error is that you\ndeclared some equations [convergent] but they are actually not terminating."
 	
@@ -1267,10 +1267,10 @@ let auto_cleanup_eq_tail ?(id_thread=0) f_apply f_next f_Unify f_NoBacktrack =
     (fun () -> reset (); f_Unify ())
     (fun r -> reset (); f_NoBacktrack r)
 
-let rec occur_check_eq_modulo_aux_tail restwork restwork_occurs f_clean f_Unify f_NoBacktrack  v t = match t with
+let rec occur_check_eq_modulo_aux_tail ?(id_thread=0) restwork restwork_occurs f_clean f_Unify f_NoBacktrack  v t = match t with
   | Var v' ->
-      begin match Terms.get_link v' with
-        | TLink t' -> occur_check_eq_modulo_aux_tail restwork restwork_occurs f_clean f_Unify f_NoBacktrack v t'
+      begin match Terms.get_link ~id_thread v' with
+        | TLink t' -> occur_check_eq_modulo_aux_tail ~id_thread restwork restwork_occurs f_clean f_Unify f_NoBacktrack v t'
         | _  ->
             if v == v'
             then restwork_occurs f_clean f_Unify f_NoBacktrack
@@ -1279,24 +1279,24 @@ let rec occur_check_eq_modulo_aux_tail restwork restwork_occurs f_clean f_Unify 
   | FunApp(f,args) ->
       if f_has_no_eq f
       then
-        occur_check_list_eq_modulo_tail (fun f_clean' f_Unify' f_NoBacktrack' args'  ->
+        occur_check_list_eq_modulo_tail ~id_thread (fun f_clean' f_Unify' f_NoBacktrack' args'  ->
           restwork f_clean' f_Unify' f_NoBacktrack' (FunApp(f,args'))
         ) restwork_occurs f_clean f_Unify f_NoBacktrack v args
       else
-        occur_check_list_eq_modulo_tail (fun f_clean' f_Unify' f_NoBacktrack' args' ->
+        occur_check_list_eq_modulo_tail ~id_thread (fun f_clean' f_Unify' f_NoBacktrack' args' ->
           restwork f_clean' f_Unify' f_NoBacktrack' (FunApp(f,args'))
         ) (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
           match f.f_cat with
           | Eq eqlist ->
               let rec reweqlist = function
                 | (leq, req) :: lrew ->
-                    let leq', req'  = auto_cleanup (fun () ->
-                      List.map put_syntactic leq,
-                      put_syntactic req)
+                    let leq', req'  = auto_cleanup ~id_thread (fun () ->
+                      List.map (put_syntactic ~id_thread) leq,
+                      put_syntactic ~id_thread req)
                     in
 
-                    unify_modulo_list_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
-                      occur_check_eq_modulo_aux_tail restwork (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 ->
+                    unify_modulo_list_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                      occur_check_eq_modulo_aux_tail ~id_thread restwork (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 ->
                         (* We need to try with all possible rewriting of [f] so when occurs
                         is raised, we raise Unify. *)
                         f_Unify_3 ()
@@ -1312,13 +1312,13 @@ let rec occur_check_eq_modulo_aux_tail restwork restwork_occurs f_clean f_Unify 
           | _ -> Parsing_helper.internal_error __POS__ "close_term_eq_synt: cases other than Eq should have been treated before"
         ) f_clean f_Unify f_NoBacktrack v args
 
-and occur_check_list_eq_modulo_tail restwork restwork_occurs f_clean f_Unify f_NoBacktrack v l =
+and occur_check_list_eq_modulo_tail ?(id_thread=0) restwork restwork_occurs f_clean f_Unify f_NoBacktrack v l =
   let occurs_in_l = ref false in
 
   let rec occur_check_list_eq_modulo_rec restwork f_clean f_Unify f_NoBacktrack = function
     | [] -> restwork f_clean f_Unify f_NoBacktrack []
     | t::q ->
-        occur_check_eq_modulo_aux_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t' ->
+        occur_check_eq_modulo_aux_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t' ->
           occur_check_list_eq_modulo_rec (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 q' ->
             restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 (t'::q')
           ) f_clean_1 f_Unify_1 f_NoBacktrack_1 q
@@ -1332,8 +1332,8 @@ and occur_check_list_eq_modulo_tail restwork restwork_occurs f_clean f_Unify f_N
     else f_Unify ()
   ) f_NoBacktrack l
 
-and occur_check_eq_modulo_tail restwork f_clean f_Unify f_NoBacktrack v t =
-  occur_check_eq_modulo_aux_tail restwork (fun f_clean' f_Unify' f_NoBacktrack' -> f_Unify' ()) f_clean f_Unify f_NoBacktrack v t
+and occur_check_eq_modulo_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack v t =
+  occur_check_eq_modulo_aux_tail ~id_thread restwork (fun f_clean' f_Unify' f_NoBacktrack' -> f_Unify' ()) f_clean f_Unify f_NoBacktrack v t
 
 and close_term_eq_synt_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack = function
   | (Var x) as t ->
@@ -1360,7 +1360,7 @@ and close_term_eq_synt_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrac
                     put_syntactic ~id_thread req)
                   in
                   auto_cleanup_eq_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
-                    unify_modulo_list_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                    unify_modulo_list_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
                       restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 req'
                     ) f_clean_1 f_Unify_1 f_NoBacktrack_1 l leq'
                   ) f_clean (fun () ->
@@ -1373,93 +1373,93 @@ and close_term_eq_synt_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrac
         | _ -> Parsing_helper.internal_error __POS__ "close_term_eq_synt: cases other than Eq should have been treated before"
       ) f_NoBacktrack
 
-and unify_modulo_tail restwork f_clean f_Unify f_NoBacktrack t1 t2 =
-  close_term_eq_synt_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t1 ->
-    close_term_eq_synt_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 t2 ->
+and unify_modulo_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack t1 t2 =
+  close_term_eq_synt_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t1 ->
+    close_term_eq_synt_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 t2 ->
       match (t1,t2) with
       | (Var v, Var v') when v == v' -> restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
       | (Var v, _) ->
           begin
-            match Terms.get_link v with
+            match Terms.get_link ~id_thread v with
             | NoLink ->
                 begin
                   match t2 with
                   | Var v' ->
                       begin
-                        match Terms.get_link v' with 
-                          | TLink t2' -> unify_modulo_tail restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1 t2'
+                        match Terms.get_link ~id_thread v' with
+                          | TLink t2' -> unify_modulo_tail ~id_thread restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1 t2'
                           | _ when v.unfailing ->
-                                link v (TLink t2);
+                                link ~id_thread v (TLink t2);
                                 restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
                           | _ when v'.unfailing ->
-                                link v' (TLink t1);
+                                link ~id_thread v' (TLink t1);
                                 restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
-                          | _ -> 
-                                occur_check_eq_modulo_tail (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t2' ->
-                                match Terms.get_link v with
+                          | _ ->
+                                occur_check_eq_modulo_tail ~id_thread (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t2' ->
+                                match Terms.get_link ~id_thread v with
                                   | NoLink ->
-                                      if occurs_vars_follows v t2' 
+                                      if occurs_vars_follows ~id_thread v t2'
                                       then f_Unify_3 ()
                                       else
-                                        auto_cleanup_eq_tail (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
-                                          link v (TLink t2');
+                                        auto_cleanup_eq_tail ~id_thread (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
+                                          link ~id_thread v (TLink t2');
                                           restwork f_clean_4 f_Unify_4 f_NoBacktrack_4
                                         ) f_clean_3 f_Unify_3 f_NoBacktrack_3
-                                  | TLink t1' -> unify_modulo_tail restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
+                                  | TLink t1' -> unify_modulo_tail ~id_thread restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
                                   | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_tail] Unexpected link (1)."
                               ) f_clean_2 f_Unify_2 f_NoBacktrack_2 v t2
                         end
                   | FunApp (f_symb,_) when (non_syntactic f_symb).f_cat = Failure && v.unfailing = false ->
                       f_Unify_2 ()
                   | _ ->
-                      occur_check_eq_modulo_tail (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t2' ->
-                        match Terms.get_link v with
+                      occur_check_eq_modulo_tail ~id_thread (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t2' ->
+                        match Terms.get_link ~id_thread v with
                           | NoLink ->
-                              if occurs_vars_follows v t2' 
+                              if occurs_vars_follows ~id_thread v t2'
                               then f_Unify_3 ()
                               else
-                                auto_cleanup_eq_tail (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
-                                  link v (TLink t2');
+                                auto_cleanup_eq_tail ~id_thread (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
+                                  link ~id_thread v (TLink t2');
                                   restwork f_clean_4 f_Unify_4 f_NoBacktrack_4
                                 ) f_clean_3 f_Unify_3 f_NoBacktrack_3
-                          | TLink t1' -> unify_modulo_tail restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
+                          | TLink t1' -> unify_modulo_tail ~id_thread restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
                           | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_tail] Unexpected link (1)."
                       ) f_clean_2 f_Unify_2 f_NoBacktrack_2 v t2
                 end
-            | TLink t1' -> unify_modulo_tail restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1' t2
+            | TLink t1' -> unify_modulo_tail ~id_thread restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1' t2
             | _ -> internal_error __POS__ "Unexpected link in unify 1"
           end
       | (FunApp(f,_), Var v) ->
           begin
-            match Terms.get_link v with
+            match Terms.get_link ~id_thread v with
             | NoLink ->
                 if v.unfailing = false && (non_syntactic f).f_cat = Failure
                 then f_Unify_2 ()
                 else
-                  occur_check_eq_modulo_tail (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' ->
-                    match Terms.get_link v with
+                  occur_check_eq_modulo_tail ~id_thread (fun f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' ->
+                    match Terms.get_link ~id_thread v with
                       | NoLink ->
-                          if occurs_vars_follows v t1' 
+                          if occurs_vars_follows ~id_thread v t1'
                           then f_Unify_3 ()
                           else
-                            auto_cleanup_eq_tail (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
-                              link v (TLink t1');
+                            auto_cleanup_eq_tail ~id_thread (fun f_clean_4 f_Unify_4 f_NoBacktrack_4 ->
+                              link ~id_thread v (TLink t1');
                               restwork f_clean_4 f_Unify_4 f_NoBacktrack_4
                             ) f_clean_3 f_Unify_3 f_NoBacktrack_3
-                      | TLink t2' -> unify_modulo_tail restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
+                      | TLink t2' -> unify_modulo_tail ~id_thread restwork f_clean_3 f_Unify_3 f_NoBacktrack_3 t1' t2'
                       | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_tail] Unexpected link (2)."
                   ) f_clean_2 f_Unify_2 f_NoBacktrack_2 v t1
-            | TLink t2' -> unify_modulo_tail restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1 t2'
+            | TLink t2' -> unify_modulo_tail ~id_thread restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 t1 t2'
             | _ -> internal_error __POS__ "Unexpected link in unify 2"
           end
       | (FunApp(f1, l1), FunApp(f2,l2)) ->
           if (non_syntactic f1) != (non_syntactic f2)
           then f_Unify_2 ()
-          else unify_modulo_list_tail restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 l1 l2
+          else unify_modulo_list_tail ~id_thread restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 l1 l2
     ) f_clean_1 f_Unify_1 f_NoBacktrack_1 t2
   ) f_clean f_Unify f_NoBacktrack t1
 
-and unify_modulo_list_internal_tail restwork f_clean f_Unify f_NoBacktrack l1 l2 =
+and unify_modulo_list_internal_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack l1 l2 =
   match (l1, l2) with
   | [], [] -> restwork f_clean f_Unify f_NoBacktrack
   | (a1::l1'), (a2::l2') ->
@@ -1467,17 +1467,17 @@ and unify_modulo_list_internal_tail restwork f_clean f_Unify f_NoBacktrack l1 l2
         collect_unset_vars unset_vars a1;
         collect_unset_vars unset_vars a2;
 
-        unify_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
-          if not (List.exists (fun v -> Terms.get_link v != NoLink) (!unset_vars))  then
+        unify_modulo_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 ->
+          if not (List.exists (fun v -> Terms.get_link ~id_thread v != NoLink) (!unset_vars))  then
             (* No variable of a1, a2 defined by unification modulo.
                In this case, we do not need to backtrack on the choices made
                in unify_modulo (...) a1 a2 when a subsequent unification fails. *)
             f_NoBacktrack_1 unset_vars
           else
-            unify_modulo_list_internal_tail restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 l1' l2'
+            unify_modulo_list_internal_tail ~id_thread restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 l1' l2'
         ) f_clean f_Unify (fun unset_vars' ->
           if unset_vars == unset_vars'
-          then unify_modulo_list_internal_tail restwork f_clean f_Unify f_NoBacktrack l1' l2'
+          then unify_modulo_list_internal_tail ~id_thread restwork f_clean f_Unify f_NoBacktrack l1' l2'
           else f_NoBacktrack unset_vars'
         ) a1 a2
   | _ -> internal_error __POS__ "Lists should have same length in unify_modulo_list"
@@ -1496,36 +1496,36 @@ and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack
     | Var v, Var v' when v == v' -> restwork f_clean f_Unify f_NoBacktrack unif_to_do_left unif_to_do_right
     | (Var v, _) ->
           begin
-            match Terms.get_link v with
+            match Terms.get_link ~id_thread v with
             | NoLink ->
                 begin
                   match t2 with
                   | Var v' ->
                       begin
-                        match Terms.get_link v' with
+                        match Terms.get_link ~id_thread v' with
                           | TLink t2' -> add_unif_term restwork f_clean f_Unify f_NoBacktrack unif_to_do_left unif_to_do_right t1 t2'
                           | _ when v.unfailing -> 
-                                auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
-                                  link v (TLink t2);
+                                auto_cleanup_eq_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
+                                  link ~id_thread v (TLink t2);
                                   restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
                                 ) f_clean f_Unify f_NoBacktrack
                           | _ when v'.unfailing ->
-                                auto_cleanup_eq_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
-                                  link v' (TLink t1);
+                                auto_cleanup_eq_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1  ->
+                                  link ~id_thread v' (TLink t1);
                                   restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
                                 ) f_clean f_Unify f_NoBacktrack
                           | _ ->
-                                occur_check_eq_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t2' ->
-                                match Terms.get_link v with
+                                occur_check_eq_modulo_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t2' ->
+                                match Terms.get_link ~id_thread v with
                                   | NoLink ->
-                                      if occurs_vars_follows v t2' 
+                                      if occurs_vars_follows ~id_thread v t2' 
                                       then f_Unify_1 ()
                                       else
-                                        auto_cleanup_eq_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
-                                          link v (TLink t2');
+                                        auto_cleanup_eq_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                                          link ~id_thread v (TLink t2');
                                           restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
                                         ) f_clean_1 f_Unify_1 f_NoBacktrack_1
-                                  | TLink t1' -> unify_modulo_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                                  | TLink t1' -> unify_modulo_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
                                     restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
                                   ) f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' t2'
                                   | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_tail] Unexpected link (1)."
@@ -1534,18 +1534,18 @@ and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack
                   | FunApp (f_symb,_) when (non_syntactic f_symb).f_cat = Failure && v.unfailing = false ->
                       f_Unify ()
                   | _ ->
-                      occur_check_eq_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t2' ->
-                        match Terms.get_link v with
+                      occur_check_eq_modulo_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t2' ->
+                        match Terms.get_link ~id_thread v with
                           | NoLink ->
-                              if occurs_vars_follows v t2' 
+                              if occurs_vars_follows ~id_thread v t2'
                               then f_Unify_1 ()
                               else
-                                auto_cleanup_eq_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
-                                  link v (TLink t2');
+                                auto_cleanup_eq_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                                  link ~id_thread v (TLink t2');
                                   restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
                                 ) f_clean_1 f_Unify_1 f_NoBacktrack_1
                           | TLink t1' ->
-                              unify_modulo_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                              unify_modulo_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
                                 restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
                               ) f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' t2'
                           | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_list_tail] Unexpected link (1)."
@@ -1556,23 +1556,23 @@ and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack
           end
       | (FunApp(f,_), Var v) ->
           begin
-            match Terms.get_link v with
+            match Terms.get_link ~id_thread v with
             | NoLink ->
                 if v.unfailing = false && (non_syntactic f).f_cat = Failure
                 then f_Unify ()
                 else
-                  occur_check_eq_modulo_tail (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' ->
-                    match Terms.get_link v with
+                  occur_check_eq_modulo_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' ->
+                    match Terms.get_link ~id_thread v with
                       | NoLink ->
-                          if occurs_vars_follows v t1' 
+                          if occurs_vars_follows ~id_thread v t1'
                           then f_Unify_1 ()
                           else
-                            auto_cleanup_eq_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
-                              link v (TLink t1');
+                            auto_cleanup_eq_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                              link ~id_thread v (TLink t1');
                               restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
                             ) f_clean_1 f_Unify_1 f_NoBacktrack_1
                       | TLink t2' ->
-                          unify_modulo_tail (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
+                          unify_modulo_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 ->
                             restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 unif_to_do_left unif_to_do_right
                           ) f_clean_1 f_Unify_1 f_NoBacktrack_1 t1' t2'
                       | _ -> Parsing_helper.internal_error __POS__ "[termsEq.unify_modulo_list_tail] Unexpected link (2)."
@@ -1592,7 +1592,7 @@ and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack
   in
 
   add_unif_term_list (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right ->
-    unify_modulo_list_internal_tail restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
+    unify_modulo_list_internal_tail ~id_thread restwork f_clean_1 f_Unify_1 f_NoBacktrack_1 unif_to_do_left unif_to_do_right
   ) f_clean f_Unify f_NoBacktrack [] [] l1 l2
 
 (* The function close_term_eq_synt and unify_modulo_list respectively call
@@ -1604,7 +1604,7 @@ and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack
   to clean all links created in close_term_eq_synt_tail / unify_modulo_list_tail
   before raising it again.
 *)
-let close_term_eq_synt ?(id_thread=0) restwork t =
+let close_term_eq_synt id_thread restwork t =
   close_term_eq_synt_tail ~id_thread (fun f_clean f_Unify f_NoBacktrack t' ->
     try
       let r =
@@ -1645,16 +1645,16 @@ let unify_modulo_list restwork l1 l2 =
 let unify_modulo ?(id_thread=0) restwork t1 t2 = 
   unify_modulo_save ~id_thread (fun () -> auto_cleanup ~id_thread restwork) t1 t2
 
-let close_geq_eq_synt restwork (t1,n,t2) =
-  close_term_eq_synt (fun t1' ->
-    close_term_eq_synt (fun t2' ->
+let close_geq_eq_synt id_thread restwork (t1,n,t2) =
+  close_term_eq_synt id_thread (fun t1' ->
+    close_term_eq_synt id_thread (fun t2' ->
       restwork (t1',n,t2')
     ) t2
   ) t1
 
-let close_constraints_eq_synt restwork c =
-  close_list_eq close_term_eq_synt (fun is_nat ->
-    close_list_eq close_geq_eq_synt (fun geq ->
+let close_constraints_eq_synt ?(id_thread=0) restwork c =
+  close_list_eq ~id_thread close_term_eq_synt (fun is_nat ->
+    close_list_eq ~id_thread close_geq_eq_synt (fun geq ->
       restwork { c with is_nat = is_nat; geq = geq }
     ) c.geq
   ) c.is_nat
@@ -1947,7 +1947,7 @@ let rec simplify_is_not_nat ?(id_thread=0) accu_keep_vars nat_vars = function
 
       let can_be_nat = ref false in
       try
-        close_term_eq_synt ~id_thread (fun t3 -> match get_status_natural_number ~id_thread nat_vars t3 with
+        close_term_eq_synt id_thread (fun t3 -> match get_status_natural_number ~id_thread nat_vars t3 with
           | IsNat ->
               (* When t1 is for sure a natural number, we check that the variables of [t] have not been
                 instantiated. In such a case, we know that [t] is for sur a natural number. *)
@@ -1974,7 +1974,7 @@ let check_is_not_nat nat_vars t =
   let accu_vars = ref [] in
   get_vars_acc accu_vars t;
   try
-    close_term_eq_synt (fun t1 -> match get_status_natural_number nat_vars t1 with
+    close_term_eq_synt Terms.default_thread_id (fun t1 -> match get_status_natural_number nat_vars t1 with
       | IsNat ->
           (* When t1 is for sure a natural number, we check that the variables of [t] have not been
             instantiated. In such a case, we know that [t] is for sur a natural number. *)
@@ -2254,7 +2254,7 @@ let can_never_be_natural_number_diseq ?(id_thread=0) t =
   (* In this function, we replace the general variables by normal variables and see if
      [t] can never become a natural number. *)
   try
-    close_term_eq_synt ~id_thread (fun t1 ->
+    close_term_eq_synt id_thread (fun t1 ->
       if not (can_be_natural_number ~id_thread t1)
       then raise Unify
     ) (Terms.replace_f_var (ref []) t);
@@ -2524,12 +2524,12 @@ let rec make_disequation_from_unify ?(id_thread=0) keep_vars assoc_gen_with_var 
         | TLink _ -> (rev_assoc2 keep_vars assoc_gen_with_var var, follow_link (rev_assoc2 keep_vars assoc_gen_with_var) (Var var)) :: l'
         | _ -> internal_error __POS__ "unexpected link in make_disequation_from_unify"
 
-let rec close_disequation_eq restwork = function
+let rec close_disequation_eq ?(id_thread=0) restwork = function
   | [] -> restwork ()
   | (t1,t2)::l ->
       try
-        unify_modulo (fun () ->
-          close_disequation_eq restwork l;
+        unify_modulo ~id_thread (fun () ->
+          close_disequation_eq ~id_thread restwork l;
           raise Unify
         ) t1 t2
       with Unify -> ()
@@ -2697,7 +2697,7 @@ let simplify_constraints_keepvars ?(id_thread=0) f_next f_next_inst keep_vars c 
          variables that have been instantiated. *)
       let is_not_nat1 =
         if eq_left <> []
-        then List.map copy_term4 ~id_thread c.is_not_nat
+        then List.map (copy_term4 ~id_thread) c.is_not_nat
         else c.is_not_nat
       in
 
@@ -2764,36 +2764,36 @@ let rec simplify_after_inst ?(id_thread=0) f_next f_next_inst added_nat keep_var
       try
 	(* A bit of work is repeated here (check_is_nat, simplify_geq)
 	   but it is not a real problem *)
-        simplify_constraints_keepvars f_next f_next_inst keep_vars { constra with geq = geq1 ; neq = neq2 }
+        simplify_constraints_keepvars ~id_thread f_next f_next_inst keep_vars { constra with geq = geq1 ; neq = neq2 }
       with FalseConstraint -> ()
     ) (fun neq2 added_geq ->
       (* Case where we added an inequatity as hypothesis *)
-      simplify_after_geq f_next f_next_inst added_nat !nat_vars keep_vars { constra with geq = added_geq::geq1; neq = neq2 }
+      simplify_after_geq ~id_thread f_next f_next_inst added_nat !nat_vars keep_vars { constra with geq = added_geq::geq1; neq = neq2 }
     ) (fun neq2 keep_vars1 is_instantiated ->
       (* Case where a substitution has been applied *)
-      let constra1 = Terms.copy_constra4 { constra with geq = geq1 ; neq = neq2 } in
+      let constra1 = Terms.copy_constra4 ~id_thread { constra with geq = geq1 ; neq = neq2 } in
 
       simplify_after_inst ~id_thread (if is_instantiated then f_next_inst else f_next)
 	f_next_inst added_nat keep_vars1 constra1
     ) !nat_vars keep_vars neq1
   with FalseConstraint -> ()
 
-and simplify_after_geq f_next f_next_inst nat_vars added_nat keep_vars constra =
+and simplify_after_geq ?(id_thread=0) f_next f_next_inst nat_vars added_nat keep_vars constra =
   (* In this case, we first check that geq has a solution. *)
   try
     get_equalities (fun eq_left eq_right assoc number_vertices distance ->
-      Terms.auto_cleanup (fun () ->
-        List.iter2 Terms.unify eq_left eq_right;
+      Terms.auto_cleanup ~id_thread (fun () ->
+        List.iter2 (Terms.unify ~id_thread) eq_left eq_right;
 
         let (is_instantiated,keep_vars1,constra1) =
           if eq_left = []
           then false,keep_vars,constra
           else
-            let (is_instantiated,keep_vars1) = update_keepvars keep_vars in
-            is_instantiated, keep_vars1, Terms.copy_constra4 constra
+            let (is_instantiated,keep_vars1) = update_keepvars ~id_thread keep_vars in
+            is_instantiated, keep_vars1, Terms.copy_constra4 ~id_thread constra
         in
 
-        simplify_after_inst (if is_instantiated then f_next_inst else f_next)
+        simplify_after_inst ~id_thread (if is_instantiated then f_next_inst else f_next)
 	  f_next_inst added_nat keep_vars1 constra1
       )
     ) constra.geq
@@ -2950,7 +2950,7 @@ let rec nat_of_closed_term = function
 
 let check_closed_is_nat t =
   try
-    close_term_eq_synt (fun t' ->
+    close_term_eq_synt Terms.default_thread_id (fun t' ->
       ignore (nat_of_closed_term t');
       true
     ) t
@@ -2968,9 +2968,9 @@ let check_closed_neq_disj neq =
 
 let check_closed_geq (t1,n,t2) =
   try
-    close_term_eq_synt (fun t1' ->
+    close_term_eq_synt Terms.default_thread_id (fun t1' ->
       let n1 = nat_of_closed_term t1' in
-      close_term_eq_synt (fun t2' ->
+      close_term_eq_synt Terms.default_thread_id (fun t2' ->
         let n2 = nat_of_closed_term t2' in
         if n1 + n >= n2
         then true
@@ -3012,7 +3012,7 @@ let rec copy_term5 modified = function
 
 let implies_is_not_nat constraints1 nat_vars t =
   try
-    close_term_eq_synt (fun t1 ->
+    close_term_eq_synt Terms.default_thread_id (fun t1 ->
       let nat_vars' = match get_status_natural_number nat_vars t1 with
         | IsNat -> nat_vars
         | CanBeNat v -> v::nat_vars
@@ -3199,7 +3199,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
                 )
           in
           try
-            simplify_after_inst (fun constraints2''' ->
+            simplify_after_inst ~id_thread (fun constraints2''' ->
               try
                 implies_constraints nat_vars1 geq1_data constraints1 constraints2''';
                 raise Implied

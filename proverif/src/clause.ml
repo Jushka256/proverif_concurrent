@@ -269,10 +269,10 @@ struct
   let iter_term f = function
     | Pred(_,args) -> List.iter f args
 
-  let copy = Terms.copy_fact
-  let copy2 = Terms.copy_fact2
-  let copy3 = Terms.copy_fact3
-  let copy4 = Terms.copy_fact4
+  let copy = Terms.copy_fact ~id_thread:Terms.default_thread_id
+  let copy2 = Terms.copy_fact2 ~id_thread:Terms.default_thread_id
+  let copy3 = Terms.copy_fact3 ~id_thread:Terms.default_thread_id
+  let copy4 = Terms.copy_fact4 ~id_thread:Terms.default_thread_id
   let display = Display.Text.display_fact
   let display_indep x = Display.auto_cleanup_display (fun () -> Display.Text.display_fact x)
 

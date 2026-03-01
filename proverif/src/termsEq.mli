@@ -20,7 +20,7 @@ val collect_unset_vars : binder list ref -> term -> unit
  close_rule_eq is used for clauses entered by the user in Horn-clause
  front-ends,
  close_fact_eq is used for closing the goals *)
-val close_term_eq : (term -> unit) -> term -> unit
+val close_term_eq : int -> (term -> unit) -> term -> unit
 val close_term_list_eq : (term list -> unit) -> term list -> unit
 val close_fact_eq : (fact -> unit) -> fact -> unit
 
@@ -47,13 +47,13 @@ val close_rule_destr_eq : (fact list * fact * constraints -> unit) -> fact list 
 val f_has_no_eq : funsymb -> bool
 
 (* Unification modulo the equational theory *)
-val close_term_eq_synt : (term -> 'a) -> term -> 'a
-val close_constraints_eq_synt : (constraints -> 'a) -> constraints -> 'a
-val unify_modulo : (unit -> 'a) -> term -> term -> 'a
+val close_term_eq_synt : int -> (term -> 'a) -> term -> 'a
+val close_constraints_eq_synt : ?id_thread:int -> (constraints -> 'a) -> constraints -> 'a
+val unify_modulo : ?id_thread:int -> (unit -> 'a) -> term -> term -> 'a
 val unify_modulo_list : (unit -> 'a) -> term list -> term list -> 'a
 
-val unify_modulo_save : (unit -> 'a) -> term -> term -> 'a
-val unify_modulo_list_save : (unit -> 'a) -> term list -> term list -> 'a
+val unify_modulo_save : ?id_thread:int -> (unit -> 'a) -> term -> term -> 'a
+val unify_modulo_list_save : ?id_thread:int -> (unit -> 'a) -> term list -> term list -> 'a
 
 val copy_remove_syntactic : term -> term
 val copy_remove_syntactic_fact : fact -> fact

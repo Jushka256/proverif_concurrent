@@ -119,7 +119,7 @@ implies_constraints3
         - Terms.get_vars UNSURE WORK LATER
       - Terms.new_var_def FINE
       - Terms.sum_nat_term FINE
-    - simplify_constraints_keepvars
+    - simplify_constraints_keepvars DONE
       - check_is_nat FINE
       - simplify_geq FINE
       - get_equalities FINE
@@ -150,18 +150,27 @@ implies_constraints3
           - non_syntactic FINE
         - Terms.get_link NEED
       - simplify_neq_conj NEED
-      - rearrange_inequalities
+      - rearrange_inequalities FINE
         - Terms.equal_terms FINE
-        - compare_sons START HERE NEXT TIME LINE IS LONG SO THAT IT POPS OUT OF EVERYTHING
-        - get_sons
-        - update_hist_and_remove_edge
+        - compare_sons FINE
+          - compare FINE
+        - get_sons FINE
+          - Terms.equal_terms FINE
+        - update_hist_and_remove_edge FINE
+          - remove_son FINE
       - get_vars_acc FINE
     - simplify_after_geq
+      - get_equalities
+      - Terms.auto_cleanup NEED
+      - Terms.unify
+      - update_keepvars
+      - Terms.copy_constra4 NEED
+      - simplify_after_inst
     - Terms.copy_constra4 DONE
       - Terms.map_constraints FINE
         - mapq_neq FINE
         - mapq_geq FINE
-      - Terms.copy_term4 NEED
+      - Terms.copy_term4 DONE
         - get_link NEED
 
    unify_modulo_list_save ->

@@ -130,7 +130,7 @@ val is_failure : term -> bool
 (* [is_ground_public t] returns true if [t] is a term composed of only public
   function symbols. *)
 val is_ground_public : term -> bool
-val is_public : term -> bool
+val is_public : ?id_thread:int -> term -> bool
 
 (* [contains_destructor t] returns true if [t] contains a destructor. *)
 val contains_destructor: term -> bool
@@ -161,7 +161,7 @@ val occurs_var_constraints : binder -> constraints -> bool
 (* [occurs_vars_all bl t] returns true when all variables occuring in [t] are in [bl]. *)
 val occurs_vars_all : binder list -> term -> bool
 
-val occurs_vars_follows : binder -> term -> bool
+val occurs_vars_follows : ?id_thread:int -> binder -> term -> bool
 
 (* [occurs_f f t] returns true when function symbol [f] occurs in [t] *)
 val occurs_f : funsymb -> term -> bool
@@ -174,19 +174,19 @@ val equal_facts : fact -> fact -> bool
 
 (* General variables *)
 val new_gen_var : typet -> bool -> funsymb
-val generalize_vars_not_in : binder list -> term -> term
-val generalize_vars_in : binder list -> term -> term
+val generalize_vars_not_in : ?id_thread:int -> binder list -> term -> term
+val generalize_vars_in : ?id_thread:int -> binder list -> term -> term
 
 (* Copies. Variables must be linked only to other variables, with VLink. *)
 val copy_term : ?id_thread:int -> term -> term
-val copy_term_e : Pitypes.term_e -> Pitypes.term_e
-val copy_term_option : term option -> term option
-val copy_term_e_option : Pitypes.term_e option -> Pitypes.term_e option
-val copy_fact : fact -> fact
-val copy_constra : constraints -> constraints
-val copy_rule : reduction -> reduction
-val copy_red : rewrite_rule -> rewrite_rule
-val copy_realquery : Pitypes.realquery -> Pitypes.realquery
+val copy_term_e : ?id_thread:int -> Pitypes.term_e -> Pitypes.term_e
+val copy_term_option : ?id_thread:int -> term option -> term option
+val copy_term_e_option : ?id_thread:int -> Pitypes.term_e option -> Pitypes.term_e option
+val copy_fact : ?id_thread:int -> fact -> fact
+val copy_constra : ?id_thread:int -> constraints -> constraints
+val copy_rule : ?id_thread:int -> reduction -> reduction
+val copy_red : ?id_thread:int -> rewrite_rule -> rewrite_rule
+val copy_realquery : ?id_thread:int -> Pitypes.realquery -> Pitypes.realquery
 
 (* To cleanup variable links after copies and other manipulations
    [current_bound_vars] is the list of variables that currently have a link.
@@ -201,69 +201,69 @@ val get_link : ?id_thread:int -> binder -> linktype
 val default_thread_id : int 
 val link : ?id_thread:int -> binder -> linktype -> unit
 val link_unsafe : ?id_thread:int -> binder -> linktype -> unit
-val link_var : term -> linktype -> unit
+val link_var : ?id_thread:int -> term -> linktype -> unit
 val auto_cleanup : ?id_thread:int -> (unit -> 'a) -> 'a
-val auto_cleanup_noexception : (unit -> 'a) -> 'a
-val auto_cleanup_failure : (unit -> 'a) -> 'a
-val auto_cleanup_save : (unit -> 'a) -> 'a
+val auto_cleanup_noexception : ?id_thread:int -> (unit -> 'a) -> 'a
+val auto_cleanup_failure : ?id_thread:int -> (unit -> 'a) -> 'a
+val auto_cleanup_save : ?id_thread:int -> (unit -> 'a) -> 'a
 
 (* Exception raised when unification fails *)
 exception Unify
-val occur_check : binder -> term -> unit
+val occur_check : ?id_thread:int -> binder -> term -> unit
 (* Unify two terms/facts by linking their variables to terms *)
-val unify : term -> term -> unit
-val unify_facts : fact -> fact -> unit
+val unify : ?id_thread:int -> term -> term -> unit
+val unify_facts : ?id_thread:int -> fact -> fact -> unit
 
-val are_unifiable_facts : fact -> fact -> bool
+val are_unifiable_facts : ?id_thread:int -> fact -> fact -> bool
 
 (* Same as unify_facts except that f1 of phase n can be unified with f2 of phase m with n >= m.
    Used in history.ml to deal with lemmas. *)
-val unify_facts_phase : fact -> fact -> unit
+val unify_facts_phase : ?id_thread:int -> fact -> fact -> unit
 (* Copies. Variables can be linked to terms with TLink *)
-val copy_term2 : term -> term
-val copy_fact2 : fact -> fact
-val copy_constra2 : constraints -> constraints
-val copy_rule2 : reduction -> reduction
-val copy_rule2_no_cleanup : reduction -> reduction
-val copy_ordered_rule2 : ordered_reduction -> ordered_reduction
-val copy_conclusion_query2 : Pitypes.conclusion_query -> Pitypes.conclusion_query
-val copy_realquery2 : Pitypes.realquery -> Pitypes.realquery
+val copy_term2 : ?id_thread:int -> term -> term
+val copy_fact2 : ?id_thread:int -> fact -> fact
+val copy_constra2 : ?id_thread:int -> constraints -> constraints
+val copy_rule2 : ?id_thread:int -> reduction -> reduction
+val copy_rule2_no_cleanup : ?id_thread:int -> reduction -> reduction
+val copy_ordered_rule2 : ?id_thread:int -> ordered_reduction -> ordered_reduction
+val copy_conclusion_query2 : ?id_thread:int -> Pitypes.conclusion_query -> Pitypes.conclusion_query
+val copy_realquery2 : ?id_thread:int -> Pitypes.realquery -> Pitypes.realquery
 
 exception NoMatch
 val match_terms : ?id_thread:int -> term -> term -> unit
 val match_facts : ?id_thread:int -> fact -> fact -> unit
 
-val match_facts_unblock : fact -> fact -> unit
-val match_facts_unblock_phase_geq : fact -> fact -> unit
+val match_facts_unblock : ?id_thread:int -> fact -> fact -> unit
+val match_facts_unblock_phase_geq : ?id_thread:int -> fact -> fact -> unit
 
-val match_facts_unblock_inj : fact -> fact -> unit
-val match_facts_unblock_inj_phase_geq : fact -> fact -> unit
+val match_facts_unblock_inj : ?id_thread:int -> fact -> fact -> unit
+val match_facts_unblock_inj_phase_geq : ?id_thread:int -> fact -> fact -> unit
 
 (* Same as match_facts except that f1 of phase n can be matched with f2 of phase m with n >= m.*)
-val match_facts_phase_geq : fact -> fact -> unit
+val match_facts_phase_geq : ?id_thread:int -> fact -> fact -> unit
 (* Same as match_facts except that f1 of phase n can be matched with f2 of phase m with n <= m.*)
-val match_facts_phase_leq : fact -> fact -> unit
+val match_facts_phase_leq : ?id_thread:int -> fact -> fact -> unit
 
-val are_matched_facts : fact -> fact -> bool
+val are_matched_facts : ?id_thread:int -> fact -> fact -> bool
 
 (* [matchafactstrict finst fgen] returns true when [finst] is a
    instance of [fgen] that may lead to a loop, that is, it is an
    instance and some variable x is mapped to a term that is not a
    variable and that contains x by the matching substitution *)
-val matchafactstrict : fact -> fact -> bool
+val matchafactstrict : ?id_thread:int -> fact -> fact -> bool
 
 (* Copy of terms and constraints after matching.
    Variables can be linked to terms with TLink, but the link
    is followed only once, not recursively *)
 val copy_term3 : ?id_thread:int -> term -> term
-val copy_fact3 : fact -> fact
-val copy_constra3 : constraints -> constraints
+val copy_fact3 : ?id_thread:int -> fact -> fact
+val copy_constra3 : ?id_thread:int -> constraints -> constraints
 
 (* [copy_term4] follows links [Tlink] recursively,
    but does not rename variables *)
 val copy_term4 : ?id_thread: int -> term -> term
-val copy_fact4 : fact -> fact
-val copy_constra4: constraints -> constraints
+val copy_fact4 : ?id_thread:int -> fact -> fact
+val copy_constra4: ?id_thread:int -> constraints -> constraints
 
 (* Size of terms/facts *)
 val term_size : term -> int
@@ -284,26 +284,26 @@ val get_vars_acc_format : binder list ref -> format -> unit
 (* [get_vars_pat accu pat] returns [accu] with the variables bound in [pat] added *)
 val get_vars_acc_pat : binder list -> pattern -> binder list
 
-val get_unlinked_vars_acc : binder list ref -> term -> unit
-val get_unlinked_vars_acc_constra : binder list ref -> constraints -> unit
+val get_unlinked_vars_acc : ?id_thread:int -> binder list ref -> term -> unit
+val get_unlinked_vars_acc_constra : ?id_thread:int -> binder list ref -> constraints -> unit
 
-val mark_variables : term -> unit
-val mark_variables_fact : fact -> unit
+val mark_variables : ?id_thread:int -> term -> unit
+val mark_variables_fact : ?id_thread:int -> fact -> unit
 
 (* Link all variables by new constants of type "SpecVar" *)
 
-val put_constants : term -> unit
-val put_constants_fact : fact -> unit
+val put_constants : ?id_thread:int -> term -> unit
+val put_constants_fact : ?id_thread:int -> fact -> unit
 
 val specvar_to_var : term -> term
 val specvar_to_var_fact : fact -> fact
 
 (** No assumption are made on the link in the variables. *)
 
-val get_vars : term -> binder list
-val get_vars_constra : constraints -> binder list
-val get_vars_fact : fact -> binder list
-val get_vars_fact_list : fact list -> binder list
+val get_vars : ?id_thread:int -> term -> binder list
+val get_vars_constra : ?id_thread:int -> constraints -> binder list
+val get_vars_fact : ?id_thread:int -> fact -> binder list
+val get_vars_fact_list : ?id_thread:int -> fact list -> binder list
 
 (** [get_vars_generic f_iter_term a] will return the list of varibales in the terms
     that are "contained" in [a], i.e. in the following function:
@@ -317,13 +317,13 @@ val get_vars_generic : ?id_thread:int -> ((term -> unit) -> 'a -> unit) -> 'a ->
 
 (** Similar to [get_vars_generic f_iter_term a] but the function follows the [TLink]
     recursively before recording the variables. *)
-val get_vars_generic4 :  ((term -> unit) -> 'a -> unit) -> 'a -> binder list
+val get_vars_generic4 : ?id_thread:int -> ((term -> unit) -> 'a -> unit) -> 'a -> binder list
 
 (** [are_variable_included2 vl t] returns true when all variables of [t] are included in [vl].
     The function follows the [TLink] in [t]. 
     Variables in [vl] are assumed not to contain links. *)
-val are_variable_included2 : binder list -> term -> bool
-val are_variable_included_fact2 : binder list -> fact -> bool
+val are_variable_included2 : ?id_thread:int -> binder list -> term -> bool
+val are_variable_included_fact2 : ?id_thread:int -> binder list -> fact -> bool
 
 (* [replace_f_var vl t] replaces names in t according to
    the association list vl. That is, vl is a reference to a list of pairs
@@ -346,7 +346,7 @@ val rev_assoc : binder -> (funsymb * binder) list -> term
    and returns the resulting term. Variables are translated
    by the function [var_case] *)
 
-val follow_link : (binder -> term) -> term -> term
+val follow_link : ?id_thread:int -> (binder -> term) -> term -> term
 
 (* [replace name f t t'] replaces all occurrences of the name [f] (ie f[]) with [t]
    in [t'] *)
@@ -468,7 +468,7 @@ val copy_name : ?orig:bool -> funsymb -> typet list -> funsymb
 
 exception False_inequality
 
-val generate_destructor_with_side_cond : term list list ->
+val generate_destructor_with_side_cond : ?id_thread:int -> term list list ->
   term list -> term -> Parsing_helper.extent -> rewrite_rules
 
 val fact_list_of_conclusion : fact -> fact list
@@ -476,7 +476,7 @@ val get_index_predicate : fact list -> int
 
 (* For translation of destructors *)
 
-val get_all_rewrite_rules_status : funsymb -> (rewrite_rules_status * rewrite_rule) list
+val get_all_rewrite_rules_status : ?id_thread:int -> funsymb -> (rewrite_rules_status * rewrite_rule) list
 
 val add_in_sorted_status : (rewrite_rules_status * rewrite_rule) -> (rewrite_rules_status * rewrite_rule) list -> (rewrite_rules_status * rewrite_rule) list
 
@@ -485,4 +485,4 @@ val add_in_sorted_status : (rewrite_rules_status * rewrite_rule) -> (rewrite_rul
 val iter_variables : (binder -> unit) -> term -> unit
 val iter_term_fact : (term -> unit) -> fact -> unit
 
-val check_no_link : term -> unit
+val check_no_link : ?id_thread:int -> term -> unit
