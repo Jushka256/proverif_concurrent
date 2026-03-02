@@ -130,15 +130,15 @@ let rec match_terms t1 t2 =
 
 (* Retrieve variables *)
 
-let rec get_vars vars = function
+let rec get_vars ?(id_thread=0) vars = function
   | Var v -> 
-      begin match Terms.get_link v with
-      | TLink t -> get_vars vars t
+      begin match Terms.get_link ~id_thread v with
+      | TLink t -> get_vars ~id_thread vars t
       | _ -> 
           if not (List.memq v !vars)
           then vars := v :: !vars
       end
-  | FunApp(_,args) -> List.iter (get_vars vars) args
+  | FunApp(_,args) -> List.iter (get_vars ~id_thread vars) args
 
 (* Test whether a term has a variable *)
 let rec has_vars = function

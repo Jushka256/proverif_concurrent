@@ -9,5 +9,5 @@ val equal_constra : Types.constraints -> Types.constraints -> bool
 
 val match_terms : Types.term -> Types.term -> unit
 
-val get_vars : Types.binder list ref -> Types.term -> unit
+val get_vars : ?id_thread:int -> Types.binder list ref -> Types.term -> unit
 val has_vars : Types.term -> bool

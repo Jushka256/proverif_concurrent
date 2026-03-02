@@ -1808,6 +1808,7 @@ let rec has_gen_var = function
     of the disequation *)
 let elim_var_notelsewhere ?(id_thread=0) has_gen_var keep_vars accu_nat_vars nat_vars = function
   | Var v1, Var v2 ->
+      Printf.printf "elim_var_notelsewhere: %nx <> %nx\n" (Obj.magic v1) (Obj.magic v2);
       assert(v1 != v2);
       elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v1;
       elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v2
@@ -1995,7 +1996,7 @@ module HashType =
 
 module HashTerm = Hashtbl.Make(HashType)
 
-let vertices = HashTerm.create 10
+let vertices = ref (Array.make !Param.num_cores (HashTerm.create 10))
 
 type infInt = N of int | Infinity
 
@@ -2159,19 +2160,19 @@ let algo_BellmanFord_core number_vertices edges =
 
  distance
 
-let algo_BellmanFord restwork rel_list =
+let algo_BellmanFord ?(id_thread=0) restwork rel_list =
   (* We clean the hash table containing the vertices. *)
-  HashTerm.clear vertices;
+  HashTerm.clear !vertices.(id_thread);
 
   (* We add the node for "zero" *)
   let number_vertices = ref 1 in
-  HashTerm.add vertices Terms.zero_term 0;
+  HashTerm.add !vertices.(id_thread) Terms.zero_term 0;
 
   let add_vertex t =
     try
-      HashTerm.find vertices t
+      HashTerm.find !vertices.(id_thread) t
     with Not_found ->
-      HashTerm.add vertices t !number_vertices;
+      HashTerm.add !vertices.(id_thread) t !number_vertices;
       incr number_vertices;
       !number_vertices - 1
   in
@@ -2200,12 +2201,12 @@ let algo_BellmanFord restwork rel_list =
 
   (* [assoc.(i) = t] means that the term associated to node [i] is [t]. *)
   let assoc = Array.make !number_vertices Terms.zero_term in
-  HashTerm.iter (fun t i -> assoc.(i) <- t) vertices;
+  HashTerm.iter (fun t i -> assoc.(i) <- t) !vertices.(id_thread);
 
   restwork assoc !number_vertices distance
 
-let get_equalities restwork rel_list =
-  algo_BellmanFord (fun assoc number_vertices distance ->
+let get_equalities ?(id_thread=0) restwork rel_list =
+  algo_BellmanFord ~id_thread (fun assoc number_vertices distance ->
     let eq_left = ref []
     and eq_right = ref [] in
 
@@ -2278,7 +2279,7 @@ let update_keepvars ?(id_thread=0) keep_vars =
     | _ -> Parsing_helper.internal_error __POS__ "[termsEq.update_keepvars] Unexpected link."
   ) keep_vars;
 
-  List.iter (Termslinks.get_vars keep_ref) !new_terms;
+  List.iter (Termslinks.get_vars ~id_thread keep_ref) !new_terms;
 
   (!is_instantiated,!keep_ref)
 
@@ -2687,7 +2688,7 @@ let simplify_constraints_keepvars ?(id_thread=0) f_next f_next_inst keep_vars c 
   let geq1 = List.map (simplify_geq nat_vars) c.geq in
 
   (* Simplify the inequalities *)
-  get_equalities (fun eq_left eq_right assoc number_vertices distance ->
+  get_equalities ~id_thread (fun eq_left eq_right assoc number_vertices distance ->
 
     Terms.auto_cleanup ~id_thread (fun () ->
       List.iter2 (Terms.unify ~id_thread) eq_left eq_right;
@@ -2781,7 +2782,7 @@ let rec simplify_after_inst ?(id_thread=0) f_next f_next_inst added_nat keep_var
 and simplify_after_geq ?(id_thread=0) f_next f_next_inst nat_vars added_nat keep_vars constra =
   (* In this case, we first check that geq has a solution. *)
   try
-    get_equalities (fun eq_left eq_right assoc number_vertices distance ->
+    get_equalities ~id_thread (fun eq_left eq_right assoc number_vertices distance ->
       Terms.auto_cleanup ~id_thread (fun () ->
         List.iter2 (Terms.unify ~id_thread) eq_left eq_right;
 
@@ -3172,7 +3173,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
                   begin
                     (* Since we assumed that [constraints1] is simplified, the following cannot fail. *)
                     let data =
-                      algo_BellmanFord (fun assoc number_vertices distance ->
+                      algo_BellmanFord ~id_thread (fun assoc number_vertices distance ->
                         let geq1_edges_ref = ref None in
                         let geq1_edges () = match !geq1_edges_ref with
                           | None ->
