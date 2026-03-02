@@ -2522,7 +2522,7 @@ let rec make_disequation_from_unify ?(id_thread=0) keep_vars assoc_gen_with_var 
       let l' = make_disequation_from_unify ~id_thread keep_vars assoc_gen_with_var l in
       match Terms.get_link ~id_thread var with
         | NoLink -> l'
-        | TLink _ -> (rev_assoc2 keep_vars assoc_gen_with_var var, follow_link (rev_assoc2 keep_vars assoc_gen_with_var) (Var var)) :: l'
+        | TLink _ -> (rev_assoc2 keep_vars assoc_gen_with_var var, follow_link ~id_thread (rev_assoc2 keep_vars assoc_gen_with_var) (Var var)) :: l'
         | _ -> internal_error __POS__ "unexpected link in make_disequation_from_unify"
 
 let rec close_disequation_eq ?(id_thread=0) restwork = function
