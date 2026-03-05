@@ -413,16 +413,20 @@ let rec occurs_vars_all bl = function
   | Var v -> List.exists (fun v' -> v == v') bl
   | FunApp(_,l) -> List.for_all (occurs_vars_all bl) l
 
-let get_link ?(id_thread=0) v = v.link.(id_thread) [@@inline]
+let get_link ?(id_thread=0) ?(name="") v = 
+  assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name));
+  v.link.(id_thread) (*[@@inline] *)
 
-let link_unsafe ?(id_thread=0) v l = v.link.(id_thread) <- l [@@inline]
+let link_unsafe ?(id_thread=0) ?(name="") v l = 
+  assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name));
+  v.link.(id_thread) <- l (*[@@inline] *)
 
 let rec occurs_vars_follows ?(id_thread=0) v = function
   | Var v' -> 
       if v' == v 
       then true
       else 
-        begin match get_link ~id_thread v' with 
+        begin match get_link ~id_thread ~name:"occurs_vars_follows" v' with 
         | TLink t -> occurs_vars_follows ~id_thread v t
         | _ -> false
         end
@@ -458,7 +462,7 @@ let rec is_ground_public = function
 let rec is_public ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link ~id_thread v with 
+        match get_link ~id_thread ~name:"is_public" v with 
           | TLink t -> is_public t
           | _ -> true
       end
@@ -614,7 +618,7 @@ let auto_cleanup_save ?(id_thread=0) f =
 let local_current_bound_vars = ref (Array.make !Param.num_cores [])
 
 let link_local ?(id_thread=0) v l = 
-  !local_current_bound_vars.(id_thread) <- (v,get_link ~id_thread v) :: !local_current_bound_vars.(id_thread);
+  !local_current_bound_vars.(id_thread) <- (v,get_link ~id_thread ~name:"link_local" v) :: !local_current_bound_vars.(id_thread);
   link_unsafe ~id_thread v l
 
 let rec cleanup_local ?(id_thread=0) = function
@@ -709,7 +713,7 @@ let rec generalize_vars_not_in ?(id_thread=0) vlist = function
     Var v ->
       begin
         if List.memq v vlist then Var v else
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"generalize_vars_not_in" v with
         | NoLink ->
             let v' = FunApp(new_gen_var v.btype v.unfailing, []) in
             link ~id_thread v (TLink v');
@@ -724,7 +728,7 @@ let rec generalize_vars_in ?(id_thread=0) vlist = function
     Var v ->
       begin
         if not (List.memq v vlist) then Var v else
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"generalize_vars_in" v with
           NoLink ->
             let v' = FunApp(new_gen_var v.btype v.unfailing, []) in
             link ~id_thread v (TLink v');
@@ -747,7 +751,7 @@ let rec copy_term ?(id_thread=0) term = match term with
       then term
       else FunApp(f, l')
   | Var v ->
-      match get_link ~id_thread v with
+      match get_link ~id_thread ~name:"copy_term" v with
         NoLink ->
           let r = copy_var v in
           link ~id_thread v (VLink r);
@@ -828,7 +832,7 @@ let rec occur_check ?(id_thread=0) v t =
     Var v' ->
       begin
         if v == v' then raise Unify;
-        match get_link ~id_thread v' with
+        match get_link ~id_thread ~name:"occur_check" v' with
           NoLink -> ()
         | TLink t' -> occur_check ~id_thread v t'
         | _ -> internal_error __POS__ "unexpected link in occur_check"
@@ -860,13 +864,13 @@ let rec unify ?(id_thread=0) t1 t2 =
     (Var v, Var v') when v == v' -> ()
   | (Var v, _) ->
       begin
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"unify" v with
         | NoLink ->
             begin
               match t2 with
                 | Var v' -> 
                   begin
-                    match get_link ~id_thread v' with
+                    match get_link ~id_thread ~name:"unify" v' with
                       | TLink t2' -> unify ~id_thread t1 t2'
                       | _ when v.unfailing -> link ~id_thread v (TLink t2)
                       | _ when v'.unfailing -> link ~id_thread v' (TLink t1)
@@ -883,7 +887,7 @@ let rec unify ?(id_thread=0) t1 t2 =
       end
   | (FunApp(f_symb,_), Var v) ->
       begin
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"unify" v with
           NoLink ->
             if v.unfailing = false && f_symb.f_cat = Failure
             then raise Unify
@@ -930,7 +934,7 @@ let rec copy_term2 ?(id_thread=0) = function
       let l' = List.mapq (copy_term2 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
   | Var v ->
-      match get_link ~id_thread v with
+      match get_link ~id_thread ~name:"copy_term2" v with
         | NoLink ->
             let r = copy_var v in
             link ~id_thread v (VLink r);
@@ -1006,11 +1010,11 @@ and copy_conclusion_query2 ?(id_thread=0) = function
 
 exception NoMatch
 
-let rec match_terms ?(id_thread=0) t1 t2 =
+let rec match_terms ?(id_thread=0) ?(name="") t1 t2 =
    match (t1,t2) with
      (Var v), t ->
        begin
-         match get_link ~id_thread v with
+         match get_link ~id_thread ~name:(Printf.sprintf "%s, match_terms" name) v with
            NoLink ->
              if v.unfailing
              then link ~id_thread v (TLink t)
@@ -1026,54 +1030,54 @@ let rec match_terms ?(id_thread=0) t1 t2 =
        end
    | (FunApp (f1,l1')), (FunApp (f2,l2')) ->
        if f1 != f2 then raise NoMatch;
-       List.iter2 (match_terms ~id_thread) l1' l2'
+       List.iter2 (match_terms ~id_thread ~name) l1' l2'
    | _,_ -> raise NoMatch
 
 let match_facts ?(id_thread=0) f1 f2 =
   match (f1,f2) with
     Pred(chann1, t1),Pred(chann2, t2) ->
       if chann1 != chann2 then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) t1 t2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts") t1 t2
 
 (* Same as match_facts except that f1 of phase n can be matched with f2 of phase m with n >= m when they are attacker facts.
    Used to apply Lemmas. *)
 let match_facts_phase_geq ?(id_thread=0) f1 f2 = match f1,f2 with
   | Pred(p1,t1), Pred(p2, t2) ->
       if not (is_sub_predicate p1 p2) then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) t1 t2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts_phase_geq") t1 t2
 
 let match_facts_phase_leq ?(id_thread=0) f1 f2 = match f1,f2 with
   | Pred(p1,t1), Pred(p2, t2) ->
       if not (is_sub_predicate p2 p1) then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) t1 t2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts_phase_leq") t1 t2
 
 let match_facts_unblock ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,args1), Pred(p2,args2) ->
       if (unblock_predicate p1) != (unblock_predicate p2) then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) args1 args2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts_unblock") args1 args2
 
 let match_facts_unblock_phase_geq ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,args1), Pred(p2,args2) ->
       if not (is_sub_predicate (unblock_predicate p1) (unblock_predicate p2)) then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) args1 args2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts_unblock_phase_geq") args1 args2
 
 let match_facts_unblock_inj ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,[ev1]), Pred(p2,[ev2;_]) when 
       unblock_predicate p1 == Param.event_pred &&
       unblock_predicate p2 == Param.inj_event_pred ->
-      match_terms ~id_thread ev1 ev2
+      match_terms ~id_thread ~name:"match_facts_unblock_inj" ev1 ev2
   | Pred(p1,args1), Pred(p2,args2) ->
       if (unblock_predicate p1) != (unblock_predicate p2) then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) args1 args2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts_unblock_inj") args1 args2
 
 let match_facts_unblock_inj_phase_geq ?(id_thread=0) f1 f2 = match (f1,f2) with
   | Pred(p1,[ev1]), Pred(p2,[ev2;_]) when 
       unblock_predicate p1 == Param.event_pred &&
       unblock_predicate p2 == Param.inj_event_pred ->
-      match_terms ~id_thread ev1 ev2
+      match_terms ~id_thread ~name:"match_facts_unblock_inj_phase_geq" ev1 ev2
   | Pred(p1,args1), Pred(p2,args2) ->
       if not (is_sub_predicate (unblock_predicate p1) (unblock_predicate p2)) then raise NoMatch;
-      List.iter2 (match_terms ~id_thread) args1 args2
+      List.iter2 (match_terms ~id_thread ~name:"match_facts_unblock_inj_phase_geq") args1 args2
 
 let are_matched_facts ?(id_thread=0) f1 f2 =
   assert (!current_bound_vars.(id_thread) == []);
@@ -1098,7 +1102,7 @@ let rec occurs_test_loop ?(id_thread=0) seen_vars v t =
          begin
            seen_vars := v' :: (!seen_vars);
            if v == v' then true else
-           match get_link ~id_thread v' with
+           match get_link ~id_thread ~name:"occurs_test_loop" v' with
              NoLink -> false
            | TLink t' -> occurs_test_loop ~id_thread seen_vars v t'
            | _ -> internal_error __POS__ "unexpected link in occur_check"
@@ -1116,7 +1120,7 @@ let matchafactstrict ?(id_thread=0) finst fgen =
        an infinite number of different terms obtained by
        iterating the substitution. We should adjust the selection
        function to avoid this non-termination. *)
-    if List.exists (fun v -> match get_link ~id_thread v with
+    if List.exists (fun v -> match get_link ~id_thread ~name:"matchafactstrict" v with
     | TLink (Var _) -> false
     | TLink t -> occurs_test_loop ~id_thread (ref []) v t
     | _ -> false) (!current_bound_vars.(id_thread)) then
@@ -1196,7 +1200,7 @@ let rec rev_assoc v2 = function
 let rec follow_link ?(id_thread=0) var_case = function
     Var v ->
       begin
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"follow_link" v with
           TLink t -> follow_link ~id_thread var_case t
         | NoLink -> var_case v
         | _ -> Parsing_helper.internal_error __POS__ "unexpected link in follow_link"
@@ -1245,7 +1249,7 @@ let rec get_vars_acc_format vlist = function
 let rec get_unlinked_vars_acc ?(id_thread=0) vlist = function
   | Var v -> 
       begin
-        match get_link ~id_thread v with 
+        match get_link ~id_thread ~name:"get_unlinked_vars_acc" v with 
         | TLink t -> get_unlinked_vars_acc ~id_thread vlist t
         | _ -> if not (List.memq v (!vlist)) then vlist := v :: (!vlist)
       end
@@ -1257,7 +1261,7 @@ let get_unlinked_vars_acc_constra ?(id_thread=0) vlist c = iter_constraints (get
 
 let rec mark_variables ?(id_thread=0) = function
   | Var v ->
-      begin match get_link ~id_thread v with
+      begin match get_link ~id_thread ~name:"mark_variables" v with
       | VLink _ -> ()
       | NoLink -> link ~id_thread v (VLink v)
       | _ -> Parsing_helper.internal_error __POS__ "[Terms.mark_variables] Unexpected links"
@@ -1272,7 +1276,7 @@ let mark_variables_fact ?(id_thread=0) = function
 let rec mark_variables_local ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"mark_variables_local" v with
         | Marked -> ()
         | _ -> link_local ~id_thread v Marked
       end
@@ -1316,7 +1320,7 @@ let get_vars_generic ?(id_thread=0) (f_iter_term:(term -> unit) -> 'a -> unit) (
 let rec mark_variables_local4 ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link ~id_thread v with 
+        match get_link ~id_thread ~name:"mark_variables_local4" v with 
         | TLink t -> mark_variables_local4 ~id_thread t
         | Marked -> ()
         | _ -> link_local ~id_thread v Marked
@@ -1337,7 +1341,7 @@ let get_vars_generic4 ?(id_thread=0) (f_iter_term:(term -> unit) -> 'a -> unit) 
 let rec are_variable_included2_aux ?(id_thread=0) = function
   | Var v -> 
       begin
-        match get_link ~id_thread v with
+        match get_link ~id_thread ~name:"are_variable_included2_aux" v with
         | TLink t -> are_variable_included2_aux ~id_thread t
         | Marked -> true
         | _ -> false
@@ -1364,7 +1368,7 @@ let rec copy_term3 ?(id_thread=0) = function
   | FunApp(f,l) as t ->
       let l' =  List.mapq (copy_term3 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
-  | Var v as t -> match get_link ~id_thread v with
+  | Var v as t -> match get_link ~id_thread ~name:"copy_term3" v with
       | NoLink -> t
       | TLink l -> l
       | _ -> internal_error __POS__ "unexpected link in copy_term3"
@@ -1383,7 +1387,7 @@ let rec copy_term4 ?(id_thread=0) = function
   | FunApp(f,l) as t ->
       let l' = List.mapq (copy_term4 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
-  | Var v as t -> match get_link ~id_thread v with
+  | Var v as t -> match get_link ~id_thread ~name:"copy_term4" v with
       | NoLink -> t
       | TLink l -> copy_term4 ~id_thread l
       | _ -> internal_error __POS__ "unexpected link in copy_term4"
@@ -1442,7 +1446,7 @@ let get_session_id_from_occurrence = function
 
 let rec put_constants ?(id_thread=0) = function
   | Var v ->
-      begin match get_link ~id_thread v with
+      begin match get_link ~id_thread ~name:"put_constants" v with
         | TLink t -> ()
         | NoLink ->
             link_unsafe ~id_thread v (TLink (FunApp({ f_name = Renamable v.vname;
@@ -2448,7 +2452,7 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
     | [],[] -> [],[]
     | [],_ | _,[] -> internal_error __POS__ "The two lists should have the same length"
     | t::q, Var(v)::uq when v.unfailing ->
-        begin match get_link ~id_thread v with
+        begin match get_link ~id_thread ~name:"remove_uni_fail_var" v with
           | NoLink ->
               link ~id_thread v (TLink t);
               remove_uni_fail_var q uq
@@ -2498,7 +2502,7 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
 
   let rec get_may_fail_vars varsl term = match term with
     | Var(v) ->
-        begin match get_link ~id_thread v with
+        begin match get_link ~id_thread ~name:"get_may_fail_vars" v with
           | NoLink -> if v.unfailing && not (List.memq v (!varsl)) then varsl := v :: (!varsl)
           | TLink(t) -> get_may_fail_vars varsl t
           | _ -> internal_error __POS__ "Unexpected link"
@@ -2511,11 +2515,11 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
     | FunApp(f,_), FunApp(f',_) when f.f_cat = Failure && f'.f_cat = Failure -> raise False_inequality
     | Var(v) as tl, tr -> 
         begin 
-          match get_link ~id_thread v, tr with
+          match get_link ~id_thread ~name:"simplify_one_neq" v, tr with
           | TLink tl', _ -> simplify_one_neq tl' tr
           | _, Var(v') -> 
                 begin
-                  match get_link ~id_thread v' with
+                  match get_link ~id_thread ~name:"simplify_one_neq" v' with
                   | TLink tr' -> simplify_one_neq tl tr'
                   | _ -> tl, tr
                 end
@@ -2524,7 +2528,7 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
         end
     | tl, (Var(v) as tr) ->
         begin
-          match tl, get_link ~id_thread v with
+          match tl, get_link ~id_thread ~name:"simplify_one_neq" v with
           | _, TLink tr' -> simplify_one_neq tl tr'
           | FunApp(f,_), _ when v.unfailing = false && f.f_cat = Failure -> raise True_inequality
           | _, _ -> tl, tr
@@ -2751,4 +2755,4 @@ let rec iter_variables f = function
 let iter_term_fact f = function
   | Pred(_,args) -> List.iter f args
 
-let check_no_link ?(id_thread=0) = iter_variables (fun v -> if get_link ~id_thread v <> NoLink then assert(false))
+let check_no_link ?(id_thread=0) = iter_variables (fun v -> if get_link ~id_thread ~name:"check_no_link" v <> NoLink then assert(false))

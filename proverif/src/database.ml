@@ -11,7 +11,7 @@ open Concurrent
 
 let rec term_size id_thread = function
   | Var v ->
-      begin match Terms.get_link ~id_thread v with 
+      begin match Terms.get_link ~id_thread ~name:"term_size" v with 
       | TLink t -> term_size id_thread t 
       | _ -> 0
       end
@@ -30,7 +30,7 @@ let fact_size id_thread = function
 
 let rec term_size_unbound has_unbound = function
   | Var v ->
-      if Terms.get_link v = NoLink
+      if Terms.get_link ~name:"term_size_unbound" v = NoLink
       then has_unbound := true;
       0
   | FunApp(_,args) -> 1 + term_list_size_unbound has_unbound args
@@ -995,7 +995,7 @@ module MakeFeatureGeneration
 
     let rec feature_symbol_hyp has_unbound size depth width = function
       | Var v ->
-          begin match Terms.get_link v with 
+          begin match Terms.get_link ~name:"feature_symbol_hyp" v with
           | NoLink -> has_unbound := true
           | _ -> ()
           end
@@ -1019,7 +1019,7 @@ module MakeFeatureGeneration
 
     let rec feature_symbol_concl depth width = function
       | Var v ->
-          begin match Terms.get_link v with
+          begin match Terms.get_link ~name:"feature_symbol_concl" v with
           | NoLink -> Terms.link v (VLink v) (* Mark the variables*)
           | _ -> ()
           end

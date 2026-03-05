@@ -1345,6 +1345,7 @@ let add_value s =
         Param.additional_settings := (dummy_param, v') :: (!Param.additional_settings)
 
 let _ =
+  Printexc.record_backtrace true;
   try
     Arg.parse
     [ "-test", Arg.Unit (fun () ->
@@ -1399,6 +1400,7 @@ let _ =
   with
   | InputError(mess, ext) ->
       Parsing_helper.display_input_error mess ext
-  | e ->
+(*  | e ->
       Printexc.print_backtrace stdout;
       Parsing_helper.internal_error __POS__ (Printexc.to_string e)
+*)

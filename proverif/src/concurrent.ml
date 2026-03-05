@@ -28,7 +28,21 @@ let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) =
 module T = Mydomainslib.Task
 
 let numCores = Param.num_cores (*Domainslib.Domains.num_domains ()*)
-let pool = T.setup_pool ~num_domains:(!numCores-1) ()
+let domain_id = Domain.DLS.new_key (fun () -> 0)
+
+let pool_setup () = 
+  Printf.printf "Setting up pool with %d domains\n" !numCores;
+  let pool = T.setup_pool ~num_domains:(!numCores-1) () in
+  T.run pool (fun () -> 
+    let promises = 
+      List.init 10 (fun i -> 
+        T.async pool (fun i () -> Domain.DLS.set domain_id i; Printf.printf "Setting my ID: %d\n" i)
+      ) in
+    List.iter (fun p -> T.await pool p) promises 
+  );
+  pool
+
+let pool = pool_setup ()
 
 let run_concurrent f = T.run pool f
 
@@ -44,7 +58,7 @@ let list_exists flag (f: int -> token -> 'a -> bool) (l : 'a list) = match l wit
   | [] -> false
   | t::q ->
       let promises = List.map (fun a -> T.async pool (fun i () -> Printf.printf "This is my ID list_exists: %d\n" i; f i (create_token flag) a)) q in
-      (f Terms.default_thread_id (create_token flag) t) || List.exists (fun p -> T.await pool p) promises
+      (f 0 (create_token flag) t) || List.exists (fun p -> T.await pool p) promises
 
 let list_exists_ext flag (f: int -> token -> 'a -> bool) (f_next: unit -> bool) (l : 'a list) = 
   let promises = List.map (fun a -> T.async pool (fun i () -> Printf.printf "This is my ID list_exists_ext: %d\n" i; f i (create_token flag) a)) l in

@@ -197,10 +197,10 @@ val copy_realquery : ?id_thread:int -> Pitypes.realquery -> Pitypes.realquery
  *)
 val current_bound_vars : binder list array ref
 val cleanup : ?id_thread:int -> unit -> unit
-val get_link : ?id_thread:int -> binder -> linktype
+val get_link : ?id_thread:int -> ?name:string -> binder -> linktype
 val default_thread_id : int 
 val link : ?id_thread:int -> binder -> linktype -> unit
-val link_unsafe : ?id_thread:int -> binder -> linktype -> unit
+val link_unsafe : ?id_thread:int -> ?name:string -> binder -> linktype -> unit
 val link_var : ?id_thread:int -> term -> linktype -> unit
 val auto_cleanup : ?id_thread:int -> (unit -> 'a) -> 'a
 val auto_cleanup_noexception : ?id_thread:int -> (unit -> 'a) -> 'a
@@ -230,7 +230,7 @@ val copy_conclusion_query2 : ?id_thread:int -> Pitypes.conclusion_query -> Pityp
 val copy_realquery2 : ?id_thread:int -> Pitypes.realquery -> Pitypes.realquery
 
 exception NoMatch
-val match_terms : ?id_thread:int -> term -> term -> unit
+val match_terms : ?id_thread:int -> ?name:string -> term -> term -> unit
 val match_facts : ?id_thread:int -> fact -> fact -> unit
 
 val match_facts_unblock : ?id_thread:int -> fact -> fact -> unit

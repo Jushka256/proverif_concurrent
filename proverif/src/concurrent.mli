@@ -14,6 +14,8 @@ val set_token : token -> unit
 (** Takes a token and continuation function, returns true if the flag is set otherwise runs the continuation.  For use with Or *)
 val check_token : token -> (unit -> 'a) -> (unit -> 'a) -> 'a
 
+val domain_id : int Domain.DLS.key
+
 (** Runs a boolean function on each element of a list concurrently, returns or of results 
     Must only be run by the main thread. *)
 val list_exists : flag -> (int -> token -> 'a -> bool) -> 'a list -> bool 
