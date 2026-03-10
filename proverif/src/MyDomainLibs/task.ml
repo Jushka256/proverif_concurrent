@@ -119,7 +119,8 @@ let run (type a) pool (f : unit -> a) : a =
         begin
           try
             match Multi_channel.recv_poll pd.task_chan with
-            | Work f -> f 0
+            | Work f -> 
+                Printf.printf "Pool loop\n";f 0
             | Quit -> failwith "Task.run: tasks are active on pool"
           with Exit -> Domain.cpu_relax ()
         end;
