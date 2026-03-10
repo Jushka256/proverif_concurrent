@@ -1375,10 +1375,13 @@ let rec copy_term3 ?(id_thread=0) = function
 
 let copy_fact3 ?(id_thread=0) = function
     Pred(p,l) as fact ->
+      Printf.printf "Copy_fact3 %d\n" id_thread;
       let l' = List.mapq (copy_term3 ~id_thread) l in
       if l == l' then fact else Pred(p, l')
 
-let rec copy_constra3 ?(id_thread=0) c = map_constraints (copy_term3 ~id_thread) c
+let rec copy_constra3 ?(id_thread=0) c = 
+  Printf.printf "Copy_constra3 %d\n" id_thread;
+  map_constraints (copy_term3 ~id_thread) c
 
 (* [copy_term4] follows links [Tlink] recursively,
    but does not rename variables *)

@@ -317,7 +317,9 @@ let swap_eq (leq, req) = (req, leq)
 let rewrite_system = ref []
 let order = ref []
 
-let rec normal_form ?(id_thread=0) = function
+let rec normal_form ?(id_thread=0) = 
+  Printf.printf "Normal Form %d\n" id_thread;
+  function
     Var v -> Var v
   | FunApp(f,l) ->
       let t' = FunApp(f, List.map (normal_form ~id_thread) l) in
@@ -2595,7 +2597,9 @@ let elim_universal_variable constra =
 
 (*** Combining the simplification ***)
 
-let copy_neq_list3 ?(id_thread=0) = List.map (fun (t1,t2) -> copy_term3 ~id_thread t1, copy_term3 ~id_thread t2)
+let copy_neq_list3 ?(id_thread=0) = 
+  Printf.printf "copy_neq_list3 %d\n" id_thread;
+  List.map (fun (t1,t2) -> copy_term3 ~id_thread t1, copy_term3 ~id_thread t2)
 
 let feed_new_constra ?(id_thread=0) accu_keep_vars nat_vars accu constra =
   (* TO DO do not keep "syntactic" terms after unification modulo?
@@ -3221,7 +3225,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
   with NoMatch -> false 
 
 let implies_constraints ?(id_thread=0) = implies_constraints_copy2 ~id_thread (fun c -> c)
-let implies_constraints3 ?(id_thread=0) = implies_constraints_copy2 ~id_thread Terms.copy_constra3
+let implies_constraints3 ?(id_thread=0) = implies_constraints_copy2 ~id_thread (Terms.copy_constra3 ~id_thread)
 let implies_constraints4 = implies_constraints_copy2 Terms.copy_constra4
 
 
