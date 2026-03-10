@@ -47,21 +47,21 @@ let pool = pool_setup ()
 let run_concurrent f = T.run pool f
 
 let or_function flag (fn1:int->token->bool) (fn2:unit->bool) = 
-  let prom1 = T.async pool (fun i () -> Printf.printf "This is my ID or_function: %d\n" i; fn1 i (create_token flag)) in
+  let prom1 = T.async pool (fun i () -> Domain.DLS.set domain_id i; Printf.printf "This is my ID or_function: %d\n" i; fn1 i (create_token flag)) in
   fn2 () || T.await pool prom1
 
 let bool_function_list_or fl (fns : (int -> token -> bool) list)  : bool =
-  let promises = List.map (fun fn -> T.async pool (fun i () -> Printf.printf "This is my ID bool_function_list_or: %d\n" i;fn i (create_token fl))) fns in
+  let promises = List.map (fun fn -> T.async pool (fun i () -> Domain.DLS.set domain_id i; Printf.printf "This is my ID bool_function_list_or: %d\n" i;fn i (create_token fl))) fns in
   List.exists (fun p -> T.await pool p) promises
 
 let list_exists flag (f: int -> token -> 'a -> bool) (l : 'a list) = match l with
   | [] -> false
   | t::q ->
-      let promises = List.map (fun a -> T.async pool (fun i () -> Printf.printf "This is my ID list_exists: %d\n" i; f i (create_token flag) a)) q in
+      let promises = List.map (fun a -> T.async pool (fun i () -> Domain.DLS.set domain_id i; Printf.printf "This is my ID list_exists: %d\n" i; f i (create_token flag) a)) q in
       (f 0 (create_token flag) t) || List.exists (fun p -> T.await pool p) promises
 
 let list_exists_ext flag (f: int -> token -> 'a -> bool) (f_next: unit -> bool) (l : 'a list) = 
-  let promises = List.map (fun a -> T.async pool (fun i () -> Printf.printf "This is my ID list_exists_ext: %d\n" i; f i (create_token flag) a)) l in
+  let promises = List.map (fun a -> T.async pool (fun i () -> Domain.DLS.set domain_id i; Printf.printf "This is my ID list_exists_ext: %d\n" i; f i (create_token flag) a)) l in
   f_next () || List.exists (fun p -> T.await pool p) promises
 
 (* Need to coordinate checking/setting the flag, I'm thinking atomic actions will make this 
