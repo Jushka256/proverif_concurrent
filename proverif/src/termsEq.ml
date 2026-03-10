@@ -1269,7 +1269,9 @@ let auto_cleanup_eq_tail ?(id_thread=0) f_apply f_next f_Unify f_NoBacktrack =
     (fun () -> reset (); f_Unify ())
     (fun r -> reset (); f_NoBacktrack r)
 
-let rec occur_check_eq_modulo_aux_tail ?(id_thread=0) restwork restwork_occurs f_clean f_Unify f_NoBacktrack  v t = match t with
+let rec occur_check_eq_modulo_aux_tail ?(id_thread=0) restwork restwork_occurs f_clean f_Unify f_NoBacktrack  v t = 
+  Concurrent.check_domain_id id_thread "occur_check_eq_modulo_aux_tail";
+  match t with
   | Var v' ->
       begin match Terms.get_link ~id_thread ~name:"occur_check_eq_modulo_aux_tail" v' with
         | TLink t' -> occur_check_eq_modulo_aux_tail ~id_thread restwork restwork_occurs f_clean f_Unify f_NoBacktrack v t'
@@ -1351,6 +1353,7 @@ and close_term_eq_synt_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrac
          because we make a tail call. *)
       restwork f_clean f_Unify f_NoBacktrack t
   | (FunApp(f,l) as t) ->
+      Concurrent.check_domain_id id_thread "close_term_eq_synt_tail";
       auto_cleanup_eq_tail ~id_thread (fun f_clean' f_Unify' f_NoBacktrack' ->
         restwork f_clean' f_Unify' f_NoBacktrack' t
       ) f_clean (fun () -> match f.f_cat with
@@ -1455,6 +1458,7 @@ and unify_modulo_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack t1 t
             | _ -> internal_error __POS__ "Unexpected link in unify 2"
           end
       | (FunApp(f1, l1), FunApp(f2,l2)) ->
+          Concurrent.check_domain_id id_thread "unify_modulo_tail";
           if (non_syntactic f1) != (non_syntactic f2)
           then f_Unify_2 ()
           else unify_modulo_list_tail ~id_thread restwork f_clean_2 f_Unify_2 f_NoBacktrack_2 l1 l2
@@ -1625,6 +1629,7 @@ let close_term_eq_synt id_thread restwork t =
   ) (fun () -> ()) (fun () -> raise Unify) (fun r -> raise (NoBacktrack r)) t
 
 let unify_modulo_list_save ?(id_thread=0) (restwork:unit -> 'a) (l1:term list) (l2:term list) =
+  Concurrent.check_domain_id id_thread "unify_modulo_list_save";
   unify_modulo_list_tail ~id_thread (fun f_clean f_Unify f_NoBacktrack ->
     try
       let r = restwork () in
@@ -1639,12 +1644,15 @@ let unify_modulo_list_save ?(id_thread=0) (restwork:unit -> 'a) (l1:term list) (
   ) (fun () -> ()) (fun () -> raise Unify) (fun r -> raise (NoBacktrack r)) l1 l2
 
 let unify_modulo_save ?(id_thread=0) restwork t1 t2 =
+    Concurrent.check_domain_id id_thread "unify_modulo_save";
     unify_modulo_list_save ~id_thread restwork [t1] [t2]
 
 let unify_modulo_list restwork l1 l2 =
+  Concurrent.check_domain_id 0 "unify_modulo_list";
   unify_modulo_list_save (fun () -> auto_cleanup restwork) l1 l2
 
 let unify_modulo ?(id_thread=0) restwork t1 t2 = 
+  Concurrent.check_domain_id id_thread "unify_modulo";
   unify_modulo_save ~id_thread (fun () -> auto_cleanup ~id_thread restwork) t1 t2
 
 let close_geq_eq_synt id_thread restwork (t1,n,t2) =
@@ -2530,6 +2538,7 @@ let rec make_disequation_from_unify ?(id_thread=0) keep_vars assoc_gen_with_var 
 let rec close_disequation_eq ?(id_thread=0) restwork = function
   | [] -> restwork ()
   | (t1,t2)::l ->
+      Concurrent.check_domain_id id_thread "close_disequation_eq";
       try
         unify_modulo ~id_thread (fun () ->
           close_disequation_eq ~id_thread restwork l;
@@ -2538,6 +2547,7 @@ let rec close_disequation_eq ?(id_thread=0) restwork = function
       with Unify -> ()
 
 let unify_disequation ?(id_thread=0) nextf accu constra =
+  Concurrent.check_domain_id id_thread "unify_disequation";
   let assoc_gen_with_var = ref [] in (* Association list general var * var *)
 
   assert (!Terms.current_bound_vars.(id_thread) == []);
@@ -2624,6 +2634,7 @@ let feed_new_constra ?(id_thread=0) accu_keep_vars nat_vars accu constra =
     Terms.cleanup ~id_thread ()
 
 let simplify_neq_conj ?(id_thread=0) accu_keep_vars nat_vars neq_conj =
+  Concurrent.check_domain_id id_thread "simplify_neq_conj";
   Terms.auto_cleanup ~id_thread (fun () ->
     let accu = ref [] in
     List.iter (unify_disequation ~id_thread elim_universal_variable accu) neq_conj;
@@ -2633,6 +2644,8 @@ let simplify_neq_conj ?(id_thread=0) accu_keep_vars nat_vars neq_conj =
   )
 
 let check_neq_conj neq_conj =
+  Concurrent.check_domain_id 0 "check_neq_conj";
+  
   Terms.auto_cleanup (fun () ->
     let accu = ref [] in
     List.iter (unify_disequation elim_universal_variable accu) neq_conj;
@@ -2659,10 +2672,11 @@ let rec simplify_geq2 (t1,n,t2) =
 
   (t1',(n1 + n - n2), t2')
 
-let simplify_neq_conj2 neq_conj =
+let simplify_neq_conj2 ?(id_thread=0) neq_conj =
+  Concurrent.check_domain_id id_thread "simplify_neq_conj2";
   Terms.auto_cleanup (fun () ->
     let accu = ref [] in
-    List.iter (unify_disequation elim_universal_variable accu) neq_conj;
+    List.iter (unify_disequation ~id_thread elim_universal_variable accu) neq_conj;
     List.iter (function [] -> raise NoMatch | _ -> ()) !accu;
     !accu
   )
@@ -2864,6 +2878,7 @@ let simplify_constraints_optimal keepvars_op f_next f_next_inst c =
    is called; these links must remain. *)
 
 let rec check_after_inst f_next constra =
+  Concurrent.check_domain_id 0 "check_after_inst";
   let nat_vars = ref [] in
   List.iter (check_is_nat nat_vars) constra.is_nat;
   let geq1 = List.map (simplify_geq nat_vars) constra.geq in
@@ -3142,7 +3157,7 @@ let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 con
 
         (* We keep only the disequalities of [constraints2] that are not
           trivially implied by [constraints1] *)
-        let neq2 = simplify_neq_conj2 constraints2'.neq in
+        let neq2 = simplify_neq_conj2 ~id_thread constraints2'.neq in
         let neq2' =
           List.filter (fun neq_disj2 ->
             not (List.exists (fun neq_disj1 -> implies_constraint ~id_thread neq_disj1 neq_disj2) constraints1.neq)

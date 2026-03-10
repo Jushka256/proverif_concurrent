@@ -33,6 +33,9 @@ let _ = Domain.DLS.set domain_id 0
 
 let acc_domain_id = Atomic.make 0
 
+let check_domain_id i str = 
+  if Domain.DLS.get domain_id <> i then failwith (Printf.sprintf "%s: id_thread = %d, current_thread = %d" str i (Domain.DLS.get domain_id))
+
 let get_domain_id () = 
   let x = Domain.DLS.get domain_id in
   if x = -1

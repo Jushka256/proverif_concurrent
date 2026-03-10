@@ -31,3 +31,5 @@ val bool_function_list_or : flag -> (int -> token -> bool) list ->  bool
 val or_function : flag -> (int -> token -> bool) -> (unit -> bool) -> bool
 
 val run_concurrent : (unit -> 'a) -> 'a
+
+val check_domain_id : int -> string -> unit
