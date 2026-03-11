@@ -47,6 +47,7 @@ let rec close_term_eq id_thread restwork = function
       end
 
   | FunApp(f,l) ->
+      Concurrent.check_domain_id id_thread "close_term_eq";
       close_list_eq ~id_thread close_term_eq (fun l' ->
         restwork (FunApp(f,l'));
         match f.f_cat with
@@ -106,6 +107,7 @@ struct
   let close_hyp_list_modulo_eq ?(id_thread=0) = close_list_eq ~id_thread close_hyp_modulo_eq
 
   let close_modulo_eq restwork cl =
+    Concurrent.check_domain_id 0 "close_modulo_eq";
     close_hyp_list_modulo_eq (fun hyp_l ->
       close_fact_eq (fun concl ->
         close_constra_eq (fun constra ->
@@ -147,6 +149,7 @@ struct
     if hasEquations() then close_modulo_eq restwork cl else restwork cl
       
   let close_hyp_modulo_eq restwork cl =
+    Concurrent.check_domain_id 0 "close_hyp_modulo_eq";
     close_hyp_list_modulo_eq (fun hyp_l ->
       close_constra_eq (fun constra ->
         let cl' =
@@ -219,6 +222,7 @@ let rec close_term_destr_eq accu_constra restwork = function
         | _ -> internal_error __POS__ "unexpected link in close_term_destr_eq"
       end
   | FunApp(f,l) ->
+      Concurrent.check_domain_id 0 "close_term_destr_eq";
       close_list_destr_eq close_term_destr_eq accu_constra (fun accu_constra' l' ->
         let eqlist = Terms.red_rules_fun f in
 
@@ -236,6 +240,7 @@ let rec close_term_destr_eq accu_constra restwork = function
 
 let close_fact_destr_eq accu_constra restwork = function
     Pred(p,l) ->
+      Concurrent.check_domain_id 0 "close_fact_destr_eq";
       close_list_destr_eq close_term_destr_eq accu_constra
         (fun accu_constra' l' ->
           Terms.auto_cleanup (fun () ->
@@ -249,6 +254,7 @@ let close_fact_destr_eq accu_constra restwork = function
             ) l
 
 let close_term_no_fail_destr_eq accu_constra restwork t =
+  Concurrent.check_domain_id 0 "close_term_no_fail_destr_eq";
   close_term_destr_eq accu_constra (fun accu_constra' t' ->
     Terms.auto_cleanup (fun () ->
       try
@@ -1611,6 +1617,7 @@ and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack
   before raising it again.
 *)
 let close_term_eq_synt id_thread restwork t =
+  Concurrent.check_domain_id id_thread "close_term_eq_synt";
   close_term_eq_synt_tail ~id_thread (fun f_clean f_Unify f_NoBacktrack t' ->
     try
       let r =
@@ -2332,7 +2339,7 @@ let rec get_term_status ?(id_thread=0) nat_vars depth = function
     We assume here that the next functions do not raises exceptions.
    *)
 let remove_nat_diseq_neq_conj_exc f_next f_next_geq f_next_inst nat_vars neq =
-
+  Concurrent.check_domain_id 0 "remove_nat_diseq_neq_conj_exc";
   let rec explore_disj f_next f_next_geq f_next_inst = function
     | [] -> f_next false
     | (Var v1,t2)::q ->
@@ -2410,7 +2417,7 @@ let remove_nat_diseq_neq_conj_exc f_next f_next_geq f_next_inst nat_vars neq =
 
 
 let remove_nat_diseq_neq_conj ?(id_thread=0) f_next f_next_geq f_next_inst nat_vars keep_vars neq =
-
+  Concurrent.check_domain_id id_thread "remove_nat_diseq_neq_conj";
   let rec explore_disj f_next f_next_geq f_next_inst = function
     | [] -> f_next false
     | (Var v1,t2)::q ->
@@ -2608,7 +2615,6 @@ let elim_universal_variable constra =
 (*** Combining the simplification ***)
 
 let copy_neq_list3 ?(id_thread=0) = 
-  Printf.printf "copy_neq_list3 %d\n" id_thread;
   List.map (fun (t1,t2) -> copy_term3 ~id_thread t1, copy_term3 ~id_thread t2)
 
 let feed_new_constra ?(id_thread=0) accu_keep_vars nat_vars accu constra =
@@ -2674,7 +2680,7 @@ let rec simplify_geq2 (t1,n,t2) =
 
 let simplify_neq_conj2 ?(id_thread=0) neq_conj =
   Concurrent.check_domain_id id_thread "simplify_neq_conj2";
-  Terms.auto_cleanup (fun () ->
+  Terms.auto_cleanup ~id_thread (fun () ->
     let accu = ref [] in
     List.iter (unify_disequation ~id_thread elim_universal_variable accu) neq_conj;
     List.iter (function [] -> raise NoMatch | _ -> ()) !accu;
@@ -2696,6 +2702,7 @@ let simplify_neq_conj2 ?(id_thread=0) neq_conj =
    keep_vars due to inequalities. *)
 
 let simplify_constraints_keepvars ?(id_thread=0) f_next f_next_inst keep_vars c =
+  Concurrent.check_domain_id id_thread "simplify_constraints_keepvars";
   let nat_vars = ref [] in
 
   (* Check the predicates is_nat *)
@@ -2798,6 +2805,7 @@ let rec simplify_after_inst ?(id_thread=0) f_next f_next_inst added_nat keep_var
   with FalseConstraint -> ()
 
 and simplify_after_geq ?(id_thread=0) f_next f_next_inst nat_vars added_nat keep_vars constra =
+  Concurrent.check_domain_id id_thread "simplify_after_geq";
   (* In this case, we first check that geq has a solution. *)
   try
     get_equalities ~id_thread (fun eq_left eq_right assoc number_vertices distance ->
@@ -2907,6 +2915,7 @@ let rec check_after_inst f_next constra =
   ) !nat_vars  neq1
 
 and check_after_geq f_next nat_vars constra =
+  Concurrent.check_domain_id 0 "check_after_geq";
   (* In this case, we first check that geq as a solution. *)
   get_equalities (fun eq_left eq_right assoc number_vertices distance ->
     Terms.auto_cleanup (fun () ->
@@ -2923,6 +2932,7 @@ and check_after_geq f_next nat_vars constra =
   ) constra.geq
 
 let check_constraints c =
+  Concurrent.check_domain_id 0 "check_constraints";
   Terms.auto_cleanup (fun () ->
     let c1 = Terms.copy_constra2 c in
     Terms.cleanup ();
@@ -2977,6 +2987,7 @@ let check_closed_is_nat t =
   with Unify -> false
 
 let check_closed_neq_disj neq =
+  Concurrent.check_domain_id 0 "check_closed_neq_disj";
   let assoc_gen_with_var = ref [] in (* Association list general var * var *)
   (* all general variable in [constra] are replaced by classic variables *)
   let (left_terms, right_terms) = List.fold_left (fun (acc_l,acc_r) (t1,t2) -> (replace_f_var assoc_gen_with_var t1)::acc_l, (replace_f_var assoc_gen_with_var t2)::acc_r) ([],[]) neq in
@@ -3143,6 +3154,7 @@ let implies_constraints ?(id_thread=0) nat_vars1 geq1_data constraints1 constrai
 exception Implied
 
 let implies_constraints_copy2 ?(id_thread=0) f_copy get_vars_op constraints1 constraints2 =
+  Concurrent.check_domain_id id_thread "implies_constraints_copy2";
   try 
     if not (is_true_constraints constraints2) 
     then
@@ -3248,6 +3260,7 @@ let implies_constraints4 = implies_constraints_copy2 Terms.copy_constra4
    a solution of the constraints [constra].
    Raises [FalseConstraint] when there is no solution. *)
 let get_solution f_next constra =
+  Concurrent.check_domain_id 0 "get_solution";
   check_after_inst (fun constra1 ->
     (* Gather nat vars *)
     let nat_vars = ref [] in
@@ -3323,6 +3336,7 @@ let rec simp_eq = function
 
 (* We assume that the terms in the list do not contain any link. *)
 let exists_distinct_subterms_equal_modulo term_list =
+  Concurrent.check_domain_id 0 "exists_distinct_subterms_equal_modulo";
   Terms.auto_cleanup (fun () ->
     (* We first link variables with new constants *)
     List.iter Terms.put_constants term_list;

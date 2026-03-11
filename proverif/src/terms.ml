@@ -414,10 +414,12 @@ let rec occurs_vars_all bl = function
   | FunApp(_,l) -> List.for_all (occurs_vars_all bl) l
 
 let get_link ?(id_thread=0) ?(name="") v = 
+  Concurrent.check_domain_id id_thread "get_link";
   assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name));
   v.link.(id_thread) (*[@@inline] *)
 
 let link_unsafe ?(id_thread=0) ?(name="") v l = 
+  Concurrent.check_domain_id id_thread "link_unsafe";
   assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name));
   v.link.(id_thread) <- l (*[@@inline] *)
 
@@ -518,7 +520,9 @@ let equal_facts f1 f2 =
 (*********************)
 (* Copy and cleanup *)
 
-let get_default_link v = v.link.(0) [@@inline]
+let get_default_link v = 
+  Concurrent.check_domain_id 0 "get_default_link";
+  v.link.(0) [@@inline]
 
 let current_bound_vars = ref (Array.make !Param.num_cores [])
 
@@ -558,7 +562,9 @@ let link ?(id_thread=0) v l =
   link_unsafe ~id_thread v l
 
 let link_var ?(id_thread=0) t l = match t with
-  | Var(v) -> link ~id_thread v l
+  | Var(v) -> 
+      Concurrent.check_domain_id id_thread "link_var";
+      link ~id_thread v l
   |_ -> internal_error __POS__ "[link_var] The term must be a variable"
 
 let cleanup ?(id_thread=0) () =
@@ -732,6 +738,7 @@ let new_gen_var t may_fail =
 let rec generalize_vars_not_in ?(id_thread=0) vlist = function
     Var v ->
       begin
+        Concurrent.check_domain_id id_thread "generalize_vars_not_in";
         if List.memq v vlist then Var v else
         match get_link ~id_thread ~name:"generalize_vars_not_in" v with
         | NoLink ->
@@ -747,6 +754,7 @@ let rec generalize_vars_not_in ?(id_thread=0) vlist = function
 let rec generalize_vars_in ?(id_thread=0) vlist = function
     Var v ->
       begin
+        Concurrent.check_domain_id id_thread "generalize_vars_in";
         if not (List.memq v vlist) then Var v else
         match get_link ~id_thread ~name:"generalize_vars_in" v with
           NoLink ->
@@ -936,6 +944,7 @@ let unify_facts_phase ?(id_thread=0) f1 f2 =
       List.iter2 (unify ~id_thread) t1 t2
 
 let are_unifiable_facts ?(id_thread=0) f1 f2 =
+  Concurrent.check_domain_id id_thread "are_unifiable_facts";
   try
     auto_cleanup ~id_thread (fun () ->
       unify_facts ~id_thread f1 f2;
@@ -1031,6 +1040,7 @@ and copy_conclusion_query2 ?(id_thread=0) = function
 exception NoMatch
 
 let rec match_terms ?(id_thread=0) ?(name="") t1 t2 =
+  Concurrent.check_domain_id id_thread "match_terms";
    match (t1,t2) with
      (Var v), t ->
        begin
@@ -1100,6 +1110,7 @@ let match_facts_unblock_inj_phase_geq ?(id_thread=0) f1 f2 = match (f1,f2) with
       List.iter2 (match_terms ~id_thread ~name:"match_facts_unblock_inj_phase_geq") args1 args2
 
 let are_matched_facts ?(id_thread=0) f1 f2 =
+  Concurrent.check_domain_id id_thread "are_matched_facts";
   assert (!current_bound_vars.(id_thread) == []);
   try
     match_facts ~id_thread f1 f2;
@@ -1131,6 +1142,7 @@ let rec occurs_test_loop ?(id_thread=0) seen_vars v t =
    | FunApp(_,l) -> List.exists (occurs_test_loop ~id_thread seen_vars v) l
 
 let matchafactstrict ?(id_thread=0) finst fgen =
+  Concurrent.check_domain_id id_thread "matchafactstrict";
   assert (!current_bound_vars.(id_thread) == []);
   try
     match_facts ~id_thread fgen finst;
@@ -2497,7 +2509,9 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
      (thanks to remove_uni_fail_var), but may contain may-fail variables.
      These variables will be removed in the next steps by case distinctions. *)
 
-  let rec generalize_prev_args prev_args = match prev_args with
+  let rec generalize_prev_args prev_args = 
+    Concurrent.check_domain_id id_thread "generalize_prev_args";
+    match prev_args with
     | [] -> []
     | term_list::q ->
         (* Get the variables *)
@@ -2515,7 +2529,7 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
         in
 
         (* Remove the universal may-fail variables *)
-        let (lterms_left,lterms_right) = auto_cleanup (fun () ->
+        let (lterms_left,lterms_right) = auto_cleanup ~id_thread (fun () ->
           remove_uni_fail_var lht_list term_list'
           )
         in
@@ -2574,6 +2588,7 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
   let destructors = ref [] in
 
   let rec remove_may_fail_term_neq list_neq =
+    Concurrent.check_domain_id id_thread "remove_may_fail_term_neq";
     (* Simplify Neq *)
 
     let list_neq' = List.fold_left (fun lneq (lterm_left,lterm_right) ->
@@ -2749,6 +2764,7 @@ let get_rewrite_rule_status (l,r,constra) =
   ToCheck(index_to_check,index_to_execute)
 
 let get_all_rewrite_rules_status ?(id_thread=0) =
+  Concurrent.check_domain_id id_thread "get_all_rewrite_rules_status";
   let hashsymb = HashtblSymbol.create 7 in
 
   fun f ->

@@ -67,7 +67,11 @@ let initialise () =
   T.teardown_pool !pool;
   pool := T.setup_pool ~num_domains:(!numCores-1) ()
 
-let run_concurrent f = T.run !pool f
+let run_concurrent f = 
+  check_domain_id 0 "run_concurrent";
+  let r = T.run !pool f in
+  check_domain_id 0 "run_concurrent (2)";
+  r
 
 let or_function flag (fn1:int->token->bool) (fn2:unit->bool) = 
   let prom1 = T.async !pool (fun () -> let i = get_domain_id () in Printf.printf "This is my ID or_function: %d\n" i; fn1 i (create_token flag)) in

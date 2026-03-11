@@ -184,6 +184,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     let rec match_fact_with_hyp nextf fact1 passed_hyp = function
       | [] -> raise Terms.NoMatch
       | ((_,fact2) as f2)::fact_l ->
+          Concurrent.check_domain_id 0 "match_fact_with_hyp";
           try
             Terms.auto_cleanup (fun () ->
               H.match_hyp fact1 fact2;
@@ -199,6 +200,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     (* Main function for subsumption of two clauses. *)
 
     let implies_internal cl1 sub_data1 cl2 sub_data2 =
+      Concurrent.check_domain_id 0 "implies_internal";
       try
         Terms.auto_cleanup (fun () ->
           begin match cl1.C.conclusion with
@@ -231,8 +233,9 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     let rec match_fact_with_hyp_concurrent nextf id_thread tok fact1 passed_hyp = function
       | [] -> raise Terms.NoMatch
       | ((_,fact2) as f2)::fact_l ->
+          Concurrent.check_domain_id id_thread "match_fact_with_hyp_concurrent";
           try
-            Terms.auto_cleanup (fun () ->
+            Terms.auto_cleanup ~id_thread (fun () ->
               H.match_hyp ~id_thread fact1 fact2;
               nextf (List.rev_append passed_hyp fact_l)
             )
@@ -249,6 +252,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     let implies_internal_concurrent ?(id_thread=0) tok cl1 sub_data1 cl2 sub_data2 =
       try
+        Concurrent.check_domain_id id_thread "implies_internal_concurrent";
         Terms.auto_cleanup ~id_thread (fun () ->
           begin match cl1.C.conclusion with
             | Pred(p, []) when p == Param.bad_pred -> ()
@@ -308,6 +312,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       | [] -> raise Terms.NoMatch
       | (_,fact2)::fact_l ->
           try
+            Concurrent.check_domain_id 0 "set_match_fact_with_hyp";
             Terms.auto_cleanup (fun () ->
               H.match_hyp fact1 fact2;
               nextf ()
@@ -322,6 +327,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
 
     let set_implies_block cl1 sub_data1 cl2 sub_data2 =
       try
+        Concurrent.check_domain_id 0 "set_implies_block";
         Terms.auto_cleanup (fun () ->
           begin match cl1.C.conclusion with
             | Pred(p, []) when p == Param.bad_pred -> ()
@@ -366,6 +372,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       | [] -> raise Terms.NoMatch
       | ((_,fact2) as f2)::fact_l ->
           try
+            Concurrent.check_domain_id 0 "mixed_match_fact_with_hyp";
             Terms.auto_cleanup (fun () ->
               H.match_hyp fact1 fact2;
               nextf f2 (List.rev_append passed_hyp fact_l)
@@ -431,6 +438,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       in
 
       try
+        Concurrent.check_domain_id 0 "mixed_implies_internal";
         Terms.auto_cleanup (fun () ->
           begin match cl1.C.conclusion with
             | Pred(p, []) when p == Param.bad_pred -> ()
@@ -495,7 +503,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     (* Function for computing the subsumption data of a clause. *)
 
     let generate_subsumption_data cl =
-
+      Concurrent.check_domain_id 0 "generate_subsumotion_data";
       Terms.auto_cleanup (fun () ->
         (* Mark variables in conclusion *)
         Terms.mark_variables_fact cl.C.conclusion;
@@ -570,6 +578,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
       ) cl1.C.conclusion cl2.C.conclusion
 
     let implies_mod_eq_set cl1 cl2 =
+      Concurrent.check_domain_id 0 "implies_mode_eq_set";
       assert (!current_bound_vars.(Terms.default_thread_id) == []);
 
       let keep_vars = lazy (Terms.get_vars_generic C.iter_term_exclude_constraint cl2) in
@@ -1068,6 +1077,7 @@ module MakeFeatureGeneration
           (!size,!has_unbound)
 
     let generate_feature_vector_and_subsumption_data cl =
+      Concurrent.check_domain_id 0 "generate_feature_vector_and_subsumption_data";
       if !Param.feature then
         begin
           (* The feature table should be clean at that stage as well as
@@ -1980,6 +1990,7 @@ module MakeDatabase
       ) database.queue
 
     let check_history_reconstruction cl =
+      Concurrent.check_domain_id 0 "check_history_reconstruction";
       let (hypl,concl,_,constra) as rule = C.reduction_of cl in
       let (hypl',concl',hist',constra') as rule' = 
         Terms.auto_cleanup (fun () ->
