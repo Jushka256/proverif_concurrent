@@ -432,6 +432,9 @@ let rec occurs_vars_follows ?(id_thread=0) v = function
         end
   | FunApp(_,l) -> List.exists (occurs_vars_follows ~id_thread v) l
 
+let occurs_vars_follows ?(id_thread=0) v t = 
+  Concurrent.check_domain_id id_thread "occurs_vars_follows";
+  occurs_vars_follows ~id_thread v t
 
 (* [occurs_f f t] determines whether the function symbol [f] occurs in the term [t] *)
 
@@ -468,6 +471,10 @@ let rec is_public ?(id_thread=0) = function
       end
   | FunApp({ f_private = false; f_cat = (Eq _ | Tuple | Name _); _},args) -> List.for_all is_public args
   | _ -> false
+
+let is_public ?(id_thread=0) t = 
+  Concurrent.check_domain_id id_thread "is_public";
+  is_public ~id_thread t
 
 
 let rec contains_destructor = function
@@ -518,6 +525,7 @@ let current_bound_vars = ref (Array.make !Param.num_cores [])
 let default_thread_id = 0 [@@inline]
 
 let link ?(id_thread=0) v l =
+  Concurrent.check_domain_id id_thread "link";
   (* Check that message variables are linked only to messages,
      not to fail or to may-fail variables *)
   if not v.unfailing then
@@ -554,10 +562,12 @@ let link_var ?(id_thread=0) t l = match t with
   |_ -> internal_error __POS__ "[link_var] The term must be a variable"
 
 let cleanup ?(id_thread=0) () =
+  Concurrent.check_domain_id id_thread "cleanup";
   List.iter (fun v -> link_unsafe ~id_thread v NoLink) !current_bound_vars.(id_thread);
   !current_bound_vars.(id_thread) <- []
 
 let auto_cleanup ?(id_thread=0) f =
+  Concurrent.check_domain_id id_thread "auto_cleanup";
   let tmp_bound_vars = !current_bound_vars.(id_thread) in
   !current_bound_vars.(id_thread) <- [];
   try
@@ -571,6 +581,7 @@ let auto_cleanup ?(id_thread=0) f =
     raise x
 
 let auto_cleanup_noexception ?(id_thread=0) f =
+  Concurrent.check_domain_id id_thread "auto_cleanup_noexception";
   let tmp_bound_vars = !current_bound_vars.(id_thread) in
   !current_bound_vars.(id_thread) <- [];
   let r = f () in
@@ -579,6 +590,7 @@ let auto_cleanup_noexception ?(id_thread=0) f =
   r
 
 let auto_cleanup_failure ?(id_thread=0) f =
+  Concurrent.check_domain_id id_thread "auto_cleanup_failure";
   let tmp_bound_vars = !current_bound_vars.(id_thread) in
   !current_bound_vars.(id_thread) <- [];
   try
@@ -591,6 +603,7 @@ let auto_cleanup_failure ?(id_thread=0) f =
     raise x
 
 let auto_cleanup_save ?(id_thread=0) f =
+  Concurrent.check_domain_id id_thread "auto_cleanup_save";
   let tmp_bound_vars = !current_bound_vars.(id_thread) in
 
   let rec reset l =
@@ -618,6 +631,7 @@ let auto_cleanup_save ?(id_thread=0) f =
 let local_current_bound_vars = ref (Array.make !Param.num_cores [])
 
 let link_local ?(id_thread=0) v l = 
+  Concurrent.check_domain_id id_thread "link_local";
   !local_current_bound_vars.(id_thread) <- (v,get_link ~id_thread ~name:"link_local" v) :: !local_current_bound_vars.(id_thread);
   link_unsafe ~id_thread v l
 
@@ -625,7 +639,12 @@ let rec cleanup_local ?(id_thread=0) = function
   | [] -> ()
   | (v,l)::q_v -> link_unsafe ~id_thread v l; cleanup_local ~id_thread q_v
 
-let auto_cleanup_local_noexception ~id_thread f =
+let cleanup_local ?(id_thread=0) l = 
+  Concurrent.check_domain_id id_thread "cleanup_local";
+  cleanup_local ~id_thread l
+
+let auto_cleanup_local_noexception ?(id_thread=0) f =
+  Concurrent.check_domain_id id_thread "auto_cleanup_local_noexception";
   let tmp_bound_vars = !local_current_bound_vars.(id_thread) in
   !local_current_bound_vars.(id_thread) <- [];
   let r = f () in
@@ -634,6 +653,7 @@ let auto_cleanup_local_noexception ~id_thread f =
   r
 
 let auto_cleanup_local ?(id_thread=0) f =
+  Concurrent.check_domain_id id_thread "auto_cleanup_local";
   let tmp_bound_vars = !local_current_bound_vars.(id_thread) in
   !local_current_bound_vars.(id_thread) <- [];
   try
