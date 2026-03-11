@@ -342,6 +342,7 @@ struct
   (* Very good for termination - even if it does not solve all cases, of course *)
 
   let selection_fun_weight cl =
+    Concurrent.check_domain_id 0 "selection_fun_weight";
     (* [(nold, wold)] is the information for the hypotheses that are not more general than the conclusion.
      [(nold_m,wold_m,hold_m)] is the information for the hypotheses that are more general than the conclusion.
      We prefer selecting a hypothesis that is not more general than the conclusion, to avoid cycles, 
@@ -526,6 +527,8 @@ struct
     if r = -1 then W.selfun cl else r
   
   let initialize_before_saturation rulequeue =
+    Concurrent.check_domain_id 0 "initialize_before_saturation";
+    assert (!current_bound_vars.(0) == []);
     (* If no "nounif" instruction is given, first guess them by "selection_fun_weight" *)
     if !no_unif_set = [] || !Param.select_fun == Param.Term || !Param.select_fun == Param.TermMaxsize
     then

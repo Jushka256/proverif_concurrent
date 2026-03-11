@@ -1607,19 +1607,24 @@ module MakeSet
        the clause [cl] that has [vector] as feature vector. *)
     let implies set (cl, vector, sub_data) =
       let test_fun i tok elt =
-        Printf.printf "Test_fun (id_thread=%d,current_id=%d)\n" i (Domain.DLS.get Concurrent.domain_id);
+        (* if i = 0 then Unix.sleep 1; *)
+        (* Printf.printf "Test_fun (id_thread=%d,current_id=%d)\n" i (Domain.DLS.get Concurrent.domain_id); *)
         flush_all ();
         let (elt_cl, elt_sub_data) = elt.annot_clause in
-        elt.active == Active && (S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data)
+        (* Link.display_current_bound_vars i; *)
+        let r = elt.active == Active && (S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data) in
+        (* Link.display_current_bound_vars i; *)
+        r
       in
       let fl = Concurrent.create_flag () in (* This is the beginning of the subsumption? *)
-      Concurrent.run_concurrent (fun () ->
-        if !Param.feature then (
-          print_string "Features\n";
-          FeatureTrie.exists_leq fl test_fun vector set.trie )
-        else
-          Concurrent.list_exists fl test_fun set.elt_list
-      )
+      (* Link.check_current_bound_vars (fun () -> *)
+        Concurrent.run_concurrent (fun () ->
+          if !Param.feature then (
+            FeatureTrie.exists_leq fl test_fun vector set.trie )
+          else
+            Concurrent.list_exists fl test_fun set.elt_list
+        )
+      (* ) "Set.implies" *)
 
     let deactivate_implied_by empty_add_data set (cl, vector, sub_data) =
       if !Param.feature then
@@ -1824,17 +1829,19 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
         elt.active && S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in
-      Concurrent.run_concurrent (fun () -> 
-        if !Param.feature then
-          FeatureTrie.exists_leq fl test_fun vector queue.trie
-        else
-          let rec existsrec q =
-            match q with
-              None -> false
-            | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun () -> existsrec q'.next)
-          in
-          existsrec queue.qstart
-      )
+      (* Link.check_current_bound_vars (fun () -> *)
+        Concurrent.run_concurrent (fun () -> 
+          if !Param.feature then
+            FeatureTrie.exists_leq fl test_fun vector queue.trie
+          else
+            let rec existsrec q =
+              match q with
+                None -> false
+              | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun () -> existsrec q'.next)
+            in
+            existsrec queue.qstart
+        ) 
+      (* ) "Queue.implies" *)
 
     let deactivate_implied_by queue (cl, vector, sub_data) =
       let iter_fun elem =

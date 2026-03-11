@@ -325,20 +325,15 @@ let remove_subsumed_attacker_clauses_before_display red_rules nrule =
         (* TODO : This will need to be changed when working on hash cons term where we cannot have subsumption with may-fail terms. *)
         let annot_rule = Database.FeatureGenClause.generate_feature_vector_and_subsumption_data { Std.hypotheses = hyp; Std.conclusion = concl; Std.history = hist; Std.constraints = constra } in
 
-        Printf.printf "Implies Annot rule\n";
-        flush_all ();
         begin if Database.SetClause.implies tmp_rules annot_rule
         then ()
         else
           begin
-            Printf.printf "End Implies\n";
             Database.SetClause.deactivate_implied_by () tmp_rules annot_rule;
             (* Saying that the conclusion is the selected fact does not impact the subsumption. *)
             Database.SetClause.add tmp_rules annot_rule None ()
           end
         end;
-        Printf.printf "End Implies Annot rule\n";
-        flush_all ();
       ) !red_rules;
       (* Renumber the rules *)
       red_rules := [];

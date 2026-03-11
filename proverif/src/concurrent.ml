@@ -14,12 +14,8 @@ let set_token (tkn : token) =
 
 (** [check_token] is designed to or, as it returns true when stopped *)
 let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) = 
-  Printf.printf "Check_token\n";
-  flush_all ();
   let (count_ref, lim, fl) = tkn in
   incr count_ref;
-  Printf.printf "Check_token - count %d - lim %d - fl %b\n" !count_ref lim (Atomic.get fl);
-  flush_all ();
   if (!count_ref mod lim = 0 && Atomic.get fl) then 
     f_end ()
   else
@@ -29,7 +25,7 @@ module T = Domainslib.Task
 
 let numCores = Param.num_cores (*Domainslib.Domains.num_domains ()*)
 let domain_id = Domain.DLS.new_key (fun () -> -1)
-let _ = Domain.DLS.set domain_id 0
+
 
 let acc_domain_id = Atomic.make 0
 
@@ -43,9 +39,12 @@ let get_domain_id () =
     begin 
       let y = Atomic.fetch_and_add acc_domain_id 1 in
       Domain.DLS.set domain_id y;
+      (* Printf.printf "Setting new domain_id: %d\n" y; *)
       y
     end
   else x
+
+let _ = ignore (get_domain_id ())
 
 (* let pool_setup () = 
   Printf.printf "Setting up pool with %d domains\n" !numCores;
@@ -74,21 +73,21 @@ let run_concurrent f =
   r
 
 let or_function flag (fn1:int->token->bool) (fn2:unit->bool) = 
-  let prom1 = T.async !pool (fun () -> let i = get_domain_id () in Printf.printf "This is my ID or_function: %d\n" i; fn1 i (create_token flag)) in
+  let prom1 = T.async !pool (fun () -> let i = get_domain_id () in fn1 i (create_token flag)) in
   fn2 () || T.await !pool prom1
 
 let bool_function_list_or fl (fns : (int -> token -> bool) list)  : bool =
-  let promises = List.map (fun fn -> T.async !pool (fun () -> let i = get_domain_id () in Printf.printf "This is my ID bool_function_list_or: %d\n" i;fn i (create_token fl))) fns in
+  let promises = List.map (fun fn -> T.async !pool (fun () -> let i = get_domain_id () in fn i (create_token fl))) fns in
   List.exists (fun p -> T.await !pool p) promises
 
 let list_exists flag (f: int -> token -> 'a -> bool) (l : 'a list) = match l with
   | [] -> false
   | t::q ->
-      let promises = List.map (fun a -> T.async !pool (fun () -> let i = get_domain_id () in Printf.printf "This is my ID list_exists: %d\n" i; f i (create_token flag) a)) q in
+      let promises = List.map (fun a -> T.async !pool (fun () -> let i = get_domain_id () in f i (create_token flag) a)) q in
       (f (get_domain_id ()) (create_token flag) t) || List.exists (fun p -> T.await !pool p) promises
 
 let list_exists_ext flag (f: int -> token -> 'a -> bool) (f_next: unit -> bool) (l : 'a list) = 
-  let promises = List.map (fun a -> T.async !pool (fun () -> let i = get_domain_id () in Printf.printf "This is my ID list_exists_ext: %d\n" i; f i (create_token flag) a)) l in
+  let promises = List.map (fun a -> T.async !pool (fun () -> let i = get_domain_id () in f i (create_token flag) a)) l in
   f_next () || List.exists (fun p -> T.await !pool p) promises
 
 (* Need to coordinate checking/setting the flag, I'm thinking atomic actions will make this 

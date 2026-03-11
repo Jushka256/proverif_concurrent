@@ -779,6 +779,7 @@ let rec copy_term ?(id_thread=0) term = match term with
       then term
       else FunApp(f, l')
   | Var v ->
+      Concurrent.check_domain_id id_thread "copy_term";
       match get_link ~id_thread ~name:"copy_term" v with
         NoLink ->
           let r = copy_var v in
@@ -888,6 +889,7 @@ let rec unify ?(id_thread=0) t1 t2 =
          " while " ^
          (term_string t2) ^ " has type " ^ (get_term_type t2).tname)
   end; *)
+  Concurrent.check_domain_id id_thread "unify";
   match (t1,t2) with
     (Var v, Var v') when v == v' -> ()
   | (Var v, _) ->
@@ -963,6 +965,7 @@ let rec copy_term2 ?(id_thread=0) = function
       let l' = List.mapq (copy_term2 ~id_thread) l in
       if l == l' then t else FunApp(f, l')
   | Var v ->
+      Concurrent.check_domain_id id_thread "copy_term2";
       match get_link ~id_thread ~name:"copy_term2" v with
         | NoLink ->
             let r = copy_var v in
@@ -1293,6 +1296,7 @@ let get_unlinked_vars_acc_constra ?(id_thread=0) vlist c = iter_constraints (get
 
 let rec mark_variables ?(id_thread=0) = function
   | Var v ->
+      Concurrent.check_domain_id id_thread "mark_variables";
       begin match get_link ~id_thread ~name:"mark_variables" v with
       | VLink _ -> ()
       | NoLink -> link ~id_thread v (VLink v)
@@ -1342,6 +1346,7 @@ let get_vars_constra ?(id_thread=0) constra =
   )
   
 let get_vars_generic ?(id_thread=0) (f_iter_term:(term -> unit) -> 'a -> unit) (a:'a) =
+  Concurrent.check_domain_id id_thread "get_vars_generic";
   auto_cleanup_local_noexception ~id_thread (fun () ->
     f_iter_term (mark_variables_local ~id_thread) a;
     List.rev_map fst !local_current_bound_vars.(id_thread)
@@ -1381,12 +1386,14 @@ let rec are_variable_included2_aux ?(id_thread=0) = function
   | FunApp(_,args) -> List.for_all (are_variable_included2_aux ~id_thread) args
 
 let are_variable_included2 ?(id_thread=0) vl t = 
+  Concurrent.check_domain_id id_thread "are_variable_included2";
   auto_cleanup_noexception ~id_thread (fun () ->
     List.iter (fun v -> link ~id_thread v Marked) vl;
     are_variable_included2_aux ~id_thread t
   )
 
 let are_variable_included_fact2 ?(id_thread=0) vl fact = 
+  Concurrent.check_domain_id id_thread "are_variable_included_fact2";
   auto_cleanup_noexception ~id_thread (fun () ->
     List.iter (fun v -> link ~id_thread v Marked) vl;
     let Pred(_,args) = fact in
@@ -1412,7 +1419,6 @@ let copy_fact3 ?(id_thread=0) = function
       if l == l' then fact else Pred(p, l')
 
 let rec copy_constra3 ?(id_thread=0) c = 
-  Printf.printf "Copy_constra3 %d\n" id_thread;
   map_constraints (copy_term3 ~id_thread) c
 
 (* [copy_term4] follows links [Tlink] recursively,
@@ -2487,6 +2493,7 @@ let generate_destructor_with_side_cond ?(id_thread=0) prev_args lht_list rht ext
     | [],[] -> [],[]
     | [],_ | _,[] -> internal_error __POS__ "The two lists should have the same length"
     | t::q, Var(v)::uq when v.unfailing ->
+        Concurrent.check_domain_id id_thread "remove_uni_fail_var";
         begin match get_link ~id_thread ~name:"remove_uni_fail_var" v with
           | NoLink ->
               link ~id_thread v (TLink t);

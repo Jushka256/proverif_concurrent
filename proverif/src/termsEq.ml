@@ -1115,6 +1115,7 @@ let get_syntactic f =
 let rec put_syntactic ?(id_thread=0) = function
   | FunApp(f,l) -> FunApp(get_syntactic f, List.map (put_syntactic ~id_thread) l)
   | Var v ->
+      Concurrent.check_domain_id id_thread "put_syntactic";
       match Terms.get_link ~id_thread ~name:"put_syntactic" v with
       |	NoLink ->
           let r = Terms.copy_var v in
@@ -1129,6 +1130,7 @@ let rec put_syntactic ?(id_thread=0) = function
 let rec copy_remove_syntactic = function
   | FunApp(f,l) -> FunApp(non_syntactic f, List.map copy_remove_syntactic l)
   | Var v ->
+      Concurrent.check_domain_id 0 "copy_remove_syntactic";
       match Terms.get_link ~name:"copy_remove_syntactic" v with
       | NoLink ->
           let r = Terms.copy_var v in
@@ -1387,6 +1389,7 @@ and close_term_eq_synt_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrac
 and unify_modulo_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack t1 t2 =
   close_term_eq_synt_tail ~id_thread (fun f_clean_1 f_Unify_1 f_NoBacktrack_1 t1 ->
     close_term_eq_synt_tail ~id_thread (fun f_clean_2 f_Unify_2 f_NoBacktrack_2 t2 ->
+      Concurrent.check_domain_id id_thread "unify_modulo_tail";
       match (t1,t2) with
       | (Var v, Var v') when v == v' -> restwork f_clean_2 f_Unify_2 f_NoBacktrack_2
       | (Var v, _) ->
@@ -1499,6 +1502,7 @@ and unify_modulo_list_internal_tail ?(id_thread=0) restwork f_clean f_Unify f_No
    equational theory. *)
 
 and unify_modulo_list_tail ?(id_thread=0) restwork f_clean f_Unify f_NoBacktrack l1 l2 =
+  Concurrent.check_domain_id id_thread "unify_modulo_list_tail";
   let rec add_unif_term restwork f_clean f_Unify f_NoBacktrack unif_to_do_left unif_to_do_right t1 t2 =
     match t1, t2 with
       FunApp(f1, l1), FunApp(f2,l2) when f_has_no_eq f1 && f_has_no_eq f2 ->
@@ -1738,6 +1742,7 @@ let rec search_for_implied_constraint_in ?(id_thread=0) nextf sc1 = function
           search_for_implied_constraint_in ~id_thread nextf sc1 sc_l2
 
 let implies_constraint ?(id_thread=0) sc_list1 sc_list2 =
+  Concurrent.check_domain_id id_thread "implies_constraint";
   let rec sub_implies_constraint sc_list1 sc_list2 () =
     match sc_list1 with
     | [] -> ()
@@ -1784,6 +1789,7 @@ exception FalseConstraint
     to [accu_nat_vars].
     [nat_vars] contains the list of natural number variables. *)
 let elim_var_if_possible ?(id_thread=0) has_gen_var keep_vars accu_nat_vars nat_vars v =
+  Concurrent.check_domain_id id_thread "elim_var_if_possible";
   if not (List.memq v keep_vars) then
   begin
     if List.memq v nat_vars
@@ -1878,6 +1884,7 @@ let rec can_be_natural_number ?(id_thread=0) = function
 let rec elim_var_in_is_not_nat ?(id_thread=0) accu_vars accu_keep_nat_vars keep_vars nat_vars = function
   | Var v -> 
       begin
+        Concurrent.check_domain_id id_thread "elim_var_in_is_not_nat";
         match Terms.get_link ~id_thread ~name:"elim_var_in_is_not_nat" v with
           | TLink t -> t
               (* In such a case, [t] is in fact a name any_val. *)
@@ -1988,15 +1995,15 @@ let rec simplify_is_not_nat ?(id_thread=0) accu_keep_vars nat_vars = function
           end
         else simplify_is_not_nat ~id_thread accu_keep_vars nat_vars q
 
-let check_is_not_nat nat_vars t =
+let check_is_not_nat id_thread nat_vars t =
   let accu_vars = ref [] in
   get_vars_acc accu_vars t;
   try
-    close_term_eq_synt Terms.default_thread_id (fun t1 -> match get_status_natural_number nat_vars t1 with
+    close_term_eq_synt id_thread (fun t1 -> match get_status_natural_number nat_vars t1 with
       | IsNat ->
           (* When t1 is for sure a natural number, we check that the variables of [t] have not been
             instantiated. In such a case, we know that [t] is for sur a natural number. *)
-          if List.for_all (fun v -> match Terms.get_link ~name:"check_is_not_nat" v with NoLink -> true | _ -> false) !accu_vars
+          if List.for_all (fun v -> match Terms.get_link ~id_thread ~name:"check_is_not_nat" v with NoLink -> true | _ -> false) !accu_vars
           then raise FalseConstraint;
           raise Unify
       | CanBeNat _ | NeverNat -> raise Unify
@@ -2013,7 +2020,7 @@ module HashType =
 
 module HashTerm = Hashtbl.Make(HashType)
 
-let vertices = ref (Array.make !Param.num_cores (HashTerm.create 10))
+let vertices = ref (Array.init !Param.num_cores (fun _ -> HashTerm.create 10))
 
 type infInt = N of int | Infinity
 
@@ -2178,9 +2185,9 @@ let algo_BellmanFord_core number_vertices edges =
  distance
 
 let algo_BellmanFord ?(id_thread=0) restwork rel_list =
+  Concurrent.check_domain_id id_thread "algo_BellmanFord";
   (* We clean the hash table containing the vertices. *)
   HashTerm.clear !vertices.(id_thread);
-
   (* We add the node for "zero" *)
   let number_vertices = ref 1 in
   HashTerm.add !vertices.(id_thread) Terms.zero_term 0;
@@ -2776,6 +2783,7 @@ let get_vars_facts l =
   !vars
 
 let rec simplify_after_inst ?(id_thread=0) f_next f_next_inst added_nat keep_vars constra =
+  Concurrent.check_domain_id id_thread "simplify_after_inst";
   try
     let nat_vars = ref added_nat in
     List.iter (check_is_nat nat_vars) constra.is_nat;
@@ -2955,7 +2963,7 @@ let check_constraints c =
           in
 
           (* Check the predicates is_not_nat  *)
-          List.iter (check_is_not_nat !nat_vars) is_not_nat2;
+          List.iter (check_is_not_nat 0 !nat_vars) is_not_nat2;
           (* Check the disequalities *)
           check_neq_conj neq2
         )
@@ -3030,21 +3038,21 @@ let check_closed_constraints c =
 Notice that variables may not be cleaned up when this function is called.
 *)
 
-let rec copy_term5 modified = function
+let rec copy_term5 id_thread modified = function
   | Var v -> begin
-      match Terms.get_link ~name:"copy_term5" v with
+      match Terms.get_link ~id_thread ~name:"copy_term5" v with
         | TLink t ->
             (* We remove the syntactic symbols *)
             modified := true;
-            copy_term5 modified t
+            copy_term5 id_thread modified t
         | _ -> Var v
       end
-  | FunApp(f,args) -> FunApp(f,List.map (copy_term5 modified) args)
+  | FunApp(f,args) -> FunApp(f,List.map (copy_term5 id_thread modified) args)
 
-let implies_is_not_nat constraints1 nat_vars t =
+let implies_is_not_nat ?(id_thread=0) constraints1 nat_vars t =
   try
-    close_term_eq_synt Terms.default_thread_id (fun t1 ->
-      let nat_vars' = match get_status_natural_number nat_vars t1 with
+    close_term_eq_synt id_thread (fun t1 ->
+      let nat_vars' = match get_status_natural_number ~id_thread nat_vars t1 with
         | IsNat -> nat_vars
         | CanBeNat v -> v::nat_vars
         | NeverNat -> raise Unify
@@ -3053,14 +3061,14 @@ let implies_is_not_nat constraints1 nat_vars t =
       try
         List.iter (fun t' ->
           let modified = ref false in
-          let t'' = copy_term5 modified t' in
+          let t'' = copy_term5 id_thread modified t' in
           if !modified
-          then check_is_not_nat nat_vars' t''
+          then check_is_not_nat id_thread nat_vars' t''
         ) constraints1.is_not_nat;
 
         List.iter (fun neq_disj ->
           let modified = ref false in
-          let neq_disj' = List.map (fun (t1,t2) -> copy_term5 modified t1, copy_term5 modified t2) neq_disj in
+          let neq_disj' = List.map (fun (t1,t2) -> copy_term5 id_thread modified t1, copy_term5 id_thread modified t2) neq_disj in
           if !modified
           then check_neq_conj [neq_disj']
         ) constraints1.neq
@@ -3096,6 +3104,7 @@ let index_of_term assoc t =
     [geq1_data] and [edges] are functions that ensure that we only compute once
     the matrix [distance] and the edges of [distance]. *)
 let implies_constraints ?(id_thread=0) nat_vars1 geq1_data constraints1 constraints2 =
+  Concurrent.check_domain_id id_thread "implies_constraints";
   (* Retrieve nat variables and check implication of natural variables  *)
   let nat_vars2 = ref [] in
   List.iter (get_vars_acc nat_vars2) constraints2.is_nat;
@@ -3105,7 +3114,7 @@ let implies_constraints ?(id_thread=0) nat_vars1 geq1_data constraints1 constrai
   then raise NoMatch;
 
   (* We now check the implication of is_not_nat predicates *)
-  List.iter (implies_is_not_nat constraints1 !nat_vars1) constraints2.is_not_nat;
+  List.iter (implies_is_not_nat ~id_thread constraints1 !nat_vars1) constraints2.is_not_nat;
 
   (* We check the implication of disequalities *)
   if not
