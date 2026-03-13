@@ -65,9 +65,11 @@ module type S =
     *)
     val exists_leq : (key list -> 'a -> bool) -> key -> key list -> 'a t -> bool
 
-    (** [iter_leq f k [k_1;...;k_n] t] applies:
-      -
-      -
+    (** [iter_leq f k [k_1;...;k_n] t] applies [f] to all bindings in [t] with a key [k']
+      and data [d'] such that:
+      - [fst k' = fs k] && [snd k' <= snd k] && [f [k_1;...;k_n] d'] is executed
+      - or [fst k' < fst k] && for all [i], [f [k_(i+1);...;k_n] d'] is applied when
+            [fst k' = fst k_i] && [snd k' <= snd k_i]
     *)
     val iter_leq : (key list -> 'a -> unit) -> key -> key list -> 'a t -> unit
 

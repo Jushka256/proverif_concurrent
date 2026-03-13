@@ -1004,7 +1004,7 @@ module MakeFeatureGeneration
 
     let rec feature_symbol_hyp has_unbound size depth width = function
       | Var v ->
-          begin match Terms.get_link ~name:"feature_symbol_hyp" v with
+          begin match Terms.get_link v with
           | NoLink -> has_unbound := true
           | _ -> ()
           end
@@ -1028,7 +1028,7 @@ module MakeFeatureGeneration
 
     let rec feature_symbol_concl depth width = function
       | Var v ->
-          begin match Terms.get_link ~name:"feature_symbol_concl" v with
+          begin match Terms.get_link v with
           | NoLink -> Terms.link v (VLink v) (* Mark the variables*)
           | _ -> ()
           end
@@ -1208,7 +1208,7 @@ module FeatureTrie =
           List.iter f_iter elt_l
       | Node(fe_map,elt_l), (fe,v)::q_vec ->
           List.iter f_iter elt_l;
-          FVTree.iter_leq (iter_leq f_iter fe_vec) (fe,v) q_vec fe_map
+          FVTree.iter_leq (iter_leq f_iter) (fe,v) q_vec fe_map
 
     let rec iter f_iter = function
       | Empty -> ()

@@ -118,7 +118,17 @@ let explain_derivation = ref true
 let reconstruct_trace = ref 4
 let trace_backtracking = ref true
 
+(** Concurrent parameters *)
+
 let num_cores = ref 4 (* Currently hard coded, need to make a parameter or auto detected *)
+
+type concurrent_t =
+  | Sequential
+  | Simple_Concurrent
+  | Grouped_Job
+
+let concurrent_mode = ref true
+let job_size = ref 100
 
 (* Parameters for recording features for the subsumption test *)
 

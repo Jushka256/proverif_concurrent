@@ -25,9 +25,11 @@ module type S =
     val singleton: key -> 'a -> 'a t
 
     val exists_leq : (key list -> 'a -> bool) -> key -> key list -> 'a t -> bool
-
+    val iter_leq : (key list -> 'a -> unit) -> key -> key list -> 'a t -> unit
+    
     val iter : ('a -> unit) -> 'a t -> unit
     val iter_geq : ('a -> unit) -> ('a -> unit) -> key -> 'a t -> unit
+    
     val update_all : ('a -> 'a option) -> 'a t -> 'a t
   end
 
