@@ -1202,6 +1202,14 @@ module FeatureTrie =
             FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map
           ) elt_l
 
+    let rec iter_leq f_iter fe_vec t = match t, fe_vec with
+      | Empty, _ -> ()
+      | Node(_,elt_l), [] ->
+          List.iter f_iter elt_l
+      | Node(fe_map,elt_l), (fe,v)::q_vec ->
+          List.iter f_iter elt_l;
+          FVTree.iter_leq (iter_leq f_iter fe_vec) (fe,v) q_vec fe_map
+
     let rec iter f_iter = function
       | Empty -> ()
       | Node(fe_map,elt_l) ->

@@ -117,42 +117,44 @@ both of those here, and just use the function one to define the list_exists one*
 
 (* For simplicity have hard coded the limit specification for now *)
 
-exception StopExecution
-
-let exists_iter (f: int -> token -> 'a -> bool) (f_iter: ('a list -> unit) -> 'b -> unit) (elt:'b) =
+let exists_iter (f: int -> token -> 'a -> bool) (f_iter: ('a -> unit) -> 'b -> unit) (elt:'b) =
   let flag = create_flag () in
 
   let acc_job_size = ref 0 in
   let acc_job = ref [] in
-
-  let rec execute_jobs remaining_size current_job list_job = match remaining_size, list_job with
-    | 0, _ -> 
-        (* Needs to execute a domain *)
-        let promise = 
-          T.async !pool (fun () ->
-            let i = get_domain_id () in
-            let tok = create_token flag in
-            List.exists (f i tok) current_job
-          )
-        in
-        execute_jobs !jobSize [] list_job;
-        if T.await !pool promise
-        then raise StopExecution
-    | _,[] -> 
-        acc_job_size := remaining_size;
-        acc_job := current_job
-    | n,j::q ->
-        execute_jobs (remaining_size-1) (j::current_job) q
-  in 
+  let acc_promise = ref [] in
   
-  try
-    f_iter (fun job_list ->
-      execute_jobs !acc_job_size !acc_job job_list
-    ) elt;
+  f_iter (fun job ->
+    if !acc_job_size = 0
+    then 
+      begin
+        let job_list = !acc_job in 
+        let promise = 
+        T.async !pool (fun () ->
+          let i = get_domain_id () in
+          let tok = create_token flag in
+          List.exists (f i tok) job_list
+        )
+        in
+        acc_promise := promise :: !acc_promise;
+        acc_job := [];
+        acc_job_size := !jobSize
+      end
+    else
+      begin
+        decr acc_job_size;
+        acc_job := job :: !acc_job
+      end
+  ) elt;
+
+  let compute_remaining_job = 
     if !acc_job <> [] 
     then 
       let i = get_domain_id () in
       let tok = create_token flag in
       List.exists (f i tok) !acc_job
     else false
-  with StopExecution -> true
+  in
+
+  compute_remaining_job || List.exists (fun p -> T.await !pool p) (List.rev !acc_promise)
+
