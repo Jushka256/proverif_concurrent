@@ -252,6 +252,64 @@ module Make(Ord: OrderedType) =
                   exists_leq p k k_list r
           else exists_leq p k k_list l
 
+    let rec iter_leq_generic p k = function
+      | Empty -> ()
+      | Node {l; v; d; r} ->
+          let c = compare_lex v k in
+          if c = 0
+          then (p d ; iter p l)
+          else if c < 0
+          then (p d ; iter p l ; iter_leq_generic p k r)
+          else iter_leq_generic p k l
+
+    let rec iter_aux p k_list t = match t, k_list with
+      | _, []
+      | Empty, _ -> ()
+      | Node {l; v = (v1,v2); d; r}, (k1,k2)::q ->
+          match remove_until v1 k_list with
+            | None, k_list'' ->
+                (* all k'' in k_list'' satisfy fst k'' <= v1 *)
+                iter_aux p k_list'' l ; iter_aux p k_list r
+            | Some(k2',k_list'), k_list'' ->
+                (* all k'' in k_list' and k_list'' satisfy fst k'' <= v1 *)
+                if Ord.compare_snd v2 k2' <= 0 then p k_list' d;
+                iter_aux p k_list'' l ;
+                iter_aux p k_list r
+
+    let rec iter_leq p ((k1,k2) as k) k_list = function
+      | Empty -> ()
+      | Node {l; v = (v1,v2); d; r} ->
+          let c1 = Ord.compare_fst v1 k1 in
+          if c1 = 0
+          then
+            let c2 = Ord.compare_snd v2 k2 in
+            if c2 = 0
+            then
+              begin 
+                p k_list d ; (* Since k = v, we need to check if the predicate holds on k_list and d *)
+                iter_leq p k k_list l
+              end
+            else if c2 < 0
+            then
+              begin 
+                p k_list d ;
+                iter_leq_generic (p k_list) k r ; (* We need to look in the right side of the tree for the keys smaller than k (in the lexicographic sense) *)
+                iter_leq p k k_list l
+              end
+            else iter_leq p k k_list l
+          else if c1 < 0
+          then
+            match remove_until v1 k_list with
+              | None, k_list'' ->
+                  (* all k'' in k_list'' satisfy fst k'' <= v1 *)
+                  iter_aux p k_list'' l ; iter_leq p k k_list r
+              | Some(k2',k_list'),k_list'' ->
+                  (* all k'' in k_list' and k_list'' satisfy fst k'' <= v1 *)
+                  if Ord.compare_snd v2 k2' <= 0 then p k_list' d;
+                  iter_aux p k_list'' l ;
+                  iter_leq p k k_list r
+          else iter_leq p k k_list l
+
     (* Beware: those two functions assume that the added k is *strictly*
        smaller (or bigger) than all the present keys in the tree; it
        does not test for equality with the current min (or max) key.

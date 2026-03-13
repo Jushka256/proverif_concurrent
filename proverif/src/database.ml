@@ -1607,14 +1607,8 @@ module MakeSet
        the clause [cl] that has [vector] as feature vector. *)
     let implies set (cl, vector, sub_data) =
       let test_fun i tok elt =
-        (* if i = 0 then Unix.sleep 1; *)
-        (* Printf.printf "Test_fun (id_thread=%d,current_id=%d)\n" i (Domain.DLS.get Concurrent.domain_id); *)
-        flush_all ();
         let (elt_cl, elt_sub_data) = elt.annot_clause in
-        (* Link.display_current_bound_vars i; *)
-        let r = elt.active == Active && (S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data) in
-        (* Link.display_current_bound_vars i; *)
-        r
+        elt.active == Active && (S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data)
       in
       let fl = Concurrent.create_flag () in (* This is the beginning of the subsumption? *)
       (* Link.check_current_bound_vars (fun () -> *)

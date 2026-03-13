@@ -23,7 +23,11 @@ let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) =
 
 module T = Domainslib.Task
 
+(** Parameters *)
 let numCores = Param.num_cores (*Domainslib.Domains.num_domains ()*)
+let jobSize = ref 100
+
+
 let domain_id = Domain.DLS.new_key (fun () -> -1)
 
 
@@ -112,3 +116,43 @@ took a list of functions and simply implemented that concurrently.  I'm thinking
 both of those here, and just use the function one to define the list_exists one*)
 
 (* For simplicity have hard coded the limit specification for now *)
+
+exception StopExecution
+
+let exists_iter (f: int -> token -> 'a -> bool) (f_iter: ('a list -> unit) -> 'b -> unit) (elt:'b) =
+  let flag = create_flag () in
+
+  let acc_job_size = ref 0 in
+  let acc_job = ref [] in
+
+  let rec execute_jobs remaining_size current_job list_job = match remaining_size, list_job with
+    | 0, _ -> 
+        (* Needs to execute a domain *)
+        let promise = 
+          T.async !pool (fun () ->
+            let i = get_domain_id () in
+            let tok = create_token flag in
+            List.exists (f i tok) current_job
+          )
+        in
+        execute_jobs !jobSize [] list_job;
+        if T.await !pool promise
+        then raise StopExecution
+    | _,[] -> 
+        acc_job_size := remaining_size;
+        acc_job := current_job
+    | n,j::q ->
+        execute_jobs (remaining_size-1) (j::current_job) q
+  in 
+  
+  try
+    f_iter (fun job_list ->
+      execute_jobs !acc_job_size !acc_job job_list
+    ) elt;
+    if !acc_job <> [] 
+    then 
+      let i = get_domain_id () in
+      let tok = create_token flag in
+      List.exists (f i tok) !acc_job
+    else false
+  with StopExecution -> true

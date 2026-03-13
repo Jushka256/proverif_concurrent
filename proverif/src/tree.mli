@@ -65,6 +65,8 @@ module type S =
     *)
     val exists_leq : (key list -> 'a -> bool) -> key -> key list -> 'a t -> bool
 
+    val iter_leq : (key list -> 'a -> unit) -> key -> key list -> 'a t -> unit
+
     (** [iter f m] applies [f] to all bindings in the map [m].
        [f] receives the associated value as argument. The bindings are passed to [f]
        in increasing order with respect to the ordering over the type of the keys. *)
