@@ -1,0 +1,4074 @@
+(*************************)
+(*    Functionnalities   *)
+(*************************)
+
+(* When `false`, an honest client will always send its key share with the group.
+  Moreover, an honest server will never send a HRR request.*)
+letfun allow_HRR = false.
+
+(* When `false`, honest clients and servers are not expecting and sending a new
+  session ticket respectively. *)
+letfun allow_PH_new_session_ticket = true.
+
+(* When `false`, honest clients and servers will never send or try to receive
+  Post Handshake Application Data. *)
+letfun allow_PH_data = false.
+
+(* When `false`, honest servers will request post handshake authentication
+  and honest clients will never wait for one. *)
+letfun allow_PH_authentication = false.
+
+(* When `false`, honest clients and servers will never send or try to receive
+  early data. *)
+letfun allow_early_data = false.
+
+(************************************************)
+(*    Safety of Keys, Cipher suite and group    *)
+(************************************************)
+
+(* When `true`, private keys of Ech configuration can be compromised. *)
+letfun allow_compromised_Ech_keys = true.
+
+(* When `false`, the client never leak the pre shared keys derived from the tickets.
+  Otherwise, when `true`, the attacker decides when to compromise or not a key. *)
+letfun allow_compromised_ticket = true.
+
+(* When `true`, external pre shared keys can be compromised. *)
+letfun allow_compromised_ext_PSK = true.
+
+(* When `true`, certificate long term keys can be compromised. *)
+letfun allow_compromised_long_term_keys = true.
+
+(* When `true`, the attacker can choose different ciphersuites and DH groups for
+  honest clients and servers. When `false`, the ciphersuite and DH group is
+  fixed and the same for all sessions. *)
+letfun allow_multiple_ciphersuite_and_group = true.
+
+(* When `true`, the honest client and server can use weak hash algorithm,
+  weak aead algorithm and weak DH group.
+  Note that by ECH RFC, the hash algorithm, aead algorithm and DH group used in
+  the ECH configuration of frontend MUST be strong.
+  This option does nothing when allow_multiple_ciphersuite_and_group = false. *)
+letfun allow_weak_ciphersuite_and_group = false.
+
+(*******************)
+(*    Behaviors    *)
+(*******************)
+
+(* Each behavior parameters has two variables. When `set_p` is `true` then
+  the attacker chooses the value of `p`for each single session. When `set_p`
+  is `true` then the value of `p` is set to `default_p` for all sessions. *)
+
+(* Determine if client send their key share. *)
+letfun set_send_kex = false.
+letfun default_send_kex = false.
+
+(* Determine if client and server want to use a psk. *)
+letfun set_use_psk = false.
+letfun default_use_psk = false.
+
+(* Determine if the client uses grease *)
+letfun set_use_grease = true.
+letfun default_use_grease = false.
+
+(* Determine if the server request a certificate from the client. *)
+letfun set_req_cert = true.
+letfun default_req_cert = false.
+
+(*****************************)
+(*     Scenario of agents    *)
+(*****************************)
+
+(* Determine if the servers uses ECH *)
+letfun set_use_ech = true.
+letfun default_use_ech = true.
+
+(* TLS client  *)
+letfun clients_with_tls = false.
+
+(* Ech client *)
+letfun clients_with_ech = true.
+const zero:bitstring [data].
+
+type seed.
+
+fun n2b(nat):bitstring [typeConverter].
+fun bool2b(bool):bitstring [typeConverter].
+
+(********************************************************)
+(* Generation of random                                 *)
+(********************************************************)
+
+type bytes8.
+type bytes24.
+type bytes32.
+
+const zero8:bytes8.
+const zero32:bytes32.
+fun B32(bytes24,bytes8):bytes32 [data].
+
+letfun gen_B32_random() =
+  new rand24[]:bytes24;
+  new rand8[]:bytes8;
+  B32(rand24,rand8).
+
+fun crop_into_bytes8(bitstring):bytes8.
+
+fun b32_2_b(bytes32):bitstring [data].
+
+(********************************************************)
+(* Authenticated Encryption with Additional Data        *)
+(********************************************************)
+
+(* Aead algorithm. Abstracted into whether we consider strong or weak security
+  guarantees. We also consider multiple algorithms.  *)
+
+type aead_strengh.
+const WeakAE, StrongAE: aead_strengh [data].
+
+type aead_alg.
+fun id_aead(aead_strengh,nat):aead_alg [data].
+fun a2b(aead_alg):bitstring [typeConverter].
+
+reduc forall i:nat; is_strong_aead(id_aead(StrongAE,i)) = true.
+
+type aead_key.
+fun b2ae(bitstring):aead_key [typeConverter].
+
+fun aead_enc(aead_alg, aead_key, bitstring, bitstring, bitstring): bitstring.
+fun aead_forged(bitstring,bitstring): bitstring.
+
+fun aead_dec(aead_alg, aead_key, bitstring, bitstring, bitstring): bitstring
+reduc forall a:aead_alg, k:aead_key, n,p,ad:bitstring;
+  aead_dec(a, k, n, ad, aead_enc(a, k, n, ad, p)) = p
+otherwise forall i:nat, k:aead_key, n,p,p',ad,ad':bitstring;
+  aead_dec(id_aead(WeakAE,i), k, n, ad, aead_forged(p,aead_enc(id_aead(WeakAE,i), k, n, ad', p'))) = p.
+
+fun aead_leak(bitstring):bitstring
+reduc forall i:nat, k:aead_key, n,ad,x:bitstring;
+  aead_leak(aead_enc(id_aead(WeakAE,i),k,n,ad,x)) = x.
+
+(********************************************************)
+(* Diffie-Hellman, modeled as a KEM                     *)
+(* Include a small/bad subgroup attacks.                *)
+(********************************************************)
+
+type group_strengh.
+const WeakDH, StrongDH: group_strengh [data].
+
+type group.
+fun id_g(group_strengh,nat):group [data].
+fun g2b(group):bitstring [typeConverter].
+
+reduc forall i:nat; is_strong_group(id_g(StrongDH,i)) = true.
+
+type element.
+const guessable: element.
+fun e2b(element): bitstring [typeConverter].
+fun b2e(bitstring): element [typeConverter].
+
+(* Key Generation *)
+fun dh_pub(group,bitstring): element.
+
+fun discrete_log(element): bitstring
+reduc forall i:nat, x:bitstring;
+  discrete_log(dh_pub(id_g(WeakDH,i),x)) = x.
+
+(* Generation of fresh nonce using a private function. Instead of using the
+  classical syntax
+    new k:bitstring; ...
+  we use a private function and a seed s as:
+    let k = new s:seed; dh_k(s) in ...
+  This is equivalent but it allows us to more easily talk about keys when
+  writing some proof helpers (see proof_helper.m4.pvl) and lemmas, axioms and
+  restrictions. *)
+fun dh_k(seed):bitstring [private].
+fun dh_xy(seed,bitstring):element [private].
+fun dh_f(seed):element [private].
+
+letfun dh_keygen(g:group) =
+  new s[]:seed;
+  let gx = dh_pub(g,dh_k(s)) in
+  (dh_k(s),gx).
+
+(* Encap/Decap Functionality *)
+fun dh_encap_fun(group,element,element):element.
+fun dh_decap_fun(group,element,bitstring): element
+reduc forall g:group, x:bitstring, gxy:element;
+  dh_decap_fun(g,dh_encap_fun(g,dh_pub(g,x),gxy),x) = gxy.
+
+(* Generate then Encap. The argument m:bitstring
+  is used only as a proof helper, i.e. it would be correct to put m always
+  to 0 for example, but it indicates to ProVerif in which context the key
+  was generated. *)
+letfun dh_encap(g:group,gx:element,m:bitstring) =
+  new s[]:seed;
+  (dh_xy(s,m), dh_encap_fun(g,gx,dh_xy(s,m))).
+
+(* Decap: never fails *)
+letfun dh_decap(g:group,gy:element,x:bitstring) =
+  let gxy = dh_decap_fun(g,gy,x) in
+    gxy
+  else
+    new s[]:seed;
+    dh_f(s).
+
+(**************************************************************)
+(* Hash Functions, including those with collisions. See SLOTH *)
+(**************************************************************)
+
+type hash_strengh.
+const StrongHash, WeakHash:hash_strengh [data].
+
+type hash_alg.
+fun id_hash(hash_strengh,nat):hash_alg [data].
+fun h2b(hash_alg):bitstring [typeConverter].
+
+const collision:bitstring [data].
+fun hash_ideal(nat,bitstring):bitstring.
+
+fun hash(hash_alg,bitstring): bitstring
+reduc forall i:nat, x:bitstring;
+  hash(id_hash(WeakHash,i),x) = collision
+otherwise forall i:nat, x:bitstring;
+  hash(id_hash(StrongHash,i),x) = hash_ideal(i,x)
+.
+
+reduc forall i:nat; is_strong_hash(id_hash(StrongHash,i)) = true.
+
+(********************************************************)
+(* HMAC                                                 *)
+(********************************************************)
+
+type mac_key.
+fun b2mk(bitstring):mac_key [typeConverter].
+
+fun hmac_ideal(nat,mac_key,bitstring): bitstring.
+
+fun hmac(hash_alg,mac_key,bitstring):bitstring
+reduc forall i:nat, k:mac_key, x:bitstring;
+  hmac(id_hash(WeakHash,i),k,x) = collision
+otherwise forall i:nat, k:mac_key, x:bitstring;
+  hmac(id_hash(StrongHash,i),k, x) = hmac_ideal(i,k,x)
+.
+
+(********************************************************)
+(* Public Key Signatures                                *)
+(********************************************************)
+
+type privkey.
+type pubkey.
+
+(* uc_privkey is a private function used when generating uncompromised certificate
+  long term keys. Instead of using the classic syntax
+    new sk:privkey; ...
+  we generate a seed and use the private function uc_privkey.
+    let sk = new s:seed; uc_privkey(s) in ...
+  This is equivalent but it allows us to more easily talk about keys when
+  writing some proof helpers (see proof_helper.m4.pvl) and lemmas, axioms and
+  restrictions. *)
+fun uc_privkey(seed):privkey [private].
+letfun gen_honest_privkey() =
+  new s:seed;
+  uc_privkey(s)
+.
+
+const NoPubKey: pubkey.
+fun pk(privkey): pubkey.
+
+(* uncompromised_privkey(pk) returns true iff the public key pk corresponds to
+  a public key of an uncompromised private key. This is used to determine when
+  a pre shared key is compromised or not. Note that we do not assume that
+  uncompromised private key are not deducible by the attacker. We will prove that
+  it is the case in the protocol however. *)
+fun uncompromised_privkey(pubkey):bool
+reduc
+  forall s:seed; uncompromised_privkey(pk(uc_privkey(s))) = true
+  otherwise forall x:pubkey; uncompromised_privkey(x) = false
+  [private].
+
+(* RSA Signatures, typically the argument is a hash over some data *)
+
+fun sign(privkey,bitstring):bitstring.
+fun verify(pubkey,bitstring,bitstring): bool
+reduc forall k:privkey, x:bitstring;
+  verify(pk(k),x,sign(k,x)) = true.
+
+(********************************************************
+  HKDF
+*********************************************************)
+
+type label.
+
+letfun prf(a:hash_alg,k:bitstring,x:bitstring) = hmac(a,b2mk(k),x).
+
+letfun hkdf_extract(a:hash_alg,s:bitstring,k:bitstring) = prf(a,s,k).
+letfun hkdf_expand_label(a:hash_alg,k:bitstring,l:label,h:bitstring) = prf(a,k,(l,h)).
+
+(********************************************************)
+(* HPKE *)
+(********************************************************)
+
+(* We consider here the HPKE without pre shared key so the functions are
+   simplified to remove all references to pre shared key. *)
+
+(* Cryptographic dependencies (Section 4 of HPKE RFC) *)
+
+letfun hpke_encap(g:group,pkR:element) = dh_encap(g,pkR,e2b(pkR)).
+letfun hpke_decap(g:group,enc:element,skR:bitstring) = dh_decap(g,enc,skR).
+letfun hpke_label_extract(h_alg:hash_alg,salt:bitstring,label:label,ikm:bitstring) = hkdf_extract(h_alg,salt,(label,ikm)).
+letfun hpke_label_expand(h_alg:hash_alg,prk:bitstring,label:label,info:bitstring) = hkdf_expand_label(h_alg,prk,label,info).
+  (* Compare to the RFC, we removed the argument of the size. *)
+
+(* Hybrid Public Key Encryption (Section 5 of HPKE RFC) *)
+
+type hpkeRole.
+const R,S:hpkeRole.
+
+type hpkeContext.
+fun hpke_context(hpkeRole,aead_key,bitstring):hpkeContext [data].
+
+const
+  hpke_info_hash,   (* Constant "info_hash" in HPKE RFC *)
+  hpke_secret,      (* Constant "secret" in HPKE RFC *)
+  hpke_key,         (* Constant "key" in HPKE RFC *)
+  hpke_base_nonce   (* Constant "base_nonce" in HPKE RFC *)
+  :label
+.
+
+(* Encryption and decryption (Section 5.2 of HPKE RFC) *)
+
+letfun kpke_seal(a:aead_alg,context:hpkeContext,n:nat,aad:bitstring,pt:bitstring) =
+  let hpke_context(=S,key,base_nonce) = context in
+  aead_enc(a,key,(base_nonce,n),aad,pt).
+
+letfun hpke_open(a:aead_alg,context:hpkeContext,n:nat,aad:bitstring,ct:bitstring) =
+  let hpke_context(=R,key,base_nonce) = context in
+  aead_dec(a,key,(base_nonce,n),aad,ct).
+
+(* Key schedule (Section 5.1 of HPKE RFC) *)
+
+letfun hpke_key_schedule(h:hash_alg,r:hpkeRole,shared_secret:element,info:bitstring) =
+  let info_hash = hpke_label_extract(h,zero,hpke_info_hash,info) in
+  let xsecret = hpke_label_extract(h,e2b(shared_secret),hpke_secret,zero) in
+
+  let key = b2ae(hpke_label_expand(h,xsecret,hpke_key,info_hash)) in
+  let base_nonce = hpke_label_expand(h,xsecret,hpke_base_nonce,info_hash) in
+
+  hpke_context(r,key,base_nonce).
+
+(* SetupBaseS and SetupBaseR (5.1.1 of RFC HPKE )*)
+
+letfun hpke_setup_base_S(h:hash_alg,g:group,pkR:element,info:bitstring) =
+  let (shared_secret:element,enc:element) = hpke_encap(g,pkR) in
+  (enc,hpke_key_schedule(h,S,shared_secret,info)).
+
+letfun hpke_setup_base_R(h:hash_alg,g:group,enc:element,skR:bitstring,info:bitstring) =
+  let shared_secret = hpke_decap(g,enc,skR) in
+  hpke_key_schedule(h,R,shared_secret,info).
+channel io. (* The public channel *)
+
+(* The type idProc represents process identifiers. Terms of this type are not
+  used in the protocol itself. They are only used in proof helpers or in the
+  lemmas, axioms and restrictions to talk specifically about a particular
+  replicated process. *)
+type idProc.
+fun id2b(idProc):bitstring [typeConverter].
+
+(* The type domain represents the public domain of the clients and servers.
+  All terms of this type will be public. When we refer to a client or a server
+  in our explanation, we always refer to their public domain. *)
+type domain.
+const empty_domain:domain [data].
+fun d2b(domain):bitstring [typeConverter].
+
+(********************************************************)
+(* Extra extension                                      *)
+(********************************************************)
+
+(* The type for some unspecified extra extension in the client hello. *)
+type extraExt.
+const empty_extra_ext:extraExt [data].
+
+(********************************************************)
+(* Key share Extension (4.2.8 in TLS RFC)               *)
+(********************************************************)
+
+(* A client can send only a group which will trigger and Hello Retry Request
+  from the server, or a group and its key share. For Hello Retry Request, the
+  extension consist only of a group. *)
+
+type kex_alg.
+fun DHE_group(group): kex_alg [data].
+fun DHE_kex(group,element) : kex_alg [data].
+
+type keyShareExt.
+fun client_kex_ext(kex_alg): keyShareExt [data].
+fun server_kex_ext(kex_alg): keyShareExt [data].
+fun hrr_kex_ext(group): keyShareExt [data].
+
+(********************************************************)
+(* Pre Shared Keys Extension                            *)
+(********************************************************)
+
+type preSharedKey.
+
+(* uc_psk is a private function used when generating uncompromised pre shared
+  keys. Instead of using the classic syntax
+    new psk:preSharedKey; ...
+  we generate a seed and use the private function uc_psk.
+    let psk = new s:seed; uc_psk(s) in ...
+  This is equivalent but it allows us to more easily talk about keys when
+  writing some proof helpers (see proof_helper.m4.pvl) and lemmas, axioms and
+  restrictions. *)
+fun uc_psk(seed):preSharedKey [private].
+letfun gen_honest_psk() =
+  new s:seed;
+  uc_psk(s)
+.
+
+const NoPsk: preSharedKey [data].
+
+fun b2psk(bitstring):preSharedKey [typeConverter].
+(* A type converter only used for some proof helpers and following definition. *)
+fun psk2b_pf(preSharedKey):bitstring [typeConverter].
+fun psk2b(preSharedKey): bitstring
+reduc
+  psk2b(NoPsk) = zero
+  otherwise forall x:preSharedKey; psk2b(x) = psk2b_pf(x)
+.
+
+type identityPsk.
+fun b2idpsk(bitstring):identityPsk [typeConverter].
+
+(* The private function mk_idpsk is an abstraction on how the server is able to
+  retrieve the pre shared key from its identity and additional information such
+  as the ciphersuite used and if it is an external or resumption PSK.
+  By defining the function as private and its projections
+  as private, we ensure that only the honest server can access its content.
+  Note that it does not prevent the attacker to play the role of a server. *)
+fun mk_idpsk(domain,hash_alg,preSharedKey):identityPsk [private].
+
+reduc forall s_dom:domain, h_alg:hash_alg, psk:preSharedKey;
+  get_server_psk(mk_idpsk(s_dom,h_alg,psk)) = s_dom [private].
+reduc forall s_dom:domain, h_alg:hash_alg, psk:preSharedKey;
+  get_hash_psk(mk_idpsk(s_dom,h_alg,psk)) = h_alg [private].
+reduc forall s_dom:domain, h_alg:hash_alg, psk:preSharedKey;
+  get_psk(mk_idpsk(s_dom,h_alg,psk)) = psk [private].
+
+(* The extension itself *)
+type preSharedKeyExt.
+const empty_psk_ext: preSharedKeyExt [data].
+fun trunc_client_psk_ext(identityPsk):preSharedKeyExt [data].
+fun client_psk_ext(identityPsk,bitstring):preSharedKeyExt [data].
+fun server_psk_ext(nat):preSharedKeyExt [data]. (* We only model a single psk offered
+  by the client currently so the server is always suppose to send 1. *)
+
+fun ProofHelperPSK(
+  element,      (* The client public share *)
+  element,      (* The server public share *)
+  element,      (* The g^x^y *)
+  pubkey,       (* The client public key *)
+  pubkey,       (* The server public key *)
+  preSharedKey (* The pre shared key *)
+  ):bitstring [data].
+
+(* The global table storing the pre shared key on the client side. *)
+table pre_shared_keys(
+  domain (* Client domain *),
+  domain (* Server domain *),
+  hash_alg, (* The hash algorithm used in the handshake *)
+  identityPsk, (* The identify of the pre shared key generated *)
+  preSharedKey, (* The pre shared key itself *)
+  idProc, (* The process identifier that generated the pre shared key *)
+  bool (* Value determining if the key was considered uncompromised (true) or
+    not (false).*)
+).
+
+(********************************************************)
+(* Long term keys and certificates                      *)
+(********************************************************)
+
+type certificate.
+(* By being private, the function valid_cert represents a certificate that has
+  been created by trusted authority. *)
+fun valid_cert(domain,pubkey):certificate [private].
+
+fun get_pkey(certificate):pubkey
+reduc
+  forall d:domain, pkey:pubkey; get_pkey(valid_cert(d,pkey)) = pkey.
+
+fun get_domain(certificate):domain
+reduc
+  forall d:domain, pkey:pubkey; get_domain(valid_cert(d,pkey)) = d.
+
+fun verify_cert(certificate):bool
+reduc
+  forall d:domain, p:pubkey; verify_cert(valid_cert(d,p)) = true.
+
+(* The global table storing the long term keys for both the server and client.
+  The value of type idProc corresponds to the process identifier that generated
+  the long term key. *)
+table long_term_keys(domain,privkey,pubkey,certificate,idProc).
+
+(***************************************
+  Ech Configuration
+****************************************)
+
+(* Data structure of ECHConfig. We flatten the data structure with respect to the
+  RFC. In particular, in the RFC, HpkeSymmetricCipherSuite is composed of an id
+  for aead and kdf. Our kdf being based on the hash function, we parametrise it
+  by hash_alg.
+  Similarly, the HpkeKemId will be determined by a DH group.
+
+  A server should be parametrised by its ech_config and the private key associated
+  to public_key.
+*)
+
+type configId.
+
+type echConfig.
+fun ech_config(
+  configId (* config id *),
+  group (* kem_id directly represented as a group *),
+  element (* public_key *),
+  domain (* public_name *),
+  hash_alg (* kdf_id *),
+  aead_alg (* aead_id *)
+):echConfig [data].
+
+const
+  hrr_ech_accept_confirmation, (* "hrr ech accept confirmation" in Section 7.2.1 of ECH RFC *)
+  ech_accept_confirmation, (* "ech accept confirmation" in Section 7.2 of ECH RFC *)
+  tls_ech_str (* "tls ech" in Section 6.1 of ECH RFC *)
+  :label [data].
+
+table ech_configurations(
+  echConfig, (* Ech configuration *)
+  bitstring). (* The secret key skR *)
+
+(***************************************
+  Encrypted Client Hello Extension
+****************************************)
+
+type echExt.
+
+fun echExt2b(echExt):bitstring [typeConverter].
+
+(* Represents the absence of extension *)
+const empty_ech_ext: echExt [data].
+
+(* This extension should only occur in the ClientHelloInner. *)
+const ECHClientHelloInner: echExt [data].
+
+(* This extension should only occur in the ClientHelloOuter. *)
+(* This includes the following element
+    - cipher_suite of type [cipherSuite];
+    - config_id of type [uint8] in RFC ([configId] in this model). Should be the same
+      as in the ECH config.
+    - enc of type [opaque] in RFC ([element] in this model). It's the The HPKE encapsulated key
+    - payload of type [opaque] in RFC ([bitstring] in this model).
+*)
+fun ECHClientHelloOuter(hash_alg,aead_alg,configId,element,bitstring): echExt [data].
+
+(* The encrypted_client_hello extension that may be included in the server EncryptedExtensions
+  message (see Section 5 of ECH RFC). It should normally contain retry_configs
+  which is a list of Ech configurations but we only model one here. *)
+fun ECHConfigList(echConfig):echExt [data].
+
+(* The encrypted_client_hello extension that is sent by the backend when sending
+  the HelloRetryRequest (see Section 5 and 7.2.1 of ECH RFC). *)
+fun ECHHelloRetryRequest(bytes8):echExt [data].
+
+(***************************************
+  TLS messages
+****************************************)
+
+type TLS_version.
+const TLS13: TLS_version [data].
+
+(* "HelloRetryRequest" in Section 4.1.3 of TLS RFC *)
+const HRR8:bytes8 [data].
+const HRR24:bytes24 [data].
+letfun rand_HelloRetryRequest = B32(HRR24,HRR8).
+
+(* The SNI extension *)
+type sniExt.
+fun SNI(domain): sniExt [data].
+const empty_sni_ext: sniExt [data].
+
+(* The parameters of the Client and Server Hello. The last argument can be used to
+  add any other informations *)
+type params.
+fun nego(
+  TLS_version,
+  hash_alg,
+  aead_alg,
+  keyShareExt,
+  sniExt,
+  echExt,
+  extraExt,
+  preSharedKeyExt):params [data].
+
+type msg.
+fun m2b(msg):bitstring [typeConverter].
+fun CH(bytes32,params):msg [data].
+fun SH(bytes32,params):msg [data].
+
+(* Some projection functions *)
+reduc
+  forall r:bytes32, mode:params; get_random(CH(r,mode)) = r;
+  forall r:bytes32, mode:params; get_random(SH(r,mode)) = r.
+
+(* Encrypted Extensions. *)
+fun EE(echExt,extraExt): msg [data].
+
+(* Certificate Request message. We only model the certificate_request_context
+  but not the extensions, even though in the RFC, it is indicated that
+    "the "signature_algorithms" extension MUST be specified"
+  Since we only model one signature algorithm, we omit it.
+  certificate_request_context must be zero during the main handshake and should
+  be a fresh random for post-handshake authentication. *)
+fun CRTR(bitstring): msg [data].
+
+(* The first argument of certificate corresponds to certificate_request_context *)
+fun CRT(bitstring,certificate):msg [data].
+
+(* Corresponds to the Certificate Verify message. We only consider the signature
+  since we model only one signature algorithm. *)
+fun CV(bitstring):msg [data].
+
+(* The Finished message *)
+fun FIN(bitstring):msg [data].
+
+(* The NewSessionTicket (Section 4.6.1 in TLS RFC) *)
+fun NST(
+  bitstring, (* ticket_nonce *)
+  identityPsk (* ticket that as used as pre shared key identity *)
+):msg [data].
+
+type error_signal.
+const
+  illegal_parameter,unsupported_certificate,decode_error,
+  unexpected_message, handshake_failure,
+  abort_error,bad_record_mac,
+  unrecognized_name, unsupported_extension,
+  missing_extension, decrypt_error
+  :error_signal.
+
+fun error2b(error_signal):bitstring [typeConverter].
+(********************************************************)
+(* Key Schedule of TLS (Section 7.1 of RFC)             *)
+(********************************************************)
+
+const
+  tls13_client_handshake_traffic_secret, (* "c hs traffic" of Section 7.1 TLS RFC *)
+  tls13_server_handshake_traffic_secret, (* "s hs traffic" of Section 7.1 TLS RFC *)
+  tls13_client_early_traffic_secret, (* "c e traffic" of Section 7.1 TLS RFC *)
+  tls13_client_application_traffic_secret, (* "c ap traffic" of Section 7.1 TLS RFC *)
+  tls13_server_application_traffic_secret, (* "s ap traffic" of Section 7.1 TLS RFC *)
+  tls13_key, (* "key" of Section 7.3 TLS RFC. Note that we do not model the Record Protocol
+   (Section 5 of TLS RFC. Hence we do not need "iv" of Section 7.3 TLS RFC *)
+  tls13_early_exporter_master_secret, (* "e exp master" of Section 7.1 TLS RFC *)
+  tls13_exporter_master_secret, (* "exp master" of Section 7.1 TLS RFC *)
+  tls13_resumption, (* "resumption" of Section 4.6.1 TLS RFC *)
+  tls13_resumption_master_secret, (* "res master" of Section 7.1 TLS RFC *)
+  tls13_ext_res_binder, (* "ext binder" and "res binder" of Section 7.1 TLS RFC *)
+  tls13_finished, (* "finished" of Section 4.4.4 of TLS RFC *)
+  tls13_derived (* "derived" of Section 7.1 TLS RFC *)
+  : label.
+
+(** Key Schedule (Section 7.1 of TLS RFC *)
+
+letfun derive_secret(h:hash_alg,k:bitstring,l:label,m:bitstring) =
+  hkdf_expand_label(h,k,l,hash(h,m)).
+
+(* Function to generate "Early Secret" + binder_key *)
+letfun kdf_es(h:hash_alg,psk:preSharedKey) =
+  let early_secret = hkdf_extract(h,zero,psk2b(psk)) in
+  let binder_key = derive_secret(h,early_secret,tls13_ext_res_binder,zero) in
+  (early_secret,b2mk(binder_key)).
+
+(* Function to generate
+  - client_write_key for 0-RTT Application
+  - early_exporter_master_secret *)
+letfun kdf_k0(h:hash_alg,early_secret:bitstring,client_hello:bitstring) =
+  (* client_early_traffic_secret *)
+  let atsc0 = derive_secret(h,early_secret,tls13_client_early_traffic_secret,client_hello) in
+  (* client_write_key for *)
+  let kc0 = hkdf_expand_label(h,atsc0,tls13_key,zero) in
+
+  (* early_exporter_master_secret*)
+  let ems0 = derive_secret(h,early_secret,tls13_early_exporter_master_secret,client_hello) in
+
+  (b2ae(kc0),ems0).
+
+(* Function to generate Handshake Secret. *)
+letfun kdf_hs(h:hash_alg,early_secret:bitstring,e:element) =
+  let extra = derive_secret(h,early_secret,tls13_derived,hash(h,zero)) in
+  hkdf_extract(h,extra,e2b(e)).
+
+(* Function to generate
+  - client_handshake_traffic_secret
+  - server_handshake_traffic_secret
+  - Master Secret
+  - client_write_key for handshake record (Section 7.3 of TLS RFC)
+  - server_write_key for handshake record  (Section 7.3 of TLS RFC)
+  - client_finished_key (Section 4.4.4 of TLS RFC)
+  - server_finished_key (Section 4.4.4 of TLS RFC)
+  The log should contain the client_hello and the server hello. *)
+letfun kdf_ms(h:hash_alg,handshake_secret:bitstring,log:bitstring) =
+  let extra = derive_secret(h,handshake_secret,tls13_derived,hash(h,zero)) in
+  let master_secret = hkdf_extract(h,handshake_secret, zero) in
+  let client_hts = derive_secret(h,handshake_secret, tls13_client_handshake_traffic_secret, log) in
+  let server_hts = derive_secret(h,handshake_secret, tls13_server_handshake_traffic_secret, log) in
+
+  (* [sender]_write_key for handshake record *)
+  let client_wkh =  hkdf_expand_label(h,client_hts,tls13_key,zero) in
+  let server_wkh =  hkdf_expand_label(h,server_hts,tls13_key,zero) in
+
+  (* [sender]_finished_key *)
+  let client_fk =  hkdf_expand_label(h,client_hts,tls13_finished,zero) in
+  let server_fk =  hkdf_expand_label(h,server_hts,tls13_finished,zero) in
+  (master_secret,b2ae(client_wkh),b2ae(server_wkh),b2mk(client_fk),b2mk(server_fk)).
+
+(* Function to generate:
+  - client_write_key for Application Data record
+  - server_write_key for Application Data record
+  - client_finished_key for Application Data record
+  - server_finished_key for Application Data record
+  - exporter_master_secret
+  The log must contain ClientHello up to server Finished.
+  *)
+letfun kdf_k(h:hash_alg,master_secret:bitstring,log:bitstring) =
+  let client_ats = derive_secret(h,master_secret, tls13_client_application_traffic_secret, log) in
+  let server_ats = derive_secret(h,master_secret, tls13_server_application_traffic_secret, log) in
+
+  let ems	= derive_secret(h,master_secret, tls13_exporter_master_secret, log) in
+
+  (* [sender]_write_key *)
+  let client_wkad = hkdf_expand_label(h,client_ats,tls13_key,zero) in
+  let server_wkad = hkdf_expand_label(h,server_ats,tls13_key,zero) in
+
+  (* [sender]_finished_key *)
+  let client_fkad =  hkdf_expand_label(h,client_ats,tls13_finished,zero) in
+
+  (b2ae(client_wkad),b2ae(server_wkad),b2mk(client_fkad),ems).
+
+(* Function to generate resumption_master_secret. The log must contain:
+  ClientHello up to client Finished. *)
+letfun kdf_psk(h:hash_alg,master_secret:bitstring, log:bitstring) =
+  derive_secret(h,master_secret,tls13_resumption_master_secret,log).
+
+(* Function to generate the pre shared key from the ticket *)
+letfun psk_from_ticket(h:hash_alg,resumption_master_secret:bitstring,ticket_nonce:bitstring) =
+  b2psk(hkdf_expand_label(h,resumption_master_secret,tls13_resumption,ticket_nonce)).
+(*******************************)
+(*  Events used in the process *)
+(*******************************)
+
+type stamp.
+
+(*** Event to defined security queries *)
+
+(* Selection of ciphersuite and group by the server *)
+event ServerChoosesAead(
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  aead_alg        (* AEAD algorithm *)
+).
+
+event ServerChoosesHash(
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  hash_alg        (* Hash algorithm *)
+).
+
+event ServerChoosesGroup(
+  idProc,         (* Process Identity *)
+  group           (* DH group *)
+).
+
+(* Offer of aead algorithm by the client *)
+event ClientOffersAead(
+  bytes32,        (* Client random *)
+  aead_alg        (* AEAD algorithm *)
+).
+
+event ClientOffersHash(
+  bytes32,        (* Client random *)
+  hash_alg        (* Hash algorithm *)
+).
+
+event ClientOffersGroup(
+  bytes32,        (* Client random *)
+  group           (* DH group *)
+).
+
+(* Compromised keys *)
+event CompromisedLtk(pubkey).
+event CompromisedLtkForEquiv(pubkey).
+event CompromisedPsk(preSharedKey).
+event CompromisedEchKey(echConfig).
+event CompromisedEchKeyForEquiv(echConfig).
+
+event UnsafePsk(preSharedKey).
+
+(* Modelisation of the sequence number for Per-Record Nonce (Section 5.3 of TLS RFC)*)
+
+event ServerSequenceClientDataWriteKey(
+  idProc,        (* Process identity *)
+  stamp,          (* Stamp freshly generated before calling the event *)
+  nat             (* The sequence number *)
+).
+
+event ServerSequenceServerDataWriteKey(
+  idProc,        (* Process identity *)
+  stamp,          (* Stamp freshly generated before calling the event *)
+  nat             (* The sequence number *)
+).
+
+event ClientSequenceClientDataWriteKey(
+  idProc,        (* Process identity *)
+  stamp,          (* Stamp freshly generated before calling the event *)
+  nat             (* The sequence number *)
+).
+
+event ClientSequenceServerDataWriteKey(
+  idProc,        (* Process identity *)
+  stamp,          (* Stamp freshly generated before calling the event *)
+  nat             (* The sequence number *)
+).
+
+event ServerSequenceClient0RTTDataWriteKey(
+  idProc,        (* Process identity *)
+  stamp,          (* Stamp freshly generated before calling the event *)
+  nat             (* The sequence number *)
+).
+
+event ClientSequenceClient0RTTDataWriteKey(
+  idProc,        (* Process identity *)
+  stamp,          (* Stamp freshly generated before calling the event *)
+  nat             (* The sequence number *)
+).
+
+(* Application Data - 0-RTT *)
+event ServerReceives0(
+  idProc,         (* Process identity *)
+  domain,         (* Server domain *)
+  bytes32,        (* Client random *)
+  preSharedKey,   (* Pre shared key *)
+  nat,            (* Sequence number given as input to Aead *)
+  bitstring,      (* Additional data given as input to Aead *)
+  bitstring       (* Message *)
+).
+
+event ClientSends0(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  preSharedKey,   (* Pre shared key *)
+  nat,            (* Sequence number given as input to Aead *)
+  bitstring,      (* Additional data given as input to Aead *)
+  bitstring       (* Message *)
+).
+
+(* Application Data - Post Handshake *)
+event ServerReceives(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  nat,            (* Sequence number given as input to Aead *)
+  bitstring,      (* Additional data given as input to Aead *)
+  bitstring       (* Message *)
+).
+
+event ServerSends(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  nat,            (* Sequence number given as input to Aead *)
+  bitstring,      (* Additional data given as input to Aead *)
+  bitstring       (* Message *)
+).
+
+event ClientReceives(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  nat,            (* Sequence number given as input to Aead *)
+  bitstring,      (* Additional data given as input to Aead *)
+  bitstring       (* Message *)
+).
+
+event ClientSends(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  nat,            (* Sequence number given as input to Aead *)
+  bitstring,      (* Additional data given as input to Aead *)
+  bitstring       (* Message *)
+).
+
+(* 1-RTT Authentication *)
+
+event ClientFinished(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  aead_key,       (* client_write_key for Application Data record *)
+  aead_key,       (* server_write_key for Application Data record *)
+  bitstring,      (* exporter_master_secret *)
+  bitstring       (* resumption_master_secret *)
+).
+
+event ServerFinished(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  aead_key,       (* client_write_key for Application Data record *)
+  aead_key,       (* server_write_key for Application Data record *)
+  bitstring,      (* exporter_master_secret *)
+  bitstring       (* resumption_master_secret *)
+).
+
+event PreServerFinished(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey          (* Certificate public key of the server *)
+).
+
+(* Post Handshake Authentication *)
+
+event ServerRequestPH(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  bitstring       (* The random in request *)
+).
+
+event ClientFinishedPH(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  bitstring,      (* The random in request *)
+  pubkey          (* Certificate public key of the client *)
+).
+
+event ServerFinishedPH(
+  idProc,         (* Process identity *)
+  bytes32,        (* Client random *)
+  bytes32,        (* Server random *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  bitstring,      (* The random in request *)
+  pubkey          (* Certificate public key of the client *)
+).
+
+event ServerNewTicket(
+  idProc,         (* Process identity *)
+  preSharedKey,   (* Pre shared key used in the session *)
+  pubkey,         (* Certificate public key of the server *)
+  pubkey,         (* Certificate public key of the client *)
+  nat,            (* The sequence number used when receiving the ticket *)
+  preSharedKey    (* Pre shared key used in the session *)
+).
+
+(* Ech events *)
+
+event ClientOffersEchConfig(
+  idProc,         (* Process identity of the client *)
+  echConfig       (* The ECH config of the frontend server *)
+).
+
+event ServerChoosesEchConfig(
+  idProc,         (* Process identity of the server *)
+  echConfig,      (* The ECH config that the frontend server accepts *)
+  bool            (* Indicates if the server was running ECH. *)
+).
+
+event ClientEchAcceptance(
+  idProc,         (* Process identity of the client *)
+  bool            (* True when the client considers that ECH was accepted *)
+).
+
+event ServerEchAcceptance(
+  idProc,         (* Process identity of the server *)
+  bool            (* True when the server accepts ECH. *)
+).
+
+(* Equivalence properties *)
+
+event Selected_psk(
+  domain,         (* The domain given as argument *)
+  domain,         (* The domain of the table entry *)
+  idProc,         (* The identity of the process that generated the psk *)
+  bool            (* Safety of the pre shared key. *)
+).
+
+event Selected_one_time_used_psk(
+  idProc,         (* The identity of the process using the psk *)
+  preSharedKey,   (* The pre shared key *)
+  bool            (* Safety of the pre shared key. *)
+).
+
+event Selected_psk_no_missmatch(
+  idProc,         (* The identity of the process using the psk *)
+  domain,         (* The domain of the server *)
+  hash_alg,
+  preSharedKey,
+  identityPsk
+).
+
+event Selected_ltk(
+  domain,         (* The domain given as argument *)
+  domain,         (* The domain of the table entry *)
+  idProc          (* The identity of the process that generated the long term key. *)
+).
+
+event Selected_ech_config_private_key(
+  element         (* The private key of the Ech Config *)
+).
+
+(* The PSK obtained from ticket when the attacker decided to compromise it. *)
+event CompromisedPskDiff(idProc).
+
+(*** Events for proof helpers *)
+
+event PreciseInput(stamp,bitstring).
+event PreciseIdProcess(channel,idProc,stamp).
+event PreciseMess(channel,idProc,stamp,bitstring).
+event Same(bitstring).
+
+event Selected_psk_with_ID(
+  domain,         (* The domain given as argument *)
+  domain,         (* The domain of the table entry *)
+  identityPsk,
+  idProc,         (* The identity of the process that generated the psk *)
+  bool            (* Safety of the pre shared key. *)
+).
+
+event Client_server_domain(idProc,domain).
+event Client_Rand_client(idProc,bytes32).
+event Client_Rand_server(idProc,bytes32).
+event Client_DH_client(idProc,element).
+event Client_DH_server(idProc,element).
+event Client_DH_gxy(idProc,element).
+event Client_Cert_server(idProc,pubkey).
+event Client_Cert_client(idProc,pubkey).
+event Client_PSKOffer(idProc,preSharedKey,identityPsk,bool).
+event Client_PSKChoosen(idProc,preSharedKey,bool).
+event Client_chk(idProc,aead_key).
+event Client_shk(idProc,aead_key).
+event Client_cfin(idProc,mac_key).
+event Client_sfin(idProc,mac_key).
+event Client_rms(idProc,bitstring).
+event Client_cak(idProc,aead_key).
+event Client_sak(idProc,aead_key).
+event Client_cfkad(idProc,mac_key).
+event Client_comp_psk(idProc,bool).
+event Client_new_PSK(idProc,preSharedKey).
+event Client_rand_PSK(idProc,preSharedKey,preSharedKey,bool).
+
+event Server_Rand_client(idProc,bytes32).
+event Server_Rand_server(idProc,bytes32).
+event Server_DH_client(idProc,element).
+event Server_DH_server(idProc,element).
+event Server_DH_gxy(idProc,element).
+event Server_Cert_server(idProc,pubkey).
+event Server_Cert_client(idProc,pubkey).
+event Server_PSKChoosen(idProc,preSharedKey).
+event Server_chk(idProc,aead_key).
+event Server_shk(idProc,aead_key).
+event Server_cfin(idProc,mac_key).
+event Server_sfin(idProc,mac_key).
+event Server_rms(idProc,bitstring).
+event Server_cak(idProc,aead_key).
+event Server_sak(idProc,aead_key).
+event Server_cfkad(idProc,mac_key).
+event Server_new_PSK(idProc,preSharedKey).
+(********************************************************)
+(*                Proof helper precision                *)
+(********************************************************)
+
+(* In client.pvl *)
+
+letfun precise_C_PH_get = false.
+
+letfun strong_PreciseMess_C_CFIN = false.
+letfun medium_PreciseMess_C_CFIN = false.
+
+letfun precise_C_CertMess = false.
+
+(* In server.pvl *)
+
+letfun precise_S_CRT_get = false.
+letfun precise_S_get = false.
+
+(* In main process *)
+
+letfun precise_server = false.
+
+(* Expand of macros *)
+
+def mk_precise(proof_helper,setting) {
+  letfun proof_helper(x:bitstring) =
+    if setting
+    then new st[]:stamp; event PreciseInput(st,x); ()
+    else ()
+  .
+}
+
+expand mk_precise(proof_helper_C_PH_get,precise_C_PH_get).
+expand mk_precise(proof_helper_C_CertMess,precise_C_CertMess).
+
+expand mk_precise(proof_helper_S_CRT_get,precise_S_CRT_get).
+expand mk_precise(proof_helper_S,precise_S_get).
+
+expand mk_precise(proof_helper_server,precise_server).
+
+(********************************************************)
+(*    Configuration variables for equivalence queries   *)
+(********************************************************)
+
+letfun select_client_certificate_by_restriction = false.
+
+letfun select_server_certificate_by_restriction = false.
+
+letfun select_client_pre_shared_key_by_restriction = false.
+
+letfun select_server_pre_shared_key_by_restriction = false.
+
+letfun add_unsafe_event_for_ticket = true.
+(*******************************)
+(*  Some TLS functionnalities  *)
+(*******************************)
+
+(* Generate early secret and psk extension on the server side *)
+
+letfun generate_early_secret_psk_extension(use_psk:bool,s_dom:domain,client_hello:msg,cur_log:bitstring) =
+  (* The cipher suite should have already been verified *)
+  let CH(cr,nego(=TLS13,h_alg,a_alg,kex_ext,sni_ext,ech_ext,extra_ext,psk_ext)) = client_hello in
+
+  let (=true,client_psk_ext(id,binders)) = (use_psk,psk_ext) in (
+    let (=s_dom,=h_alg) = (get_server_psk(id),get_hash_psk(id)) in (
+      let psk = get_psk(id) in
+      let (early_secret:bitstring,kb:mac_key) = kdf_es(h_alg,psk) in
+      let offer = nego(TLS13,h_alg,a_alg,kex_ext,sni_ext,ech_ext,extra_ext,trunc_client_psk_ext(id)) in
+      let cur_log' = (cur_log,CH(cr,offer)) in
+      if binders = hmac(h_alg,kb,cur_log') then
+      (early_secret, server_psk_ext(1), psk)
+    )
+    else
+      let (es:bitstring,kb:mac_key) = kdf_es(h_alg,NoPsk) in
+      (es, empty_psk_ext, NoPsk)
+  )
+  else
+    let (es:bitstring,kb:mac_key) = kdf_es(h_alg,NoPsk) in
+    (es, empty_psk_ext, NoPsk)
+.
+
+(* Generate the pre shared key extension on the client side *)
+
+letfun make_pre_shared_key_extension(
+  id_client:idProc,
+  old_psk_data:bitstring,
+  use_psk:bool,
+  c_dom,s_dom:domain,cr:bytes32,
+  h_alg:hash_alg,a_alg:aead_alg,kex:keyShareExt,ech_ext:echExt,
+  extra:extraExt,cur_log:bitstring
+  ) =
+
+  if use_psk
+  then (
+    let (psk:preSharedKey,id:identityPsk,old_es:bitstring,is_safe:bool) = old_psk_data in (
+      let offer = nego(TLS13,h_alg,a_alg,kex,SNI(s_dom),ech_ext,extra,trunc_client_psk_ext(id)) in
+      let cur_log' = (cur_log,CH(cr,offer)) in
+      let (es:bitstring,kb:mac_key) = kdf_es(h_alg,psk) in
+      let binders = hmac(h_alg,kb,cur_log') in
+      (client_psk_ext(id,binders), (psk,id,es,is_safe))
+    )
+    else (
+      let (id:identityPsk,psk:preSharedKey,is_safe:bool) =
+        if select_client_pre_shared_key_by_restriction
+        then (
+          get pre_shared_keys(c_dom',=s_dom,=h_alg,id,psk,idP,is_safe) [precise] in
+          event Selected_one_time_used_psk(id_client,psk,is_safe);
+          event Selected_psk(c_dom,c_dom',idP,is_safe);
+          event Selected_psk_no_missmatch(id_client,s_dom,h_alg,psk,id);
+          event Selected_psk_with_ID(c_dom,c_dom',id,idP,is_safe);
+          (id,psk,is_safe)
+        )
+        else if select_server_pre_shared_key_by_restriction
+        then (
+          get pre_shared_keys(=c_dom,s_dom',=h_alg,id,psk,idP,is_safe) [precise] in
+          event Selected_psk(s_dom,s_dom',idP,is_safe);
+          event Selected_psk_no_missmatch(id_client,s_dom,h_alg,psk,id);
+          event Selected_psk_with_ID(s_dom,s_dom',id,idP,is_safe);
+          (id,psk,is_safe)
+        )
+        else (
+          get pre_shared_keys(=c_dom,=s_dom,=h_alg,id,psk,idP,is_safe) [precise] in
+          (id,psk,is_safe)
+        )
+      in
+
+      let offer = nego(TLS13,h_alg,a_alg,kex,SNI(s_dom),ech_ext,extra,trunc_client_psk_ext(id)) in
+      let cur_log' = (cur_log,CH(cr,offer)) in
+      let (es:bitstring,kb:mac_key) = kdf_es(h_alg,psk) in
+      let binders = hmac(h_alg,kb,cur_log') in
+      (client_psk_ext(id,binders), (psk,id,es,is_safe))
+    )
+  )
+  else
+    let (es:bitstring,kb:mac_key) = kdf_es(h_alg,NoPsk) in
+    (empty_psk_ext,(NoPsk,b2idpsk(zero),es,false))
+.
+
+(* Generate the key share extension. *)
+
+letfun make_key_share_extension(g:group,send_key_share:bool) =
+  let (x:bitstring,gx:element) = dh_keygen(g) in
+  let kex =
+    if send_key_share
+    then DHE_kex(g,gx)
+    else DHE_group(g)
+  in
+  (client_kex_ext(kex), (x,g))
+.
+
+(* Generate the client hello message *)
+
+letfun generate_client_hello_message (
+  id_client:idProc,
+  old_psk_data:bitstring,
+  use_psk:bool,
+  c_dom,s_dom:domain,
+  g:group,send_kex:bool,h_alg:hash_alg,a_alg:aead_alg,
+  cur_log:bitstring
+  )
+  =
+
+  let cr = gen_B32_random() in
+
+  (* The key share extension *)
+  let (kex_ext:keyShareExt,kex_data:bitstring) = make_key_share_extension(g,send_kex) in
+
+  (* The pre shared key extension *)
+  let (psk_ext:preSharedKeyExt,psk_data:bitstring) =
+    make_pre_shared_key_extension(
+      id_client,
+      old_psk_data,
+      use_psk,
+      c_dom,s_dom,cr,
+      h_alg,a_alg,kex_ext,empty_ech_ext,empty_extra_ext,cur_log)
+  in
+
+  (* The client hello *)
+  let offer = nego(TLS13,h_alg,a_alg,kex_ext,SNI(s_dom),empty_ech_ext,empty_extra_ext,psk_ext) in
+  (CH(cr,offer),cr,kex_data,psk_data).
+(*******************************)
+(*  Some ECH functionnalities  *)
+(*******************************)
+
+(* Authenticating the ClientHelloOuter. (Section 5.2 of ECH RFC) *)
+
+letfun generate_client_hello_outer_AAD(client_hello_outer:msg) =
+  let CH(r,nego(v,h_alg,a_alg,kex_ext,sni_ext,ech_ext,extra_ext,psk_ext)) = client_hello_outer in
+  let ECHClientHelloOuter(h_alg_ech,a_alg_ech,config_id,enc,payload) = ech_ext in
+
+  (* The client_hello_outer with the payload is set of zero *)
+  let ech_ext' = ECHClientHelloOuter(h_alg_ech,a_alg_ech,config_id,enc,zero) in
+  CH(r,nego(v,h_alg,a_alg,kex_ext,sni_ext,ech_ext',extra_ext,psk_ext)).
+
+(* Generation of enc and context *)
+letfun generate_enc_context_client(
+  ech_h:hash_alg,ech_g:group,
+  pkR:element, (* The public key of config *)
+  config:echConfig (* The ECH configuration *)
+  ) =
+  hpke_setup_base_S(ech_h,ech_g,pkR,(tls_ech_str,config))
+.
+
+(* Generation of the context for frontserver (Section 7.1 of ECH RFC) *)
+letfun generate_context_frontend_server(
+  ech_h:hash_alg,ech_g:group,
+  skR:bitstring, (* The private key associated to the public key of config *)
+  config:echConfig, (* The ECH configuration *)
+  enc:element (* ECHClientHelloOuter.enc found in the client hello. *)
+  ) =
+  hpke_setup_base_R(ech_h,ech_g,enc,skR,(tls_ech_str,config))
+.
+
+(* Generation of an "encrypted_client_hello" extension with retry configuration *)
+letfun generate_retry_ech_ext(config:echConfig) =
+  let ech_config(config_id,g,pkR,s_dom,h_alg,a_alg) = config in
+  let (skR':bitstring,pkR':element) = dh_keygen(g) in
+  new config_id'[]:configId;
+  ECHConfigList(ech_config(config_id',g,pkR',s_dom,h_alg,a_alg))
+.
+
+(* The "accept_confirmation" that is used by the backend server to signal acc.
+  See Section 7.2 of ECH RFC. *)
+
+letfun generate_accept_confirmation(
+  sr24:bytes24,
+  tls_h:hash_alg,
+  params_server_hello:params,
+  inner_client_hello:msg, (* The lastest ClientHelloInner *)
+  cur_log:bitstring (* From first ClientHelloInner up to and excluding the modified ServerHello *)
+  ) =
+  (* Generate a random first 24 bytes and create a modified Server Hello *)
+  let sh_modified = SH(B32(sr24,zero8),params_server_hello) in
+  let cur_log_sh = (cur_log,sh_modified) in
+  let transcript_ech_conf = hash(tls_h,cur_log_sh) in
+  let sr8 =
+    crop_into_bytes8(hkdf_expand_label(
+      tls_h,
+      hkdf_extract(tls_h,zero,b32_2_b(get_random(inner_client_hello))),
+      ech_accept_confirmation,
+      cur_log_sh
+    ))
+  in
+  B32(sr24,sr8)
+.
+
+(* The "hrr_accept_confirmation" that is used in the HelloRetryRequest from
+  the backend server. See Section 7.2.1 of ECH RFC. *)
+
+(* In the RFC, the acceptation message is computed by applying HKDF-Expand-Label
+  with a length set to 8. We encode this by "cropping" to 8 bytes a standard
+  application of hpke_label_expand. This is not exactly the same but it does not
+  reduce capabilities of the attacker.
+*)
+letfun generate_hrr_accept_confirmation(
+  tls_g:group,tls_h:hash_alg,tls_a:aead_alg,
+  inner_client_hello:msg
+  ) =
+
+  (* Generate a standard HRR where the encrypted_client_hello extension has a payload
+  of 8 zero bytes. *)
+  let hrr_mode = nego(TLS13,tls_h,tls_a,hrr_kex_ext(tls_g),empty_sni_ext,ECHHelloRetryRequest(zero8),empty_extra_ext,empty_psk_ext) in
+  let hrr = SH(rand_HelloRetryRequest,hrr_mode) in
+
+  let cur_log = ((zero,inner_client_hello),hrr) in
+  let transcript_hrr_ech_conf = hash(tls_h,cur_log) in
+
+  crop_into_bytes8(hkdf_expand_label(
+    tls_h,
+    hkdf_extract(tls_h,zero,b32_2_b(get_random(inner_client_hello))),
+    hrr_ech_accept_confirmation,
+    cur_log
+  ))
+.
+
+(* The generation of the random the must be sent by the backend in its HRR *)
+letfun generate_hello_retry_request(
+  tls_g:group,tls_h:hash_alg,tls_a:aead_alg, (* Params of the backend *)
+  inner_client_hello:msg (* The inner client hello forwarded by the frontend *)
+  ) =
+  let hrr_accept_confirmation = generate_hrr_accept_confirmation(tls_g,tls_h,tls_a,inner_client_hello) in
+  let hrr_mode = nego(TLS13,tls_h,tls_a,hrr_kex_ext(tls_g),empty_sni_ext,ECHHelloRetryRequest(hrr_accept_confirmation),empty_extra_ext,empty_psk_ext) in
+  SH(rand_HelloRetryRequest,hrr_mode)
+.
+
+
+(* Generate the initial client hello *)
+letfun generate_initial_client_hello_ech(
+  id_client:idProc,
+  use_grease,use_psk,send_kex:bool,c_dom,i_dom:domain,
+  tls_g,backend_g:group,tls_h,backend_h:hash_alg,tls_a,backend_a:aead_alg,
+  ech_conf:echConfig,enc:element,context:hpkeContext, (* For ech *)
+  i_extra:extraExt
+  ) =
+
+  let ech_config(config_id,ech_g,pkR,o_dom,ech_h,ech_a) = ech_conf in
+
+  (* The key share extension *)
+  let (i_kex_ext:keyShareExt,i_kex_data:bitstring) = make_key_share_extension(backend_g,send_kex) in
+  let (o_kex_ext:keyShareExt,o_kex_data:bitstring) = make_key_share_extension(tls_g,send_kex) in
+
+  (* Generate the random for the inner and outer client hello *)
+  let i_cr = gen_B32_random () in
+  let o_cr = gen_B32_random () in
+
+  (* Generate the ech_extension for the inner when grease <> true and outer when grease = true *)
+  let ech_inner_or_grease =
+    if use_grease
+    then (
+      new payload[]:bitstring;
+      new configid[]:configId;
+      let (x_grease:bitstring,gx_grease:element) = dh_keygen(ech_g) in
+      let (secret_grease:element,enc_grease:element) = hpke_encap(ech_g,gx_grease) in
+      ECHClientHelloOuter(ech_h,ech_a,configid,enc_grease,payload)
+    ) else ECHClientHelloInner
+  in
+
+  (* The pre shared key extension for the inner when grease <> true and outer when grease = true *)
+  let (psk_ext:preSharedKeyExt,psk_data:bitstring) =
+    let (dom_psk:domain,cr_psk:bytes32,kex_ext_psk:keyShareExt,extra_psk:extraExt,h_psk:hash_alg,a_psk:aead_alg) =
+      if use_grease
+      then (o_dom,o_cr,o_kex_ext,empty_extra_ext,tls_h,tls_a)
+      else (i_dom,i_cr,i_kex_ext,i_extra,backend_h,backend_a)
+    in
+    make_pre_shared_key_extension(id_client,zero,use_psk,c_dom,dom_psk,cr_psk,h_psk,a_psk,kex_ext_psk,ech_inner_or_grease,extra_psk,zero)
+  in
+
+  (* The inner client hello *)
+  let i_offer = nego(TLS13,backend_h,backend_a,i_kex_ext,SNI(i_dom),ECHClientHelloInner,i_extra,psk_ext) in
+  let i_client_hello = CH(i_cr,i_offer) in
+
+  if use_grease
+  then (
+    let o_offer = nego(TLS13,tls_h,tls_a,o_kex_ext,SNI(o_dom),ech_inner_or_grease,empty_extra_ext,psk_ext) in
+    (CH(o_cr,o_offer),CH(o_cr,o_offer),o_cr,o_cr,o_kex_data,o_kex_data,psk_ext,psk_data,ech_inner_or_grease)
+  )
+  else (
+    let o_psk_ext =
+      if use_psk
+      then
+        new fake_id[]:identityPsk;
+        new fake_binder[]:bitstring;
+        client_psk_ext(fake_id,fake_binder)
+      else empty_psk_ext
+    in
+
+    (* Direct generation of ADD *)
+    let o_ech_ext_ADD = ECHClientHelloOuter(ech_h,ech_a,config_id,enc,zero) in
+    let o_offer_ADD = nego(TLS13,tls_h,tls_a,o_kex_ext,SNI(o_dom),o_ech_ext_ADD,empty_extra_ext,o_psk_ext) in
+    let o_client_hello_ADD = CH(o_cr,o_offer_ADD) in
+
+    let payload = kpke_seal(ech_a,context,1,m2b(o_client_hello_ADD),m2b(i_client_hello)) in
+    let o_ech_ext = ECHClientHelloOuter(ech_h,ech_a,config_id,enc,payload) in
+    let o_offer = nego(TLS13,tls_h,tls_a,o_kex_ext,SNI(o_dom),o_ech_ext,empty_extra_ext,o_psk_ext) in
+
+    (CH(o_cr,o_offer),i_client_hello,o_cr,i_cr,o_kex_data,i_kex_data,o_psk_ext,psk_data,o_ech_ext)
+  )
+.
+
+(* Generate the second client hello for the backend *)
+letfun generate_second_client_hello_for_backend(
+  id_client:idProc,old_psk_data:bitstring,
+  use_psk:bool,c_dom,i_dom:domain,
+  tls_g,backend_g:group,tls_h,backend_h:hash_alg,tls_a,backend_a:aead_alg,
+  ech_conf:echConfig,context:hpkeContext, (* For ech *)
+  i_extra:extraExt,
+  cur_log:bitstring (* Should be ((zero,Inner1),HRR) *)
+  ) =
+
+  let ech_config(config_id,ech_g,pkR,o_dom,ech_h,ech_a) = ech_conf in
+
+  (* The key share extension *)
+  let (i_kex_ext:keyShareExt,i_kex_data:bitstring) = make_key_share_extension(backend_g,true) in
+  let (o_kex_ext:keyShareExt,o_kex_data:bitstring) = make_key_share_extension(tls_g,true) in
+
+  (* Generate the random for the inner and outer client hello *)
+  let i_cr = gen_B32_random () in
+  let o_cr = gen_B32_random () in
+
+  (* The pre shared key extension for the inner  *)
+  let (psk_ext:preSharedKeyExt,psk_data:bitstring) =
+    make_pre_shared_key_extension(id_client,old_psk_data,use_psk,c_dom,i_dom,i_cr,backend_h,backend_a,i_kex_ext,ECHClientHelloInner,i_extra,cur_log)
+  in
+
+  (* The inner client hello *)
+  let i_offer = nego(TLS13,backend_h,backend_a,i_kex_ext,SNI(i_dom),ECHClientHelloInner,i_extra,psk_ext) in
+  let i_client_hello = CH(i_cr,i_offer) in
+
+  let o_psk_ext =
+    if use_psk
+    then
+      new fake_id[]:identityPsk;
+      new fake_binder[]:bitstring;
+      client_psk_ext(fake_id,fake_binder)
+    else empty_psk_ext
+  in
+
+  (* Direct generation of ADD *)
+  let o_ech_ext_ADD = ECHClientHelloOuter(ech_h,ech_a,config_id,b2e(zero),zero) in
+  let o_offer_ADD = nego(TLS13,tls_h,tls_a,o_kex_ext,SNI(o_dom),o_ech_ext_ADD,empty_extra_ext,o_psk_ext) in
+  let o_client_hello_ADD = CH(o_cr,o_offer_ADD) in
+
+  let payload = kpke_seal(ech_a,context,2,m2b(o_client_hello_ADD),m2b(i_client_hello)) in
+  let o_ech_ext = ECHClientHelloOuter(ech_h,ech_a,config_id,b2e(zero),payload) in
+  let o_offer = nego(TLS13,tls_h,tls_a,o_kex_ext,SNI(o_dom),o_ech_ext,empty_extra_ext,o_psk_ext) in
+
+  (CH(o_cr,o_offer),i_client_hello,i_cr,i_kex_data,psk_data)
+.
+
+(* Generate the second client hello for the frontend *)
+letfun generate_second_client_hello_for_frontend(
+  id_client:idProc,old_psk_data:bitstring,old_psk_ext:preSharedKeyExt,old_ech_ext:echExt,
+  use_grease,use_psk:bool,c_dom:domain,
+  tls_g:group,tls_h:hash_alg,tls_a:aead_alg,
+  ech_conf:echConfig, (* For ech *)
+  cur_log:bitstring (* Should be ((zero,Outer1),HRR) *)
+  ) =
+
+  let ech_config(config_id,ech_g,pkR,o_dom,ech_h,ech_a) = ech_conf in
+
+  (* Generate the random for the outer client hello *)
+  let o_cr = gen_B32_random () in
+
+  (* The key share extension *)
+  let (o_kex_ext:keyShareExt,kex_data:bitstring) = make_key_share_extension(tls_g,true) in
+
+  let (psk_ext:preSharedKeyExt,psk_data:bitstring) =
+    if use_grease
+    then (
+      make_pre_shared_key_extension(
+        id_client,
+        old_psk_data,
+        use_psk,c_dom,o_dom,o_cr,
+        tls_h,tls_a,o_kex_ext,old_ech_ext,empty_extra_ext,cur_log)
+    )
+    else
+      (* When grease was not used then the PSK ext in Outer1 was a greased PSK.
+        We need to generate a new Grease PSK in Outer2 with the same id. *)
+      let (es:bitstring,kb:mac_key) = kdf_es(tls_h,NoPsk) in
+      let client_psk_ext(fake_id,fake_binder) = old_psk_ext in (
+        (* When use_psk = true *)
+        new fake_binder'[]:bitstring;
+        (client_psk_ext(fake_id,fake_binder'),(NoPsk,b2idpsk(zero),es,false))
+      )
+      else
+        (* When use_psk = false *)
+        (empty_psk_ext,(NoPsk,b2idpsk(zero),es,false))
+  in
+
+  (* The client hello *)
+  let o_offer = nego(TLS13,tls_h,tls_a,o_kex_ext,SNI(o_dom),old_ech_ext,empty_extra_ext,psk_ext) in
+  (CH(o_cr,o_offer),o_cr,kex_data,psk_data)
+.
+(********************
+  Server processes
+*********************)
+
+(* The private channels used for passing arguments *)
+
+(* All communications through these channels should have the following format:
+    (id_server:idProc,(arg1,...,arg_n))
+  For each channel, we define a data function symbol define the arguments.
+  It is not necessary as we could use a tuple but it allows us to do some type
+  checking.
+*)
+
+(* The Post Handshake messages *)
+
+let server_post_handshake(id_server:idProc,
+    cr,sr:bytes32,h_alg:hash_alg,a_alg:aead_alg,
+    s_dom:domain, s_pkey,c_pkey:pubkey,
+    psk:preSharedKey,
+    cak,sak:aead_key,cfkad:mac_key,rms:bitstring,
+    cur_log:bitstring
+  )=
+
+  (
+    (* New Session Ticket *)
+    if allow_PH_new_session_ticket then
+
+    (* Generate of a new ticket for the client *)
+
+    new ticket_nonce[]:bitstring;
+    let new_psk = psk_from_ticket(h_alg,rms,ticket_nonce) in
+    event Server_new_PSK(id_server,new_psk);
+    let ticket_id = mk_idpsk(s_dom,h_alg,new_psk) in
+
+    let ticket_msg = NST(ticket_nonce,ticket_id) in
+    let enc_ticket_msg = aead_enc(a_alg,sak,n2b(0),zero,m2b(ticket_msg)) in
+    new st[]:stamp;
+    event ServerSequenceServerDataWriteKey(id_server,st,0); (* To model the sequence of messages using server write key *)
+    event ServerNewTicket(id_server,psk,s_pkey,c_pkey,0,new_psk);
+    event ServerSends(id_server,cr,sr,psk,s_pkey,c_pkey,0,zero,m2b(ticket_msg));
+    out(io,enc_ticket_msg)
+  ) | (
+    (* Sending data if requested *)
+    if allow_PH_data then
+    (
+      !
+      in(io,(seq_srv:nat,ad:bitstring));
+      if is_nat(seq_srv) then
+      new msgs[seq_srv,ad]:bitstring;
+      new st[]:stamp;
+      event ServerSequenceServerDataWriteKey(id_server,st,seq_srv); (* To model the sequence of messages using server write key *)
+      event ServerSends(id_server,cr,sr,psk,s_pkey,c_pkey,seq_srv,ad,msgs);
+      out(io,aead_enc(a_alg,sak,n2b(seq_srv),ad,msgs))
+    ) | (
+      !
+      in(io,(seq_client:nat,ad:bitstring, enc_msg:bitstring));
+      if is_nat(seq_client) then
+      let msgs = aead_dec(a_alg,cak,n2b(seq_client),ad,enc_msg) in
+        new st[]:stamp;
+        event ServerSequenceClientDataWriteKey(id_server,st,seq_client); (* To model the sequence of messages using server write key *)
+        event ServerReceives(id_server,cr,sr,psk,s_pkey,c_pkey,seq_client,ad,msgs)
+      else out(io,bad_record_mac)
+    )
+  ) | (
+    (* Rounds of post handshake authentication *)
+    if allow_PH_authentication then
+    !
+    (* Selection of the sequence numbers *)
+    in(io,(seq_srv:nat,seq_client:nat));
+    if is_nat(seq_srv) && is_nat(seq_client) then
+
+    (* The server requests a client certificate *)
+    new req_rand:bitstring;
+    event ServerRequestPH(id_server,cr,sr,psk,s_pkey,c_pkey,req_rand);
+
+    let crtr_msg = CRTR(req_rand) in
+    let enc_crt = aead_enc(a_alg,sak,n2b(seq_srv),zero,m2b(crtr_msg)) in
+    new st[]:stamp;
+    event ServerSequenceServerDataWriteKey(id_server,st,seq_srv); (* To model the sequence of messages using server write key *)
+    event ServerSends(id_server,cr,sr,psk,s_pkey,c_pkey,seq_srv,zero,m2b(crtr_msg));
+    out(io,enc_crt);
+    let cur_log_CRTR = (cur_log,crtr_msg) in
+
+    (* Waiting for the client certificate *)
+    in(io,enc_cert_msg:bitstring);
+    let m2b(cert_msg) = aead_dec(a_alg,cak,n2b(seq_client),zero,enc_cert_msg) in
+    new st1[]:stamp;
+    event ServerSequenceClientDataWriteKey(id_server,st1,seq_client); (* To model the sequence of messages using server write key *)
+    event ServerReceives(id_server,cr,sr,psk,s_pkey,c_pkey,seq_client,zero,m2b(cert_msg));
+    let CRT(=req_rand,crt) = cert_msg in
+    let cur_log_CRT = (cur_log_CRTR,cert_msg) in
+
+    in(io,enc_cert_verif_msg:bitstring);
+    let m2b(cert_verify_msg) = aead_dec(a_alg,cak,n2b(seq_client+1),zero,enc_cert_verif_msg) in
+    new st2[]:stamp;
+    event ServerSequenceClientDataWriteKey(id_server,st2,seq_client+1); (* To model the sequence of messages using server write key *)
+    event ServerReceives(id_server,cr,sr,psk,s_pkey,c_pkey,seq_client+1,zero,m2b(cert_verify_msg));
+    let CV(signed_log) = cert_verify_msg in
+
+    if verify(get_pkey(crt),hash(h_alg,cur_log_CRT),signed_log) && verify_cert(crt) then
+    let c_pkey' = get_pkey(crt) in
+    let cur_log_CV = (cur_log_CRT,cert_verify_msg) in
+
+    in(io,enc_fin:bitstring);
+    let m2b(fin_msg) = aead_dec(a_alg,cak,n2b(seq_client+2),zero,enc_fin) in
+    new st3[]:stamp;
+    event ServerSequenceClientDataWriteKey(id_server,st3,seq_client+2); (* To model the sequence of messages using server write key *)
+    event ServerReceives(id_server,cr,sr,psk,s_pkey,c_pkey,seq_client+2,zero,m2b(fin_msg));
+    let FIN(hash_msg) = fin_msg in
+
+    if hash_msg = hmac(h_alg,cfkad,cur_log_CV)
+    then event ServerFinishedPH(id_server,cr,sr,psk,s_pkey,c_pkey,req_rand,c_pkey')
+    else out(io,handshake_failure)
+  )
+.
+
+(* Receive the client finished message *)
+
+free ch_server_CFIN:channel [private].
+fun ArgsServerCFIN(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain, pubkey, pubkey,
+  preSharedKey,
+  bitstring,aead_key,nat,mac_key,
+  bitstring
+):bitstring [data].
+
+let receive_client_finished_message =
+  !
+  in(ch_server_CFIN,(id_server:idProc,ArgsServerCFIN(
+    cr,sr,h_alg,a_alg,
+    s_dom, s_pkey, c_pkey,
+    psk,
+    master_secret,chk,c_seq,cfin,
+    cur_log)));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_server_CFIN,id_server,st);
+  event Server_Rand_client(id_server,cr);
+  event Server_Rand_server(id_server,sr);
+  event Server_PSKChoosen(id_server,psk);
+  event Server_chk(id_server,chk);
+  event Server_cfin(id_server,cfin);
+  event Server_Cert_server(id_server,s_pkey);
+  event Server_Cert_client(id_server,c_pkey);
+  (* End Proof Helper *)
+
+  new st1[]:stamp;
+  event PreciseMess(ch_server_CFIN,id_server,st1,(chk,cfin,master_secret));
+
+  in(io,enc_fin:bitstring);
+  let m2b(fin_msg) = aead_dec(a_alg,chk,n2b(c_seq),zero,enc_fin) in
+  let FIN(hash_msg) = fin_msg in
+
+  if hash_msg = hmac(h_alg,cfin,cur_log) then
+  let (cak:aead_key,sak:aead_key,cfkad:mac_key,ems:bitstring) = kdf_k(h_alg,master_secret,cur_log) in
+  let cur_log_CFIN = (cur_log,fin_msg) in
+  let rms = kdf_psk(h_alg,master_secret,cur_log_CFIN) in
+
+  event Server_cak(id_server,cak);
+  event Server_sak(id_server,sak);
+  event Server_cfkad(id_server,cfkad);
+  event Server_rms(id_server,rms);
+
+  (* End of the 1-RTT Handshake *)
+
+  event ServerFinished(id_server,cr,sr,psk,s_pkey,c_pkey,cak,sak,ems,rms);
+
+  server_post_handshake(id_server,
+    cr,sr,h_alg,a_alg,
+    s_dom, s_pkey, c_pkey,
+    psk,
+    cak,sak,cfkad,rms,
+    cur_log_CFIN
+  )
+.
+
+(* Sends the server finish message *)
+
+free ch_server_FIN:channel[private].
+fun ArgsServerFIN(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain, pubkey, bool,
+  preSharedKey,
+  bitstring,aead_key,nat,aead_key,nat,mac_key,mac_key,
+  bitstring
+):bitstring [data].
+
+let send_server_finished_message =
+  !
+  in(ch_server_FIN,(id_server:idProc,ArgsServerFIN(
+    cr,sr,h_alg,a_alg,
+    s_dom, s_pkey, req_cert,
+    psk,
+    master_secret, chk, c_seq, shk, s_seq, cfin,sfin,
+    cur_log)));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_server_FIN,id_server,st);
+  event Server_Rand_client(id_server,cr);
+  event Server_Rand_server(id_server,sr);
+  event Server_PSKChoosen(id_server,psk);
+  event Server_chk(id_server,chk);
+  event Server_shk(id_server,shk);
+  event Server_cfin(id_server,cfin);
+  event Server_sfin(id_server,sfin);
+  event Server_Cert_server(id_server,s_pkey);
+  (* End Proof Helper *)
+
+  new st1[]:stamp;
+  event PreciseMess(ch_server_FIN,id_server,st1,(chk,shk,master_secret));
+
+  let hash_msg = hmac(h_alg,sfin,cur_log) in
+  let finished_msg = FIN(hash_msg) in
+  let enc_finished = aead_enc(a_alg,shk,n2b(s_seq),zero,m2b(finished_msg)) in
+
+  event PreServerFinished(id_server,cr,sr,psk,s_pkey);
+
+  out(io,enc_finished);
+  let cur_log_FIN = (cur_log,finished_msg) in
+
+  (* Receiving messages from the client depending on psk and cert_req *)
+  if req_cert && psk = NoPsk
+  then (
+      (* A certificate request from the client is requested *)
+      in(io,enc_cert_msg:bitstring);
+      let m2b(cert_msg) = aead_dec(a_alg,chk,n2b(c_seq),zero,enc_cert_msg) in
+      let CRT(=zero,crt) = cert_msg in
+
+      let cur_log_CRT = (cur_log_FIN,cert_msg) in
+
+      in(io,enc_cert_verif_msg:bitstring);
+      let m2b(cert_verify_msg) = aead_dec(a_alg,chk,n2b(c_seq+1),zero,enc_cert_verif_msg) in
+      let CV(signed_log) = cert_verify_msg in
+
+      if verify(get_pkey(crt),hash(h_alg,cur_log_CRT),signed_log) && verify_cert(crt) then
+      let c_pkey = get_pkey(crt) in
+      let cur_log_CV = (cur_log_CRT,cert_verify_msg) in
+
+      event Server_Cert_client(id_server,c_pkey);
+
+      out(ch_server_CFIN,(id_server,ArgsServerCFIN(
+        cr,sr,h_alg,a_alg,
+        s_dom, s_pkey, c_pkey,
+        psk,
+        master_secret, chk, c_seq+2, cfin,
+        cur_log_CV)))
+  )
+  else
+    (* A psk is used so no certificate or no psk is used but the server did not ask for a
+    certificate request from the client *)
+    event Server_Cert_client(id_server,NoPubKey);
+    out(ch_server_CFIN,(id_server,ArgsServerCFIN(
+      cr,sr,h_alg,a_alg,
+      s_dom, s_pkey, NoPubKey,
+      psk,
+      master_secret, chk, c_seq, cfin,
+      cur_log_FIN)))
+.
+
+(* Send server certificate message *)
+
+free ch_server_CRT:channel [private].
+fun ArgsServerCRT(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain, bool,
+  bitstring,aead_key,nat,aead_key,nat,mac_key,mac_key,
+  bitstring
+):bitstring [data].
+
+let send_server_certificate_message =
+  !
+  in(ch_server_CRT,(id_server:idProc,ArgsServerCRT(
+    cr,sr,h_alg,a_alg,
+    s_dom, req_cert,
+    master_secret, chk, c_seq, shk, s_seq, cfin,sfin,
+    cur_log)));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_server_CRT,id_server,st);
+  event Server_Rand_client(id_server,cr);
+  event Server_Rand_server(id_server,sr);
+  event Server_PSKChoosen(id_server,NoPsk);
+  event Server_chk(id_server,chk);
+  event Server_shk(id_server,shk);
+  event Server_cfin(id_server,cfin);
+  event Server_sfin(id_server,sfin);
+  (* End Proof Helper *)
+
+  new st1[]:stamp;
+  event PreciseMess(ch_server_CRT,id_server,st1,(master_secret,chk,shk));
+
+  let (sk:privkey,s_pkey:pubkey,crt:certificate) =
+    if select_server_certificate_by_restriction
+    then (
+      get long_term_keys(s_dom',sk,s_pkey,crt,idP) in
+      let () = proof_helper_S_CRT_get((s_dom',sk,s_pkey,crt,idP)) in
+      event Selected_ltk(s_dom,s_dom',idP);
+      (sk,s_pkey,crt)
+    )
+    else
+      get long_term_keys(=s_dom,sk,s_pkey,crt,idP) in
+      let () = proof_helper_S_CRT_get((s_dom,sk,s_pkey,crt,idP)) in
+      (sk,s_pkey,crt)
+  in
+
+  event Server_Cert_server(id_server,s_pkey);
+
+  (* The Certificate message *)
+  let certificate_msg = CRT(zero,crt) in
+  let encrypted_certificate_msg = aead_enc(a_alg,shk,n2b(s_seq),zero,m2b(certificate_msg)) in
+  out(io,encrypted_certificate_msg);
+  let cur_log_CRT = (cur_log,certificate_msg) in
+
+  (* The CertificateVerify message *)
+  let signed_log = sign(sk,hash(h_alg,cur_log_CRT)) in
+  let certificate_verify_msg = CV(signed_log) in
+  let encrypted_certificate_verify_msg = aead_enc(a_alg,shk,n2b(s_seq+1),zero,m2b(certificate_verify_msg)) in
+  out(io,encrypted_certificate_verify_msg);
+  let cur_log_CV = (cur_log_CRT,certificate_verify_msg) in
+
+  out(ch_server_FIN,(id_server,ArgsServerFIN(
+    cr,sr,h_alg,a_alg,
+    s_dom, s_pkey, req_cert,
+    NoPsk,
+    master_secret,chk,c_seq,shk,s_seq+2,cfin,sfin,
+    cur_log_CV
+  )))
+.
+
+(* When the server process the client hello and the HRR checks have already been
+  perform *)
+
+free ch_server_SH:channel [private].
+fun ArgsServerSH(
+  group,hash_alg,aead_alg,
+  domain, bool,
+  bool, bool,bool,
+  msg,msg,bitstring
+):bitstring [data].
+
+let process_client_hello_noHRR =
+  !
+  in(ch_server_SH,(id_server:idProc,ArgsServerSH(
+    tls_g,tls_h,tls_a,
+    s_dom, req_cert,
+    is_backend,use_psk,no_HRR,
+    ee_msg,client_hello,cur_log (* Should not contain the current client hello *)
+    )));
+
+  new st[]:stamp;
+  event PreciseMess(ch_server_SH,id_server,st,(use_psk,client_hello));
+
+  let CH(cr,offer) = client_hello in
+  event Server_Rand_client(id_server,cr);
+
+  (* Verify the cipher suite and group *)
+  let nego(=TLS13,=tls_h,=tls_a,client_kex_ext(DHE_kex(=tls_g,gx)),sni_ext,ech_ext,extra_ext,psk_ext) = offer in (
+    if sni_ext = SNI(s_dom)
+    then (
+      event Server_DH_client(id_server,gx);
+
+      (* Retrieve the early secret from the psk. *)
+      let (early_secret:bitstring,s_psk_ext:preSharedKeyExt,psk:preSharedKey) = generate_early_secret_psk_extension(use_psk,s_dom,client_hello,cur_log) in
+
+      event Server_PSKChoosen(id_server,psk);
+
+      let cur_log_CH = (cur_log,client_hello) in (
+        (* Checks if it needs to receive an early data message. If it does
+          then it tries to decrypt it and output on the private channel ch_early_data_SH
+          for continuation. *)
+        (
+          if allow_early_data && no_HRR && psk <> NoPsk then
+          !
+          in(io,(i:nat,ad:bitstring,enc_early_data:bitstring)) [precise];
+          let (wkc0:aead_key,ems0:bitstring) = kdf_k0(tls_h,early_secret,cur_log_CH) in
+          let early_data:bitstring = aead_dec(tls_a,wkc0,n2b(i),ad,enc_early_data) in (
+            new st1[]:stamp;
+            event ServerSequenceClient0RTTDataWriteKey(id_server,st1,i);
+            event ServerReceives0(id_server,s_dom,cr,psk,i,ad,early_data)
+          )
+          else out(io,bad_record_mac)
+        ) | (
+          (* Generate key share and handshake secret *)
+          let (gxy:element,gy:element) = dh_encap(tls_g,gx,m2b(client_hello)) in
+
+          event Server_DH_server(id_server,gy);
+          event Server_DH_gxy(id_server,gxy);
+
+          let handshake_secret = kdf_hs(tls_h,early_secret,gxy) in
+
+          let s_offer = nego(TLS13,tls_h,tls_a,server_kex_ext(DHE_kex(tls_g,gy)),empty_sni_ext,empty_ech_ext,empty_extra_ext,s_psk_ext) in
+
+          let sr =
+            if is_backend
+            then
+              new sr24[]:bytes24;
+              generate_accept_confirmation(sr24,tls_h,s_offer,client_hello,cur_log_CH)
+            else gen_B32_random ()
+          in
+
+          let server_hello = SH(sr,s_offer) in
+
+          event Server_Rand_server(id_server,sr);
+          event ServerChoosesGroup(id_server,tls_g);
+          event ServerChoosesHash(cr,sr,tls_h);
+          event ServerChoosesAead(cr,sr,tls_a);
+
+          out(io,server_hello);
+          let cur_log_SH = (cur_log_CH,server_hello) in
+
+          (* Generate the master keys *)
+          let (master_secret:bitstring,chk:aead_key,shk:aead_key,cfin:mac_key,sfin:mac_key) =
+            kdf_ms(tls_h,handshake_secret,cur_log_SH)
+          in
+
+          event Server_chk(id_server,chk);
+          event Server_shk(id_server,shk);
+          event Server_cfin(id_server,cfin);
+          event Server_sfin(id_server,sfin);
+
+          (* Sending the encrypted extension *)
+          let enc_ee = aead_enc(tls_a,shk,n2b(0),zero,m2b(ee_msg)) in
+          out(io,enc_ee);
+          let cur_log_EE = (cur_log_SH,ee_msg) in
+
+          (* Sends either the finish message or the certificate messages *)
+          if psk = NoPsk
+          then
+            if req_cert
+            then (
+              (* The server requests a client certificate *)
+              let crtr_msg = CRTR(zero) in
+              let enc_crt = aead_enc(tls_a,shk,n2b(1),zero,m2b(crtr_msg)) in
+              out(io,enc_crt);
+              let cur_log_CRTR = (cur_log_EE,crtr_msg) in
+
+              (* Sends the certificate *)
+              out(ch_server_CRT,(id_server,ArgsServerCRT(
+                cr,sr,tls_h,tls_a,
+                s_dom, req_cert,
+                master_secret,chk,0,shk,2,cfin,sfin,
+                cur_log_CRTR)))
+            )
+            else
+              out(ch_server_CRT,(id_server,ArgsServerCRT(
+                cr,sr,tls_h,tls_a,
+                s_dom, req_cert,
+                master_secret,chk,0,shk,1,cfin,sfin,
+                cur_log_EE)))
+          else
+            out(ch_server_FIN,(id_server,ArgsServerFIN(
+              cr,sr,tls_h,tls_a,
+              s_dom, NoPubKey, false,
+              psk,
+              master_secret,chk,0,shk,1,cfin,sfin,
+              cur_log_EE)))
+        )
+      )
+    )
+    else out(io,illegal_parameter)
+  )
+  else out(io,handshake_failure)
+.
+
+(* Case of:
+  - a normal TLS server
+  - an ECH server receiving no ECH extension
+  - an ECH server where the ECH was not accepted.
+*)
+let standard_HRR_check(id_server:idProc,
+  use_ech,use_psk,req_cert:bool,
+  s_dom:domain,
+  tls_g:group,tls_h:hash_alg,tls_a:aead_alg,
+  ee_msg:msg,
+  client_hello:msg
+  ) =
+
+  let CH(cr,nego(=TLS13,=tls_h,=tls_a,kex_ext,SNI(=s_dom),ech_ext,extra_ext,psk_ext)) = client_hello in (
+    let (=true,client_kex_ext(DHE_group(=tls_g))) = (allow_HRR,kex_ext) in (
+      (* Received a correct group but no key share : Send a HelloRetryRequest *)
+      let hrr_mode = nego(TLS13,tls_h,tls_a,hrr_kex_ext(tls_g),empty_sni_ext,empty_ech_ext,empty_extra_ext,empty_psk_ext) in
+      let hello_retry_request = SH(rand_HelloRetryRequest,hrr_mode) in
+      out(io,hello_retry_request);
+      let cur_log_HRR = ((zero,client_hello),hello_retry_request) in
+
+      (* Since an HRR was sent, the server should not accept early_data. Note that
+        we do not model the fact that the server will ignore the early_data potentially
+        sent by the client. Since the attacker has control over the interleaving, it
+        corresponds to the trace where the attacker intercepts these early data
+        messages and does not send them. *)
+
+      (* Received the new client hello *)
+      in(io,client_hello':msg);
+      let CH(cr',offer') = client_hello' in
+        out(ch_server_SH,(id_server,ArgsServerSH(
+          tls_g,tls_h,tls_a,
+          s_dom, req_cert,
+          false,use_psk,false,
+          ee_msg,client_hello',cur_log_HRR
+        )))
+      else out(io,unexpected_message)
+    )
+    else let client_kex_ext(DHE_kex(=tls_g,gx)) = kex_ext in (
+      out(ch_server_SH,(id_server,ArgsServerSH(
+        tls_g,tls_h,tls_a,
+        s_dom, req_cert,
+        false,use_psk,true,
+        ee_msg,client_hello,zero
+      )))
+    )
+    else
+      (* Received an incorrect group or invalid kex extension *)
+      out(io,handshake_failure)
+  )
+  else out(io,handshake_failure)
+.
+
+(* Part of the server that corresponds to the backend server. Includes the
+  verifications that the frontend server must do when sending an HRR *)
+let ech_HRR_check(id_server:idProc,
+  use_psk,req_cert:bool,
+  tls_g:group,tls_h:hash_alg,tls_a:aead_alg,
+  ee_msg:msg,
+  context:hpkeContext,
+  ech_conf:echConfig, (* The ECH config of the frontend server *)
+  i_client_hello:msg
+  ) =
+
+  (*** Backend server part *)
+  let CH(cr,nego(=TLS13,=tls_h,=tls_a,kex_ext,SNI(i_dom),=ECHClientHelloInner,extra_ext,psk_ext)) = i_client_hello in (
+    (* The Backend checks the key share *)
+    let (=true,client_kex_ext(DHE_group(=tls_g))) = (allow_HRR,kex_ext) in (
+      (* Received a correct group but no key share : Send a HelloRetryRequest *)
+      let hrr_msg = generate_hello_retry_request(tls_g,tls_h,tls_a,i_client_hello) in
+
+      (* The HRR is sent to the frontend that forwards it *)
+      out(io,hrr_msg);
+
+      (* Since an HRR was sent, the server should not accept early_data. Note that
+        we do not model the fact that the server will ignore the early_data potentially
+        sent by the client. Since the attacker has control over the interleaving, it
+        corresponds to the trace where the attacker intercepts these early data
+        messages and does not send them. *)
+
+      (*** Frontend server part *)
+      let ech_config(id_conf,ech_g,pkR,s_dom,ech_h,ech_a) = ech_conf in
+
+      (* Receiving the new client hello *)
+      in(io,o_client_hello:msg);
+
+      (* It verifies that it is a client hello (otherwise raise "unexpected message") *)
+      let CH(cr',nego(=TLS13,h_alg',a_alg',kex_ext',SNI(=s_dom),ech_ext,extra_ext',psk_ext')) = o_client_hello in (
+        (* Note that the front-end does not check the ciphersuite nor the key share of the outer at that point. *)
+        (* It verifies that there is an ECH extension *)
+        if ech_ext = empty_ech_ext
+        then out(io,missing_extension)
+        else
+          let ECHClientHelloOuter(=ech_h,=ech_a,=id_conf,=b2e(zero),payload) = ech_ext in (
+            let client_hello_AAD = generate_client_hello_outer_AAD(o_client_hello) in
+            let m2b(i_client_hello') = hpke_open(ech_a,context,2,m2b(client_hello_AAD),payload) in (
+              (* The decryption worked. The new inner client hello was retrieved
+                and is forwarded to the backend server. *)
+              (*** Backend server part *)
+              let CH(i_cr,nego(=TLS13,i_h_alg,i_a_alg,i_kex_ext,SNI(=i_dom),=ECHClientHelloInner,i_extra_ext,i_psk_ext)) = i_client_hello' in (
+                out(ch_server_SH,(id_server,ArgsServerSH(
+                  tls_g,tls_h,tls_a,
+                  i_dom, req_cert,
+                  true,use_psk,false,
+                  ee_msg, i_client_hello',
+                  ((zero,i_client_hello),hrr_msg) (* The current_log from Backend point of view
+                    (last client_hello_excluded) *)
+                )))
+              )
+              else out(io,illegal_parameter)
+            )
+            else out(io,decrypt_error)
+          )
+          else out(io,illegal_parameter)
+      )
+      else out(io,unexpected_message)
+    )
+    else let client_kex_ext(DHE_kex(=tls_g,gx)) = kex_ext in (
+      (* Received a correct group and a key share. The backend can proceed *)
+      out(ch_server_SH,(id_server,ArgsServerSH(
+        tls_g,tls_h,tls_a,
+        i_dom, req_cert,
+        true,use_psk,true,
+        ee_msg, i_client_hello, zero (* The current log (latest client_hello excluded) *)
+      )))
+    )
+    else
+      (* Received an incorrect group or invalid kex extension *)
+      out(io,handshake_failure)
+  )
+  else out(io,handshake_failure)
+.
+
+(* The main server *)
+
+let server(
+  id_server:idProc,use_ech,use_psk,req_cert:bool,
+  s_dom:domain,
+  tls_g:group,tls_h:hash_alg,tls_a:aead_alg, (* The group and cipher suite accepted by the standard TLS server or frontend *)
+  backend_g:group,backend_h:hash_alg,backend_a:aead_alg, (* The group and cipher suite accepted by the backend server *)
+  ee_extra:extraExt (* Some extensions to be sent in the EncryptedExtension message *)
+  ) =
+
+  (* Receive a client hello *)
+  in(io,o_client_hello:msg);
+  let CH(cr,nego(=TLS13,c_h_alg,c_a_alg,kex_ext,sni_ext,ech_ext,extra_ext,psk_ext)) = o_client_hello in (
+    (* Verify the domain *)
+    if sni_ext = SNI(s_dom)
+    then (
+      (* We retrieve an ech configuration even if the server will not accept ECH.
+        It is not a restriction as the attacker can always generate configuration
+        for everyone that will not be used.
+        Similarly, we directly generate the retry_ech_ext that may be used later
+        on. Does not impact the verification but make the verification more efficient. *)
+      get ech_configurations(ech_config(config_id,ech_g,pkR,=s_dom,ech_h,ech_a),skR) in
+      let ech_conf = ech_config(config_id,ech_g,pkR,s_dom,ech_h,ech_a) in
+      let () = proof_helper_S((ech_conf,skR)) in
+
+      event ServerChoosesEchConfig(id_server,ech_conf,use_ech);
+
+      let retry_ech_ext = generate_retry_ech_ext(ech_conf) in
+
+      if use_ech <> true || ech_ext = empty_ech_ext
+      then
+        event ServerEchAcceptance(id_server,false);
+        standard_HRR_check(id_server,
+          use_ech,use_psk,req_cert,
+          s_dom,
+          tls_g,tls_h,tls_a,
+          EE(empty_ech_ext,ee_extra),
+          o_client_hello
+        )
+      else
+        let ECHClientHelloOuter(ech_h',ech_a',config_id',enc,payload) = ech_ext in
+          (* We check steps 1 and 2 (see scenario.txt) *)
+          if ech_h' = ech_h && ech_a' = ech_a && config_id' = config_id
+          then (
+            (* The server tries to decrypt (Step 3 in scenario.txt) *)
+            let context = generate_context_frontend_server(ech_h,ech_g,skR,ech_conf,enc) in
+            let client_hello_AAD = generate_client_hello_outer_AAD(o_client_hello) in
+            let m2b(i_client_hello) = hpke_open(ech_a,context,1,m2b(client_hello_AAD),payload) in (
+              (* The decryption worked so the frontend must verify that the "encrypted_client_hello"
+                is of type Inner and that the version is TLS 1.3*)
+              let CH(cr',nego(=TLS13,c_h_alg',c_a_alg',kex_ext',SNI(i_dom),=ECHClientHelloInner,extra_ext',psk_ext')) = i_client_hello in (
+                (* All checks were successful, the front forwards to the backend. *)
+                event ServerEchAcceptance(id_server,true);
+                ech_HRR_check(id_server,
+                  use_psk,req_cert,
+                  backend_g,backend_h,backend_a,
+                  EE(empty_ech_ext,ee_extra),context,ech_conf,
+                  i_client_hello
+                )
+              )
+              else out(io,illegal_parameter)
+            )
+            else
+              (* The decryption does not work *)
+              event ServerEchAcceptance(id_server,false);
+              standard_HRR_check(id_server,
+                use_ech,use_psk,req_cert,
+                s_dom,
+                tls_g,tls_h,tls_a,
+                EE(retry_ech_ext,ee_extra),
+                o_client_hello
+              )
+          )
+          else (
+            (* ECH not accepted.
+              The frontend ignores the extension and proceed with the OuterClientHello.
+              It must send a retry configuration. *)
+            event ServerEchAcceptance(id_server,false);
+            standard_HRR_check(id_server,
+              use_ech,use_psk,req_cert,
+              s_dom,
+              tls_g,tls_h,tls_a,
+              EE(retry_ech_ext,ee_extra),
+              o_client_hello
+            )
+          )
+        else
+          (* The type of the "encrypted_client_hello" extension is not outer. *)
+          out(io,illegal_parameter)
+    )
+    else out(io,handshake_failure)
+  )
+  else out(io,unexpected_message)
+.
+(********************
+  Client processes
+*********************)
+
+(* The Post Handshake messages *)
+
+let client_post_handshake(id_client:idProc,
+    cr,sr:bytes32,h_alg:hash_alg,a_alg:aead_alg,
+    c_dom,s_dom:domain,s_pkey,c_pkey:pubkey,
+    psk:preSharedKey,safe_psk,comp_psk:bool,
+    cak,sak:aead_key,cfkad:mac_key,rms:bitstring,
+    cur_log:bitstring
+  ) =
+
+  (
+    (* New Session Ticket *)
+    if allow_PH_new_session_ticket then
+
+    (* Reception of the new ticket *)
+    in(io,enc_ticket_msg:bitstring) [precise];
+    let m2b(ticket_msg) = aead_dec(a_alg,sak,n2b(0),zero,enc_ticket_msg) in
+    new st[]:stamp;
+    event ClientSequenceServerDataWriteKey(id_client,st,0); (* To model the sequence of messages using server write key *)
+    event ClientReceives(id_client,cr,sr,psk,s_pkey,c_pkey,0,zero,m2b(ticket_msg));
+    let NST(ticket_nonce,ticket_id) = ticket_msg in
+
+    (* Determine if the new PSK should be safe of not. This is only a proof helper
+    property. The client does not use this value.
+    We will show that if should_be_sake is true then the PSK is actually
+    not deducible by the attacker. *)
+    let new_psk = psk_from_ticket(h_alg,rms,ticket_nonce) in
+    event Client_new_PSK(id_client,new_psk);
+
+    if allow_compromised_ticket && comp_psk
+    then (
+      event CompromisedPskDiff(id_client);
+      let () =
+        if add_unsafe_event_for_ticket
+        then
+          if psk = NoPsk
+          then
+            if uncompromised_privkey(s_pkey)
+            then ()
+            else event UnsafePsk(new_psk); ()
+          else
+            if safe_psk
+            then ()
+            else event UnsafePsk(new_psk); ()
+        else ()
+      in
+      insert pre_shared_keys(c_dom,s_dom,h_alg,ticket_id,new_psk,id_client,false);
+      event CompromisedPsk(new_psk);
+      out(io,new_psk)
+    )
+    else
+      if add_unsafe_event_for_ticket
+      then
+        if psk = NoPsk
+        then
+          if uncompromised_privkey(s_pkey)
+          then
+            insert pre_shared_keys(c_dom,s_dom,h_alg,ticket_id,new_psk,id_client,true)
+          else
+            event UnsafePsk(new_psk);
+            insert pre_shared_keys(c_dom,s_dom,h_alg,ticket_id,new_psk,id_client,false)
+        else
+          if safe_psk
+          then
+            insert pre_shared_keys(c_dom,s_dom,h_alg,ticket_id,new_psk,id_client,safe_psk)
+          else
+            event UnsafePsk(new_psk);
+            insert pre_shared_keys(c_dom,s_dom,h_alg,ticket_id,new_psk,id_client,false)
+      else
+        let is_safe =
+          (psk = NoPsk && uncompromised_privkey(s_pkey)) ||
+          (psk <> NoPsk && safe_psk)
+        in
+        insert pre_shared_keys(c_dom,s_dom,h_alg,ticket_id,new_psk,id_client,is_safe)
+  ) | (
+    (* Sending date if requested *)
+    if allow_PH_data then
+    (
+      !
+      in(io,(seq_client:nat,ad:bitstring)) [precise];
+      if is_nat(seq_client) then
+      new msgs[seq_client,ad]:bitstring;
+      new st[]:stamp;
+      event ClientSequenceClientDataWriteKey(id_client,st,seq_client); (* To model the sequence of messages using client write key *)
+      event ClientSends(id_client,cr,sr,psk,s_pkey,c_pkey,seq_client,ad,msgs);
+      out(io,aead_enc(a_alg,cak,n2b(seq_client),ad,msgs))
+    ) | (
+      !
+      in(io,(seq_srv:nat,ad:bitstring, enc_msg:bitstring)) ;
+      if is_nat(seq_srv) then
+      let msgs = aead_dec(a_alg,sak,n2b(seq_srv),ad,enc_msg) in
+        new st[]:stamp;
+        event ClientSequenceServerDataWriteKey(id_client,st,seq_srv); (* To model the sequence of messages using server write key *)
+        event ClientReceives(id_client,cr,sr,psk,s_pkey,c_pkey,seq_srv,ad,msgs)
+      else out(io,bad_record_mac)
+    )
+  ) | (
+    (* Rounds of post handshake authentication *)
+    if allow_PH_authentication then
+    !
+    (* Selection of the sequence numbers *)
+    in(io,(seq_srv:nat,seq_client:nat)) [precise];
+    if is_nat(seq_srv) && is_nat(seq_client) then
+
+    (* Reception of a certificate request *)
+    in(io,enc_msg:bitstring);
+    let m2b(CRTR(rand_crt)) = aead_dec(a_alg,sak,n2b(seq_srv),zero,enc_msg) in
+    new st[]:stamp;
+    event ClientSequenceServerDataWriteKey(id_client,st,seq_srv); (* To model the sequence of messages using server write key *)
+    event ClientReceives(id_client,cr,sr,psk,s_pkey,c_pkey,seq_srv,zero,m2b(CRTR(rand_crt)));
+    let cur_log_CRTR = (cur_log,CRTR(rand_crt)) in
+
+    let (sk:privkey,c_pkey':pubkey,crt:certificate) =
+      if select_client_certificate_by_restriction
+      then (
+        get long_term_keys(c_dom',sk,c_pkey',crt,idP) in
+        let () = proof_helper_C_PH_get((c_dom',sk,c_pkey',crt,idP)) in
+        event Selected_ltk(c_dom,c_dom',idP);
+        (sk,c_pkey',crt)
+      )
+      else
+        get long_term_keys(=c_dom,sk,c_pkey',crt,idP) in
+        let () = proof_helper_C_PH_get((c_dom,sk,c_pkey',crt,idP)) in
+        (sk,c_pkey',crt)
+    in
+
+    (* The Certificate message *)
+    let certificate_msg = CRT(rand_crt,crt) in
+    let encrypted_certificate_msg = aead_enc(a_alg,cak,n2b(seq_client),zero,m2b(certificate_msg)) in
+    new st1[]:stamp;
+    event ClientSequenceClientDataWriteKey(id_client,st1,seq_client); (* To model the sequence of messages using client write key *)
+    event ClientSends(id_client,cr,sr,psk,s_pkey,c_pkey,seq_client,zero,m2b(certificate_msg));
+    out(io,encrypted_certificate_msg);
+    let cur_log_CRT = (cur_log_CRTR,certificate_msg) in
+
+    (* The CertificateVerify message *)
+    let signed_log = sign(sk,hash(h_alg,cur_log_CRT)) in
+    let certificate_verify_msg = CV(signed_log) in
+    let enc_verify_msg = aead_enc(a_alg,cak,n2b(seq_client+1),zero,m2b(certificate_verify_msg)) in
+    new st2[]:stamp;
+    event ClientSequenceClientDataWriteKey(id_client,st2,seq_client+1); (* To model the sequence of messages using client write key *)
+    event ClientSends(id_client,cr,sr,psk,s_pkey,c_pkey,seq_client+1,zero,m2b(certificate_verify_msg));
+    out(io,enc_verify_msg);
+    let cur_log_CV = (cur_log_CRT,certificate_verify_msg) in
+
+    (* The finished message *)
+    let hash_msg = hmac(h_alg,cfkad,cur_log_CV) in
+    let enc_fin = aead_enc(a_alg,cak,n2b(seq_client+2),zero,m2b(FIN(hash_msg))) in
+    new st3[]:stamp;
+    event ClientSequenceClientDataWriteKey(id_client,st3,seq_client+2); (* To model the sequence of messages using client write key *)
+    event ClientSends(id_client,cr,sr,psk,s_pkey,c_pkey,seq_client+2,zero,m2b(FIN(hash_msg)));
+    event ClientFinishedPH(id_client,cr,sr,psk,s_pkey,c_pkey,rand_crt,c_pkey');
+    out(io,enc_fin)
+  )
+.
+
+(* Finished *)
+
+free ch_client_CFIN:channel [private].
+fun ArgsClientCFIN(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain,domain,pubkey,pubkey,
+  preSharedKey,bool,bool,
+  bitstring, aead_key, nat, aead_key, nat, mac_key,mac_key,
+  bitstring
+):bitstring [data].
+
+let send_client_finished_message =
+  !
+  in(ch_client_CFIN,(id_client:idProc,ArgsClientCFIN(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,s_pkey,c_pkey,
+    psk,safe_psk,comp_psk,
+    master_secret,chk,seq_client,shk,seq_srv,cfin,sfin,
+    cur_log
+  )));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_client_CFIN,id_client,st);
+  event Client_server_domain(id_client,s_dom);
+  event Client_Rand_client(id_client,cr);
+  event Client_Rand_server(id_client,sr);
+  event Client_PSKChoosen(id_client,psk,safe_psk);
+  event Client_comp_psk(id_client,comp_psk);
+  event Client_chk(id_client,chk);
+  event Client_shk(id_client,shk);
+  event Client_cfin(id_client,cfin);
+  event Client_sfin(id_client,sfin);
+  event Client_Cert_server(id_client,s_pkey);
+  event Client_Cert_client(id_client,c_pkey);
+  (* End Proof Helper *)
+
+  new st1[]:stamp;
+  let args =
+    if strong_PreciseMess_C_CFIN
+    then (c_dom,s_dom,psk,s_pkey,master_secret,safe_psk,comp_psk,cur_log)
+    else if medium_PreciseMess_C_CFIN
+    then cur_log
+    else master_secret
+  in
+  event PreciseMess(ch_client_CFIN,id_client,st1,args);
+
+  let (cak:aead_key,sak:aead_key,cfkad:mac_key,ems:bitstring) = kdf_k(h_alg,master_secret,cur_log) in
+  event Client_cak(id_client,cak);
+  event Client_sak(id_client,sak);
+  event Client_cfkad(id_client,cfkad);
+
+  let client_hash_msg = hmac(h_alg,cfin,cur_log) in
+  let client_finished_msg = FIN(client_hash_msg) in
+
+  let cur_log' = (cur_log,client_finished_msg) in
+
+  (* The resumption_master_secret in Key schedule *)
+  let rms = kdf_psk(h_alg,master_secret,cur_log') in
+  event Client_rms(id_client,rms);
+
+  let enc_client_finished_msg = aead_enc(a_alg,chk,n2b(seq_client),zero,m2b(client_finished_msg)) in
+
+  event ClientFinished(id_client,cr,sr,psk,s_pkey,c_pkey,cak,sak,ems,rms);
+  out(io,enc_client_finished_msg);
+
+  (* End of the 1-RTT Handshake *)
+
+  client_post_handshake(id_client,
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,s_pkey,c_pkey,
+    psk,safe_psk,comp_psk,
+    cak,sak,cfkad,rms,
+    cur_log'
+  )
+.
+
+(* Certificate and Certificate Verify *)
+
+let send_client_certificate_message(id_client:idProc,
+  cr,sr:bytes32, h_alg:hash_alg,a_alg:aead_alg,
+  c_dom,s_dom:domain,s_pkey:pubkey,
+  comp_psk:bool,
+  master_secret:bitstring, chk:aead_key, seq_client:nat,shk:aead_key, seq_srv:nat,cfin,sfin:mac_key,
+  cur_log:bitstring)
+  =
+  let (sk:privkey,c_pkey:pubkey,crt:certificate) =
+    if select_client_certificate_by_restriction
+    then (
+      get long_term_keys(c_dom',sk,c_pkey,crt,idP)  in
+      let () = proof_helper_C_CertMess((c_dom',sk,c_pkey,crt,idP)) in
+      event Selected_ltk(c_dom,c_dom',idP);
+      (sk,c_pkey,crt)
+    )
+    else (
+      get long_term_keys(=c_dom,sk,c_pkey,crt,idP) in
+      let () = proof_helper_C_CertMess((c_dom,sk,c_pkey,crt,idP)) in
+      (sk,c_pkey,crt)
+    )
+  in
+  event Client_Cert_client(id_client,c_pkey);
+
+  (* The Certificate message *)
+  let certificate_msg = CRT(zero,crt) in
+  let encrypted_certificate_msg = aead_enc(a_alg,chk,n2b(seq_client),zero,m2b(certificate_msg)) in
+  out(io,encrypted_certificate_msg);
+  let cur_log2 = (cur_log,certificate_msg) in
+
+  (* The CertificateVerify message *)
+  let signed_log = sign(sk,hash(h_alg,cur_log2)) in
+  let certificate_verify_msg = CV(signed_log) in
+  let encrypted_certificate_verify_msg = aead_enc(a_alg,chk,n2b(seq_client+1),zero,m2b(certificate_verify_msg)) in
+  out(io,encrypted_certificate_verify_msg);
+  let cur_log3 = (cur_log2,certificate_verify_msg) in
+
+  (* The finished message *)
+  out(ch_client_CFIN,(id_client,ArgsClientCFIN(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,s_pkey,c_pkey,
+    NoPsk,false,comp_psk,
+    master_secret,chk,seq_client+2,shk,seq_srv,cfin,sfin,
+    cur_log3
+  )))
+.
+
+(* Receiving Finished message from Server *)
+
+free ch_client_FIN:channel [private].
+fun ArgsClientFIN(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain,domain,pubkey,bool,
+  preSharedKey,bool,bool,
+  bitstring, aead_key, nat, aead_key, nat, mac_key,mac_key,
+  bitstring
+):bitstring [data].
+
+let receive_server_finished_message =
+  !
+  in(ch_client_FIN,(id_client:idProc,ArgsClientFIN(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,s_pkey,cert_req,
+    psk,safe_psk,comp_psk,
+    master_secret,chk,seq_client,shk,seq_srv,cfin,sfin,
+    cur_log
+  )));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_client_FIN,id_client,st);
+  event Client_server_domain(id_client,s_dom);
+  event Client_Rand_client(id_client,cr);
+  event Client_Rand_server(id_client,sr);
+  event Client_PSKChoosen(id_client,psk,safe_psk);
+  event Client_comp_psk(id_client,comp_psk);
+  event Client_chk(id_client,chk);
+  event Client_shk(id_client,shk);
+  event Client_cfin(id_client,cfin);
+  event Client_sfin(id_client,sfin);
+  event Client_Cert_server(id_client,s_pkey);
+  (* End Proof Helper *)
+
+  new st1[]:stamp;
+  event PreciseMess(ch_client_FIN,id_client,st1,(master_secret,s_pkey,psk,safe_psk,comp_psk));
+
+  in(io,enc_finished_msg:bitstring);
+  let m2b(finished_msg) = aead_dec(a_alg,shk,n2b(seq_srv),zero,enc_finished_msg) in
+    let FIN(hash_msg) = finished_msg in (
+      if hash_msg = hmac(h_alg,sfin,cur_log) then
+      let cur_log2 = (cur_log,finished_msg) in
+
+      if cert_req
+      then
+        send_client_certificate_message(id_client,
+          cr,sr,h_alg,a_alg,
+          c_dom,s_dom,s_pkey,
+          comp_psk,
+          master_secret,chk,seq_client,shk,seq_srv+1,cfin,sfin,
+          cur_log2)
+      else
+        event Client_Cert_client(id_client,NoPubKey);
+        out(ch_client_CFIN,(id_client,ArgsClientCFIN(
+          cr,sr,h_alg,a_alg,
+          c_dom,s_dom,s_pkey,NoPubKey,
+          psk,safe_psk,comp_psk,
+          master_secret,chk,seq_client,shk,seq_srv+1,cfin,sfin,
+          cur_log2
+        )))
+    )
+    else out(io,unexpected_message)
+  else out(io,bad_record_mac)
+.
+
+(* Process the certificate message and receive the certificate verify *)
+
+free ch_client_CRT:channel [private].
+fun ArgsClientCRT(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain,domain,bool,msg,
+  bool,
+  bitstring, aead_key, nat, aead_key, nat, mac_key,mac_key,
+  bitstring
+):bitstring [data].
+
+let process_server_certificate_message =
+  !
+  in(ch_client_CRT,(id_client:idProc,ArgsClientCRT(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,cert_req,certificate_msg,
+    comp_psk,
+    master_secret,chk,seq_client,shk,seq_srv,cfin,sfin,
+    cur_log
+  )));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_client_CRT,id_client,st);
+  event Client_server_domain(id_client,s_dom);
+  event Client_Rand_client(id_client,cr);
+  event Client_Rand_server(id_client,sr);
+  event Client_comp_psk(id_client,comp_psk);
+  event Client_chk(id_client,chk);
+  event Client_shk(id_client,shk);
+  event Client_cfin(id_client,cfin);
+  event Client_sfin(id_client,sfin);
+  (* End Proof Helper *)
+
+  (* Process the Certificate message *)
+  let CRT(=zero,crt) = certificate_msg in
+  let cur_log2 = (cur_log,certificate_msg) in
+
+  (* Receive the Certificate Verify message *)
+  in(io,enc_crt_verif_msg:bitstring);
+  let m2b(certificate_verify_msg) = aead_dec(a_alg,shk,n2b(seq_srv),zero,enc_crt_verif_msg) in
+  let CV(signed_log) = certificate_verify_msg in
+
+  if verify(get_pkey(crt),hash(h_alg,cur_log2),signed_log) && get_domain(crt) = s_dom && verify_cert(crt) then
+  let s_pkey = get_pkey(crt) in
+  let cur_log3 = (cur_log2,certificate_verify_msg) in
+
+  event Client_Cert_server(id_client,s_pkey);
+
+  (* Process the Finished message *)
+  out(ch_client_FIN,(id_client,ArgsClientFIN(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,s_pkey,cert_req,
+    NoPsk,false,comp_psk,
+    master_secret,chk,seq_client,shk,seq_srv+1,cfin,sfin,
+    cur_log3
+  )))
+.
+
+(* Receiving message after EncryptedExtensions *)
+
+free ch_client_after_EE:channel [private].
+fun ArgsClientAfterEE(
+  bytes32,bytes32,hash_alg,aead_alg,
+  domain,domain,
+  preSharedKey,bool,bool,
+  bitstring, aead_key, nat, aead_key, nat, mac_key,mac_key,
+  bitstring
+):bitstring [data].
+
+let receive_after_encrypted_extension =
+  !
+  in(ch_client_after_EE,(id_client:idProc,ArgsClientAfterEE(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,
+    psk,safe_psk,comp_psk,
+    master_secret,chk,seq_client,shk,seq_srv,cfin,sfin,
+    cur_log
+  )));
+
+  (* Begin Proof Helper *)
+  new st[]:stamp;
+  event PreciseIdProcess(ch_client_after_EE,id_client,st);
+  event Client_server_domain(id_client,s_dom);
+  event Client_Rand_client(id_client,cr);
+  event Client_Rand_server(id_client,sr);
+  event Client_PSKChoosen(id_client,psk,safe_psk);
+  event Client_comp_psk(id_client,comp_psk);
+  event Client_chk(id_client,chk);
+  event Client_shk(id_client,shk);
+  event Client_cfin(id_client,cfin);
+  event Client_sfin(id_client,sfin);
+  (* End Proof Helper *)
+
+  new st1[]:stamp;
+  event PreciseMess(ch_client_after_EE,id_client,st1,master_secret);
+
+  if psk = NoPsk
+  then (
+    (* If no PSK then we expect a certificate from the server *)
+    in(io,enc_msg:bitstring);
+    let m2b(msg') = aead_dec(a_alg,shk,n2b(seq_srv),zero,enc_msg) in
+
+    let CRTR(=zero) = msg' in (
+      let cur_log2 = (cur_log,msg') in
+
+      in(io,enc_crt_msg:bitstring);
+      let m2b(certificate_msg) = aead_dec(a_alg,shk,n2b(seq_srv+1),zero,enc_crt_msg) in
+      out(ch_client_CRT,(id_client,ArgsClientCRT(
+        cr,sr,h_alg,a_alg,
+        c_dom,s_dom,true,certificate_msg,
+        comp_psk,
+        master_secret,chk,seq_client,shk,seq_srv+2,cfin,sfin,
+        cur_log2
+      )))
+    )
+    else let CRT(=zero,crt) = msg' in (
+      out(ch_client_CRT,(id_client,ArgsClientCRT(
+        cr,sr,h_alg,a_alg,
+        c_dom,s_dom,false,msg',
+        comp_psk,
+        master_secret,chk,seq_client,shk,seq_srv+1,cfin,sfin,
+        cur_log
+      )))
+    )
+    else out(io,unexpected_message)
+  )
+  else
+    (* If there is a PSK, no certificate shall be sent. Directly receive the finish message *)
+    event Client_Cert_server(id_client,NoPubKey);
+    out(ch_client_FIN,(id_client,ArgsClientFIN(
+      cr,sr,h_alg,a_alg,
+      c_dom,s_dom,NoPubKey,false,
+      psk,safe_psk,comp_psk,
+      master_secret,chk,seq_client,shk,seq_srv,cfin,sfin,
+      cur_log
+    )))
+.
+
+(* Receiving the encrypted extension message *)
+
+let receive_encrypted_extension_message (id_client:idProc,
+  cr,sr:bytes32, h_alg:hash_alg,a_alg:aead_alg,
+  c_dom,s_dom:domain,
+  psk:preSharedKey,safe_psk,comp_psk:bool,
+  master_secret:bitstring, chk,shk:aead_key,cfin,sfin:mac_key,
+  cur_log:bitstring)
+  =
+  in(io,enc_ee_msg:bitstring);
+  let m2b(ee_msg) = aead_dec(a_alg,shk,n2b(0),zero,enc_ee_msg) in
+  let EE(ech_ee,extra_ee) = ee_msg in
+  let cur_log2 = (cur_log,ee_msg) in
+
+  out(ch_client_after_EE,(id_client,ArgsClientAfterEE(
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,
+    psk,safe_psk,comp_psk,
+    master_secret,chk,0,shk,1,cfin,sfin,
+    cur_log2
+  )))
+.
+
+(* Generate the keys after the Server Hello *)
+
+let generate_keys_after_server_hello (id_client:idProc,
+  cr,sr:bytes32, h_alg:hash_alg,a_alg:aead_alg,
+  c_dom,s_dom:domain,
+  psk:preSharedKey, safe_psk,comp_psk:bool,
+  g:group,x:bitstring,gy:element,early_secret:bitstring,
+  cur_log:bitstring)
+  =
+
+  (* Compute the handshake secret *)
+  let gxy = dh_decap(g,gy,x) in
+  event Client_DH_gxy(id_client,gxy);
+  let handshake_secret = kdf_hs(h_alg,early_secret,gxy) in
+  let (master_secret:bitstring,chk:aead_key,shk:aead_key,cfin:mac_key,sfin:mac_key) =
+    kdf_ms(h_alg,handshake_secret,cur_log)
+  in
+  event Client_chk(id_client,chk);
+  event Client_shk(id_client,shk);
+  event Client_cfin(id_client,cfin);
+  event Client_sfin(id_client,sfin);
+
+  receive_encrypted_extension_message(id_client,
+    cr,sr,h_alg,a_alg,
+    c_dom,s_dom,
+    psk,safe_psk,comp_psk,
+    master_secret,chk,shk,cfin,sfin,
+    cur_log)
+.
+
+(* Process a server hello message *)
+
+let process_server_hello(id_client:idProc,
+  cr:bytes32,
+  c_dom,s_dom:domain,
+  kex_data:bitstring,h_alg:hash_alg,a_alg:aead_alg,
+  psk_data:bitstring,comp_psk:bool,
+  cur_log:bitstring, (* Last Server Hello excluded *)
+  server_hello:msg)
+  =
+  (* Begin Proof Helper *)
+  let (x:bitstring,g:group) = kex_data in
+  let (psk_offer:preSharedKey,id_offer:identityPsk,es_offer:bitstring,is_safe_offer:bool) = psk_data in
+  event Client_PSKOffer(id_client,psk_offer,id_offer,is_safe_offer);
+  event Client_Rand_client(id_client,cr);
+  event Client_DH_client(id_client,dh_pub(g,x));
+  event Client_server_domain(id_client,s_dom);
+  (* End Proof Helper *)
+
+  let SH(sr,mode) = server_hello in
+
+  event Client_Rand_server(id_client,sr);
+
+  let nego(=TLS13,=h_alg,=a_alg,server_kex_ext(DHE_kex(=g,gy)),=empty_sni_ext,=empty_ech_ext,=empty_extra_ext,psk_ext) = mode in (
+    let cur_log2 = (cur_log,server_hello) in
+
+    event Client_DH_server(id_client,gy);
+
+    (* We retrieve the pre shared key if there is one. *)
+    let (psk:preSharedKey,early_secret:bitstring,valid:bool,safe_psk:bool) =
+      if psk_ext = empty_psk_ext
+      then (
+        let (es:bitstring,kb:mac_key) = kdf_es(h_alg,NoPsk) in
+        (NoPsk,es,true,false)
+      )
+      else
+        let (psk:preSharedKey,id:identityPsk,es:bitstring,is_safe:bool) = psk_data in
+        (psk,es,(psk <> NoPsk && (server_psk_ext(1) = psk_ext)),is_safe)
+    in
+
+    event Client_PSKChoosen(id_client,psk,safe_psk);
+
+    if valid
+    then
+      generate_keys_after_server_hello(id_client,
+        cr,sr,h_alg,a_alg,
+        c_dom,s_dom,
+        psk,safe_psk,comp_psk,
+        g,x,gy,early_secret,cur_log2)
+    else out(io,illegal_parameter)
+  )
+  else out(io,illegal_parameter)
+.
+
+(* The main standard client *)
+
+let standard_client(id_client:idProc,
+  use_psk,comp_psk,send_kex_c:bool,
+  c_dom,s_dom:domain,
+  g:group,h_alg:hash_alg,a_alg:aead_alg
+  ) =
+
+  let send_kex = not(allow_HRR) || send_kex_c in
+  let cur_log = zero in
+
+  let (client_hello:msg,cr:bytes32,kex_data:bitstring,psk_data:bitstring) =
+    generate_client_hello_message(id_client,zero,
+      use_psk,
+      c_dom,s_dom,
+      g,send_kex,h_alg,a_alg,
+      cur_log
+    )
+  in
+
+  event ClientOffersAead(cr,a_alg);
+  event ClientOffersHash(cr,h_alg);
+  event ClientOffersGroup(cr,g);
+
+  out(io,client_hello);
+  let cur_log2 = (cur_log,client_hello) in
+
+  let (psk:preSharedKey,id:identityPsk,es:bitstring,safe_psk:bool) = psk_data in
+
+  (
+    (* Send the early data *)
+    if allow_early_data && psk <> NoPsk then
+    let (wkc0:aead_key,ems0:bitstring) = kdf_k0(h_alg,es,(zero,client_hello)) in
+    !
+    in(io,(i:nat,ad:bitstring)) [precise];
+    if is_nat(i) then
+    new msg_ed[]:bitstring;
+    let enc_ed = aead_enc(a_alg,wkc0,n2b(i),ad,msg_ed) in
+    new st:stamp;
+    event ClientSequenceClient0RTTDataWriteKey(id_client,st,i);
+    event ClientSends0(id_client,cr,psk,i,ad,msg_ed);
+    out(io,enc_ed)
+  ) | (
+    (* Retrieve Server Hello *)
+    in(io,server_hello:msg);
+    let SH(sr,mode) = server_hello in (
+      event ClientEchAcceptance(id_client,false);
+
+      if allow_HRR && sr = rand_HelloRetryRequest
+      then (
+        (* We received a HelloRetryRequest *)
+        if mode = nego(TLS13,h_alg,a_alg,hrr_kex_ext(g),empty_sni_ext,empty_ech_ext,empty_extra_ext,empty_psk_ext) && send_kex <> true
+        then (
+          let cur_log3 = (cur_log2,server_hello) in
+
+          let (client_hello':msg,cr':bytes32,kex_data':bitstring,psk_data':bitstring) =
+            generate_client_hello_message(id_client,psk_data,
+              use_psk,
+              c_dom,s_dom,
+              g,true,h_alg,a_alg,
+              cur_log3
+            )
+          in
+
+          event ClientOffersAead(cr',a_alg);
+          event ClientOffersHash(cr',h_alg);
+          event ClientOffersGroup(cr',g);
+
+          out(io,client_hello');
+          let cur_log4 = (cur_log3,client_hello') in
+
+          (* Message from server *)
+          in(io,server_hello':msg);
+          let SH(sr',mode') = server_hello' in
+            if sr' = rand_HelloRetryRequest
+            then out(io,unexpected_message)
+            else
+              process_server_hello(id_client,
+                cr',
+                c_dom,s_dom,
+                kex_data',h_alg,a_alg,
+                psk_data',comp_psk,
+                cur_log4,
+                server_hello'
+              )
+          else out(io,unexpected_message)
+        )
+        else out(io,illegal_parameter)
+      )
+      else
+        if send_kex
+        then
+          (* This is a normal server hello message *)
+          process_server_hello(id_client,
+            cr,
+            c_dom,s_dom,
+            kex_data,h_alg,a_alg,
+            psk_data,comp_psk,
+            cur_log2,
+            server_hello
+          )
+        else out(io,illegal_parameter)
+    )
+    else out(io,unexpected_message)
+  )
+.
+
+(* The main ECH client *)
+
+let ech_client(id_client:idProc,
+  use_psk,comp_psk,send_kex_c,use_grease:bool,
+  c_dom,i_dom:domain,
+  tls_g,backend_g:group, tls_h,backend_h:hash_alg, tls_a,backend_a:aead_alg,
+  ech_conf:echConfig,
+  i_extra:extraExt
+  ) =
+
+  let send_kex = not(allow_HRR) || send_kex_c in
+
+  (* Generating the HPKE Context (Section 6.1 in RFC)*)
+  let ech_config(config_id,ech_g,pkR,o_dom,ech_h,ech_a) = ech_conf in
+  event ClientOffersEchConfig(id_client,ech_conf);
+  let (enc:element,context:hpkeContext) = generate_enc_context_client(ech_h,ech_g,pkR,ech_conf) in
+
+  (* Generate the client hello *)
+
+  let (o_client_hello:msg,i_client_hello:msg,o_cr:bytes32,i_cr:bytes32,o_kex_data:bitstring,i_kex_data:bitstring,o_psk_ext:preSharedKeyExt,psk_data:bitstring,o_ech_ext:echExt) =
+    generate_initial_client_hello_ech(id_client,
+      use_grease,use_psk,send_kex,c_dom,i_dom,
+      tls_g,backend_g,tls_h,backend_h,tls_a,backend_a,
+      ech_conf,enc,context,
+      i_extra
+    )
+  in
+
+  out(io,o_client_hello);
+
+  (* Corresponds to the inner or (outer when grease) *)
+  let (psk:preSharedKey,id:identityPsk,es:bitstring,safe:bool) = psk_data in
+
+  (
+    (* The early data can only be send for the backend Send the early data *)
+    if allow_early_data && not(use_grease) && psk <> NoPsk then
+    let (wkc0:aead_key,ems0:bitstring) = kdf_k0(backend_h,es,(zero,i_client_hello)) in
+    !
+    in(io,(i:nat,ad:bitstring));
+    if is_nat(i) then
+    new msg_ed[]:bitstring;
+    let enc_ed = aead_enc(backend_a,wkc0,n2b(i),ad,msg_ed) in
+    new st:stamp;
+    event ClientSequenceClient0RTTDataWriteKey(id_client,st,i);
+    event ClientSends0(id_client,i_cr,psk,i,ad,msg_ed);
+    out(io,enc_ed)
+  ) | (
+    (* Retrieve Server Hello *)
+    in(io,server_hello:msg);
+
+    let SH(B32(sr24,sr8),mode) = server_hello in (
+
+      if allow_HRR && B32(sr24,sr8) = rand_HelloRetryRequest
+      then (
+        (* We received a HelloRetryRequest *)
+        if send_kex <> true then
+        let nego(=TLS13,h_alg,a_alg,hrr_kex_ext(g),=empty_sni_ext,ech_ext,=empty_extra_ext,=empty_psk_ext) =  mode in
+
+        let is_ech_accepted =
+          if ech_ext = empty_ech_ext
+          then false
+          else
+            if ech_ext = ECHHelloRetryRequest(generate_hrr_accept_confirmation(backend_g,backend_h,backend_a,i_client_hello))
+            then true
+            else false
+        in
+
+        event ClientEchAcceptance(id_client,is_ech_accepted);
+
+        if is_ech_accepted
+        then (
+
+          let cur_log_IN1_HRR = ((zero,i_client_hello),server_hello) in
+
+          (* If ECH was accepted then we know that the HRR came from the backend *)
+          let (o_client_hello':msg,i_client_hello':msg,i_cr':bytes32,i_kex_data':bitstring,psk_data':bitstring) =
+            generate_second_client_hello_for_backend(
+              id_client,psk_data,
+              use_psk,c_dom,i_dom,
+              tls_g,backend_g,tls_h,backend_h,tls_a,backend_a,
+              ech_conf,context,
+              i_extra,
+              cur_log_IN1_HRR
+            )
+          in
+          out(io,o_client_hello');
+          (* Message from the Backend *)
+          in(io,server_hello':msg);
+          let SH(B32(sr24',sr8'),params') = server_hello' in
+
+          let cur_log_IN1_HRR_IN2 = (cur_log_IN1_HRR,i_client_hello') in
+
+          (* We check acceptance again *)
+          if B32(sr24',sr8') = generate_accept_confirmation(sr24',backend_h,params',i_client_hello',cur_log_IN1_HRR_IN2) then
+
+          process_server_hello(id_client,
+            i_cr',
+            c_dom,i_dom,
+            i_kex_data',backend_h,backend_a,
+            psk_data',comp_psk,
+            cur_log_IN1_HRR_IN2,
+            server_hello'
+          )
+        )
+        else (
+          (* If ECH was rejected then we know that the HRR came from the frontend.
+            We rely to the HRR with a standard client hello.*)
+          let cur_log_OU1_HRR = ((zero,o_client_hello),server_hello) in
+          let (client_hello':msg,cr':bytes32,kex_data':bitstring,psk_data':bitstring) =
+            generate_second_client_hello_for_frontend(
+              id_client, psk_data, o_psk_ext, o_ech_ext,
+              use_grease,use_psk,c_dom,
+              tls_g,tls_h,tls_a,
+              ech_conf,
+              cur_log_OU1_HRR
+            )
+          in
+          out(io,client_hello');
+          let cur_log_OU1_HRR_OU2 = (cur_log_OU1_HRR,client_hello') in
+
+          (* Message from the server *)
+          in(io,server_hello':msg);
+          let SH(sr',mode') = server_hello' in
+            if sr' = rand_HelloRetryRequest
+            then out(io,unexpected_message)
+            else
+              process_server_hello(id_client,
+                cr',
+                c_dom,o_dom,
+                kex_data',tls_h,tls_a,
+                psk_data',comp_psk,
+                cur_log_OU1_HRR_OU2,
+                server_hello'
+              )
+          else out(io,unexpected_message)
+        )
+      )
+      else (
+        (* We check if ECH was accepted: *)
+        if B32(sr24,sr8) = generate_accept_confirmation(sr24,backend_h,mode,i_client_hello,(zero,i_client_hello))
+        then
+          (* Accepted *)
+          event ClientEchAcceptance(id_client,true);
+          process_server_hello(id_client,
+            i_cr,
+            c_dom,i_dom,
+            i_kex_data,backend_h,backend_a,
+            psk_data,comp_psk,
+            (zero,i_client_hello),
+            server_hello
+          )
+        else
+          (* Rejected:
+            Depending on whether grease was used or not, we may need to update the
+            psk data.
+          *)
+          event ClientEchAcceptance(id_client,false);
+          let psk_data' =
+            if use_grease
+            then psk_data
+            else
+              let (es':bitstring,kb:mac_key) = kdf_es(tls_h,NoPsk) in
+              (NoPsk,b2idpsk(zero),es',false)
+          in
+          process_server_hello(id_client,
+            o_cr,
+            c_dom,o_dom,
+            o_kex_data,tls_h,tls_a,
+            psk_data',comp_psk,
+            (zero,o_client_hello),
+            server_hello
+          )
+      )
+    )
+    else out(io,unexpected_message)
+  )
+.
+(********************
+   Main processes
+*********************)
+
+(* We define the processes that will be called for all security proofs. It includes
+  the generation of honest keys. *)
+
+(* Generation of honest keys *)
+
+let gen_honest_long_term_keys =
+  !
+  in(io,a:domain);
+  new lgt_id[]:idProc;
+  event Same(d2b(a));
+  (* The honest secret key must be created with gen_honest_privkey as it allows
+    us to refer to it in proof_helper. *)
+  let sk_h = gen_honest_privkey() in
+  let crt = valid_cert(a,pk(sk_h)) in
+  insert long_term_keys(a,sk_h,pk(sk_h),crt,lgt_id);
+  (* The certificate is given to the attacker. *)
+  out(io,crt)
+.
+
+let gen_honest_pre_shared_keys =
+  !
+  in(io,(c_dom:domain,s_dom:domain));
+  in(io,h_alg:hash_alg);
+  if allow_weak_ciphersuite_and_group || is_strong_hash(h_alg) then
+  new psk_id:idProc;
+  event Same(d2b(c_dom));
+  event Same(d2b(s_dom));
+  event Same(h2b(h_alg));
+  let psk = gen_honest_psk() in
+  let id = mk_idpsk(s_dom,h_alg,psk) in
+  insert pre_shared_keys(c_dom,s_dom,h_alg,id,psk,psk_id,true)
+.
+
+let gen_honest_pre_shared_keys_fixed =
+  !
+  in(io,(c_dom:domain,s_dom:domain));
+  let h_alg = id_hash(StrongHash,1) in
+  new psk_id:idProc;
+  event Same(d2b(c_dom));
+  event Same(d2b(s_dom));
+  let psk = gen_honest_psk() in
+  let id = mk_idpsk(s_dom,h_alg,psk) in
+  insert pre_shared_keys(c_dom,s_dom,h_alg,id,psk,psk_id,true)
+.
+
+let gen_honest_ech_config =
+  !
+  in(io,(s_dom:domain,g:group,h_alg:hash_alg,a_alg:aead_alg));
+  if allow_weak_ciphersuite_and_group || is_strong_hash(h_alg) then
+  if allow_weak_ciphersuite_and_group || is_strong_aead(a_alg) then
+  if allow_weak_ciphersuite_and_group || is_strong_group(g) then
+  event Same(d2b(s_dom));
+  event Same(g2b(g));
+  event Same(h2b(h_alg));
+  event Same(a2b(a_alg));
+  new id:configId;
+  let (skR:bitstring,pkR:element) = dh_keygen(g) in
+  let config = ech_config(id,g,pkR,s_dom,h_alg,a_alg) in
+  insert ech_configurations(config,skR);
+  (* The configuration is given to the attacker. *)
+  out(io,config)
+.
+
+let gen_honest_ech_config_fixed =
+  !
+  in(io,s_dom:domain);
+  let ech_h = id_hash(StrongHash,2) in
+  let ech_a = id_aead(StrongAE,2) in
+  let ech_g = id_g(StrongDH,2) in
+  event Same(d2b(s_dom));
+  new id:configId;
+  let (skR:bitstring,pkR:element) = dh_keygen(ech_g) in
+  let config = ech_config(id,ech_g,pkR,s_dom,ech_h,ech_a) in
+  insert ech_configurations(config,skR);
+  (* The configuration is given to the attacker. *)
+  out(io,config)
+.
+
+let gen_honest_key =
+    gen_honest_long_term_keys
+  |
+    if allow_multiple_ciphersuite_and_group
+    then (
+        gen_honest_pre_shared_keys
+      | gen_honest_ech_config
+    )
+    else (
+        gen_honest_pre_shared_keys_fixed
+      | gen_honest_ech_config_fixed
+    )
+.
+
+(* Generation of dishonest keys *)
+
+let gen_dishonest_long_term_keys =
+  !
+  in(io,a:domain);
+  new idP[]:idProc;
+  new sk_d:privkey;
+  event CompromisedLtkForEquiv(pk(sk_d));
+  event Same(d2b(a));
+  event CompromisedLtk(pk(sk_d));
+  let crt = valid_cert(a,pk(sk_d)) in
+  insert long_term_keys(a,sk_d,pk(sk_d),crt,idP);
+  out(io,(sk_d,crt))
+.
+
+let gen_dishonest_pre_shared_keys =
+  !
+  in(io,(c_dom:domain,s_dom:domain,h_alg:hash_alg));
+  if allow_weak_ciphersuite_and_group || is_strong_hash(h_alg) then
+  new idP:idProc;
+  event Same(d2b(c_dom));
+  event Same(d2b(s_dom));
+  event Same(h2b(h_alg));
+  new psk_d:preSharedKey;
+  event CompromisedPsk(psk_d);
+  let id = mk_idpsk(s_dom,h_alg,psk_d) in
+  insert pre_shared_keys(c_dom,s_dom,h_alg,id,psk_d,idP,false);
+  out(io,psk_d)
+.
+
+let gen_dishonest_pre_shared_keys_fixed =
+  !
+  in(io,(c_dom:domain,s_dom:domain));
+  let h_alg = id_hash(StrongHash,1) in
+  new idP:idProc;
+  event Same(d2b(c_dom));
+  event Same(d2b(s_dom));
+  new psk_d:preSharedKey;
+  event CompromisedPsk(psk_d);
+  let id = mk_idpsk(s_dom,h_alg,psk_d) in
+  insert pre_shared_keys(c_dom,s_dom,h_alg,id,psk_d,idP,false);
+  out(io,psk_d)
+.
+
+let gen_dishonest_ech_config =
+  !
+  in(io,(s_dom:domain,g:group,h_alg:hash_alg,a_alg:aead_alg));
+  if allow_weak_ciphersuite_and_group || is_strong_hash(h_alg) then
+  if allow_weak_ciphersuite_and_group || is_strong_aead(a_alg) then
+  if allow_weak_ciphersuite_and_group || is_strong_group(g) then
+  event Same(d2b(s_dom));
+  event Same(g2b(g));
+  event Same(h2b(h_alg));
+  event Same(a2b(a_alg));
+  new id:configId;
+  new skR_d:bitstring;
+  let pkR_d = dh_pub(g,skR_d) in
+  let config = ech_config(id,g,pkR_d,s_dom,h_alg,a_alg) in
+  event CompromisedEchKey(config);
+  event CompromisedEchKeyForEquiv(config);
+  insert ech_configurations(config,skR_d);
+  out(io,config);
+  (* The configuration and private keys are given to the attacker. *)
+  out(io,skR_d)
+.
+
+let gen_dishonest_ech_config_fixed =
+  !
+  in(io,s_dom:domain);
+  let ech_h = id_hash(StrongHash,2) in
+  let ech_a = id_aead(StrongAE,2) in
+  let ech_g = id_g(StrongDH,2) in
+  event Same(d2b(s_dom));
+  new id:configId;
+  new skR_d:bitstring;
+  let pkR_d = dh_pub(ech_g,skR_d) in
+  let config = ech_config(id,ech_g,pkR_d,s_dom,ech_h,ech_a) in
+  event CompromisedEchKeyForEquiv(config);
+  event CompromisedEchKey(config);
+  insert ech_configurations(config,skR_d);
+  out(io,config);
+  (* The configuration and private keys are given to the attacker. *)
+  out(io,skR_d)
+.
+
+let gen_dishonest_key =
+    (if allow_compromised_long_term_keys
+    then gen_dishonest_long_term_keys)
+  |
+    if allow_multiple_ciphersuite_and_group
+    then (
+        (if allow_compromised_ext_PSK
+        then gen_dishonest_pre_shared_keys)
+      |
+        (if allow_compromised_Ech_keys
+        then gen_dishonest_ech_config)
+    )
+    else (
+        (if allow_compromised_ext_PSK
+        then gen_dishonest_pre_shared_keys_fixed)
+      |
+        (if allow_compromised_Ech_keys
+        then gen_dishonest_ech_config_fixed)
+    )
+.
+
+(* The internal processes *)
+
+let all_internal_processes =
+  (* On the server side *)
+    receive_client_finished_message
+  | send_server_finished_message
+  | send_server_certificate_message
+  | process_client_hello_noHRR
+  (* On the TLS client side *)
+  | send_client_finished_message
+  | receive_server_finished_message
+  | process_server_certificate_message
+  | receive_after_encrypted_extension
+  (* On the ECH client side *)
+.
+
+(* Generic Standard Client *)
+
+def macro_standard_client(do_precise,run_standard_client) {
+  letfun mkprecise(x:bitstring) =
+    if do_precise
+    then new st[]:stamp; event PreciseInput(st,x); ()
+    else ()
+  .
+
+  let run_standard_client_comp_psk(id_client:idProc,c_dom,s_dom:domain,tls_a:aead_alg,tls_g:group,tls_h:hash_alg,use_psk,send_kex:bool) =
+    if allow_compromised_ticket
+    then (
+      in(io,comp_psk:bool);
+      event Same(bool2b(comp_psk));
+      let () = mkprecise(bool2b(comp_psk)) in
+      standard_client(id_client,use_psk,comp_psk,send_kex,c_dom,s_dom,tls_g,tls_h,tls_a)
+    )
+    else
+      let comp_psk = false in
+      standard_client(id_client,use_psk,comp_psk,send_kex,c_dom,s_dom,tls_g,tls_h,tls_a)
+  .
+
+  let run_standard_client_send_kex(id_client:idProc,c_dom,s_dom:domain,tls_a:aead_alg,tls_g:group,tls_h:hash_alg,use_psk:bool) =
+    if set_send_kex
+    then (
+      let send_kex = default_send_kex in
+      run_standard_client_comp_psk(id_client,c_dom,s_dom,tls_a,tls_g,tls_h,use_psk,send_kex)
+    ) else
+      in(io,send_kex:bool);
+      event Same(bool2b(send_kex));
+      let () = mkprecise(bool2b(send_kex)) in
+      run_standard_client_comp_psk(id_client,c_dom,s_dom,tls_a,tls_g,tls_h,use_psk,send_kex)
+  .
+
+  let run_standard_client_use_psk(id_client:idProc,c_dom,s_dom:domain,tls_a:aead_alg,tls_g:group,tls_h:hash_alg) =
+    if set_use_psk
+    then (
+      let use_psk = default_use_psk in
+      run_standard_client_send_kex(id_client,c_dom,s_dom,tls_a,tls_g,tls_h,use_psk)
+    ) else
+      in(io,use_psk:bool);
+      event Same(bool2b(use_psk));
+      let () = mkprecise(bool2b(use_psk)) in
+      run_standard_client_send_kex(id_client,c_dom,s_dom,tls_a,tls_g,tls_h,use_psk)
+  .
+
+  let run_standard_client(id_client:idProc,c_dom,s_dom:domain) =
+    if allow_multiple_ciphersuite_and_group
+    then (
+      in(io,(tls_g:group,tls_h:hash_alg,tls_a:aead_alg));
+      let () = mkprecise((tls_g,tls_h,tls_a)) in
+      if allow_weak_ciphersuite_and_group || is_strong_hash(tls_h) then
+      if allow_weak_ciphersuite_and_group || is_strong_aead(tls_a) then
+      if allow_weak_ciphersuite_and_group || is_strong_group(tls_g) then
+      event Same(g2b(tls_g));
+      event Same(h2b(tls_h));
+      event Same(a2b(tls_a));
+      run_standard_client_use_psk(id_client,c_dom,s_dom,tls_a,tls_g,tls_h)
+    ) else
+      let tls_h = id_hash(StrongHash,1) in
+      let tls_a = id_aead(StrongAE,1) in
+      let tls_g = id_g(StrongDH,1) in
+      run_standard_client_use_psk(id_client,c_dom,s_dom,tls_a,tls_g,tls_h)
+  .
+}
+
+(* Generic Server  *)
+
+let run_server_req_cert(id_server:idProc,s_dom:domain,extra_ext:extraExt,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg,use_ech,use_psk:bool) =
+  if set_req_cert
+  then (
+    let req_cert = default_req_cert in
+    server(id_server,use_ech,use_psk,req_cert,s_dom,tls_g,tls_h,tls_a,backend_g,backend_h,backend_a,extra_ext)
+  )
+  else
+    in(io,req_cert:bool);
+    let () = proof_helper_server(bool2b(req_cert)) in
+    event Same(bool2b(req_cert));
+    server(id_server,use_ech,use_psk,req_cert,s_dom,tls_g,tls_h,tls_a,backend_g,backend_h,backend_a,extra_ext)
+.
+
+let run_server_use_psk(id_server:idProc,s_dom:domain,extra_ext:extraExt,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg,use_ech:bool) =
+  if set_use_psk
+  then (
+    let use_psk = default_use_psk in
+    run_server_req_cert(id_server,s_dom,extra_ext,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_ech,use_psk)
+  )
+  else
+    in(io,use_psk:bool);
+    let () = proof_helper_server(bool2b(use_psk)) in
+    event Same(bool2b(use_psk));
+    run_server_req_cert(id_server,s_dom,extra_ext,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_ech,use_psk)
+.
+
+let run_server_use_ech(id_server:idProc,s_dom:domain,extra_ext:extraExt,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg) =
+  if set_use_ech
+  then (
+    let use_ech = default_use_ech in
+    run_server_use_psk(id_server,s_dom,extra_ext,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_ech)
+  )
+  else
+    in(io,use_ech:bool);
+    let () = proof_helper_server(bool2b(use_ech)) in
+    event Same(bool2b(use_ech));
+    run_server_use_psk(id_server,s_dom,extra_ext,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_ech)
+.
+
+let run_server(id_server:idProc,s_dom:domain,extra_ext:extraExt) =
+  if allow_multiple_ciphersuite_and_group
+  then (
+    in(io,(tls_g:group,backend_g:group,tls_h:hash_alg,backend_h:hash_alg,tls_a:aead_alg,backend_a:aead_alg));
+    let () = proof_helper_server((tls_g,backend_g,tls_h,backend_h,tls_a,backend_a)) in
+    if allow_weak_ciphersuite_and_group || is_strong_hash(tls_h) then
+    if allow_weak_ciphersuite_and_group || is_strong_aead(tls_a) then
+    if allow_weak_ciphersuite_and_group || is_strong_group(tls_g) then
+    if allow_weak_ciphersuite_and_group || is_strong_hash(backend_h) then
+    if allow_weak_ciphersuite_and_group || is_strong_aead(backend_a) then
+    if allow_weak_ciphersuite_and_group || is_strong_group(backend_g) then
+    event Same(g2b(tls_g));
+    event Same(h2b(tls_h));
+    event Same(a2b(tls_a));
+    event Same(g2b(backend_g));
+    event Same(h2b(backend_h));
+    event Same(a2b(backend_a));
+    run_server_use_ech(id_server,s_dom,extra_ext,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h)
+  ) else
+    let tls_h = id_hash(StrongHash,1) in
+    let tls_a = id_aead(StrongAE,1) in
+    let tls_g = id_g(StrongDH,1) in
+    let backend_h = id_hash(StrongHash,1) in
+    let backend_a = id_aead(StrongAE,1) in
+    let backend_g = id_g(StrongDH,1) in
+    run_server_use_ech(id_server,s_dom,extra_ext,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h)
+.
+
+(* Generic ECH client *)
+
+def macro_ech_client(do_precise,force_nogrease,run_ech_client) {
+  letfun mkprecise(x:bitstring) =
+    if do_precise
+    then new st[]:stamp; event PreciseInput(st,x); ()
+    else ()
+  .
+
+  let run_ech_client_use_grease(id_client:idProc,i_extra_ext:extraExt,c_dom,backend_dom:domain,ech_conf:echConfig,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg,use_psk,comp_psk,send_kex:bool) =
+    if set_use_grease
+    then (
+      let use_grease =
+        if force_nogrease
+        then false
+        else default_use_grease
+      in
+      ech_client(id_client,use_psk,comp_psk,send_kex,use_grease,c_dom,backend_dom,tls_g,backend_g,tls_h,backend_h,tls_a,backend_a,ech_conf,i_extra_ext)
+    )
+    else
+      if force_nogrease
+      then (
+        let use_grease = false in
+        ech_client(id_client,use_psk,comp_psk,send_kex,use_grease,c_dom,backend_dom,tls_g,backend_g,tls_h,backend_h,tls_a,backend_a,ech_conf,i_extra_ext)
+      ) else (
+        in(io,use_grease:bool);
+        let () = mkprecise(bool2b(use_grease)) in
+        event Same(bool2b(use_grease));
+        ech_client(id_client,use_psk,comp_psk,send_kex,use_grease,c_dom,backend_dom,tls_g,backend_g,tls_h,backend_h,tls_a,backend_a,ech_conf,i_extra_ext)
+      )
+  .
+
+  let run_ech_client_send_kex(id_client:idProc,i_extra_ext:extraExt,c_dom,backend_dom:domain,ech_conf:echConfig,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg,use_psk,comp_psk:bool) =
+    if set_send_kex
+    then (
+      let send_kex = default_send_kex in
+      run_ech_client_use_grease(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_psk,comp_psk,send_kex)
+    )
+    else
+      in(io,send_kex:bool);
+      let () = mkprecise(bool2b(send_kex)) in
+      event Same(bool2b(send_kex));
+      run_ech_client_use_grease(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_psk,comp_psk,send_kex)
+  .
+
+  let run_ech_client_comp_psk(id_client:idProc,i_extra_ext:extraExt,c_dom,backend_dom:domain,ech_conf:echConfig,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg,use_psk:bool) =
+    if allow_compromised_ticket
+    then (
+      in(io,comp_psk:bool);
+      let () = mkprecise(bool2b(comp_psk)) in
+      event Same(bool2b(comp_psk));
+      run_ech_client_send_kex(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_psk,comp_psk)
+    )
+    else
+      let comp_psk = false in
+      run_ech_client_send_kex(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_psk,comp_psk)
+  .
+
+  let run_ech_client_use_psk(id_client:idProc,i_extra_ext:extraExt,c_dom,backend_dom:domain,ech_conf:echConfig,tls_a,backend_a:aead_alg,tls_g,backend_g:group,tls_h,backend_h:hash_alg) =
+    if set_use_psk
+    then (
+      let use_psk = default_use_psk in
+      run_ech_client_comp_psk(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_psk)
+    )
+    else
+      in(io,use_psk:bool);
+      let () = mkprecise(bool2b(use_psk)) in
+      event Same(bool2b(use_psk));
+      run_ech_client_comp_psk(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h,use_psk)
+  .
+
+  let run_ech_client(id_client:idProc,i_extra_ext:extraExt,c_dom,backend_dom:domain,ech_conf:echConfig) =
+    if allow_multiple_ciphersuite_and_group
+    then (
+      in(io,(tls_g:group,backend_g:group,tls_h:hash_alg,backend_h:hash_alg,tls_a:aead_alg,backend_a:aead_alg));
+      let () = mkprecise((tls_g,backend_g,tls_h,backend_g,tls_a,backend_a)) in
+      if allow_weak_ciphersuite_and_group || is_strong_hash(tls_h) then
+      if allow_weak_ciphersuite_and_group || is_strong_aead(tls_a) then
+      if allow_weak_ciphersuite_and_group || is_strong_group(tls_g) then
+      if allow_weak_ciphersuite_and_group || is_strong_hash(backend_h) then
+      if allow_weak_ciphersuite_and_group || is_strong_aead(backend_a) then
+      if allow_weak_ciphersuite_and_group || is_strong_group(backend_g) then
+      event Same(g2b(tls_g));
+      event Same(h2b(tls_h));
+      event Same(a2b(tls_a));
+      event Same(g2b(backend_g));
+      event Same(h2b(backend_h));
+      event Same(a2b(backend_a));
+      run_ech_client_use_psk(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h)
+    ) else
+      let tls_h = id_hash(StrongHash,1) in
+      let tls_a = id_aead(StrongAE,1) in
+      let tls_g = id_g(StrongDH,1) in
+      let backend_h = id_hash(StrongHash,1) in
+      let backend_a = id_aead(StrongAE,1) in
+      let backend_g = id_g(StrongDH,1) in
+      run_ech_client_use_psk(id_client,i_extra_ext,c_dom,backend_dom,ech_conf,tls_a,backend_a,tls_g,backend_g,tls_h,backend_h)
+  .
+}
+(* Force selection of channels *)
+
+set verboseGoalReachable = false.
+set privateCommOnPublicTerms = false.
+
+nounif x:bitstring; mess(ch_client_CFIN,*x) / -300000.
+nounif x:bitstring; mess(ch_client_FIN,*x) / -300000.
+nounif x:bitstring; mess(ch_client_CRT,*x) / -300000.
+nounif x:bitstring; mess(ch_client_after_EE,*x) / -300000.
+
+nounif x:bitstring; mess(ch_server_CFIN,*x) / -300000.
+nounif x:bitstring; mess(ch_server_FIN,*x) / -300000.
+nounif x:bitstring; mess(ch_server_CRT,*x) / -300000.
+nounif x:bitstring; mess(ch_server_SH,*x) / -300000.
+
+
+nounif c_dom':domain,sk_d:privkey,pkr:pubkey,crt:certificate, idP:idProc;
+  table(long_term_keys( *c_dom', *sk_d, *pkr, *crt, *idP)) / -400000
+.
+
+nounif config:echConfig,skR:bitstring;
+  table(ech_configurations( *config, *skR)) / -400000
+.
+
+(* Axioms on Precise *)
+
+axiom ch:channel,id,id1,id2,id1',id2':idProc,st,st1,st2,st1',st2':stamp, x1,x1',x2,x2':bitstring;
+  event(PreciseMess(ch,id,st1,x1)) && event(PreciseMess(ch,id,st1',x1')) ==> st1 = st1' && x1 = x1';
+  event(PreciseMess(ch,id1,st,x1)) && event(PreciseMess(ch,id1',st,x1')) ==> id1 = id1' && x1 = x1'
+.
+
+axiom st:stamp,x,x':bitstring;
+  event(PreciseInput(st,x)) && event(PreciseInput(st,x')) ==> x = x'.
+
+axiom ch:channel,st,st':stamp,id,id':idProc;
+  event(PreciseIdProcess(ch,id,st)) && event(PreciseIdProcess(ch,id,st')) ==> st = st';
+  event(PreciseIdProcess(ch,id,st)) && event(PreciseIdProcess(ch,id',st)) ==> id = id'
+.
+
+(* Secrecy assumotion *)
+
+not attacker(ch_client_CFIN).
+not attacker(ch_client_FIN).
+not attacker(ch_client_CRT).
+not attacker(ch_client_after_EE).
+
+not attacker(ch_server_CFIN).
+not attacker(ch_server_FIN).
+not attacker(ch_server_CRT).
+not attacker(ch_server_SH).
+
+(* Honest keys *)
+
+not s:seed; attacker(uc_privkey(s)).
+not s:seed; attacker(uc_psk(s)).
+not s:seed; attacker(dh_k(s)).
+
+(***** Key Schedule *****)
+
+(*
+  - prf(a,k,x): with a = id_hash(StrongHash,i)
+      hmac_ideal(i,b2mk(k),x)
+
+  - hkdf_extract(a,s,k) =
+      hmac_ideal(i,b2mk(s),k)
+
+  - hkdf_expand_label(a,k,l,h) =
+      hmac_ideal(i,b2mk(k),(l,h))
+
+  - derive_secret(a,k,l,m) =
+      hmac_ideal(i,b2mk(k),(l,hash_ideal(i,m)))
+
+  - kdf_es(h,PSK(psk)) =
+      let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+      let binder_key =
+        hmac_ideal(i,b2mk(early_secret),(tls13_resumption_psk_binder_key,hash_ideal(i,zero))) in
+
+  - kdf_es(h,NoPsk) =
+      let early_secret = hmac_ideal(i,b2mk(zero),zero) in
+      let binder_key =
+        hmac_ideal(i,b2mk(early_secret),(tls13_resumption_psk_binder_key,hash_ideal(i,zero))) in
+
+  - kdf_hs(h,early_secret,e) =
+      let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero))))
+      let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  - kdf_ms(h,handshake_secret,log) =
+      let extra_hs = hmac_ideal(i,b2mk(handshake_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+      let master_secret = hmac_ideal(i,b2mk(handshake_secret),zero) in
+
+      let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+      let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+
+      let client_wkh = hmac_ideal(i,b2mk(client_hts),(tls13_key,zero)) in
+      let server_wkh = hmac_ideal(i,b2mk(server_hts),(tls13_key,zero)) in
+
+      let client_fk = hmac_ideal(i,b2mk(client_hts),(tls13_finished,zero)) in
+      let server_fk = hmac_ideal(i,b2mk(server_hts),(tls13_finished,zero)) in
+
+  - letfun kdf_k(h,master_secret,log) =
+    let client_ats = hmac_ideal(i,b2mk(master_secret),(tls13_client_application_traffic_secret,hash_ideal(i,log))) in
+    let server_ats = hmac_ideal(i,b2mk(master_secret),(tls13_server_application_traffic_secret,hash_ideal(i,log))) in
+
+    let client_wkad = hmac_ideal(i,b2mk(client_ats),(tls13_key,zero)) in
+    let client_wkad = hmac_ideal(i,b2mk(server_ats),(tls13_key,zero)) in
+    let client_fkad = hmac_ideal(i,b2mk(server_ats),(tls13_key,zero)) in
+
+*)
+
+(* Early secret and binder :
+    - Secret for non compromised psk
+*)
+
+not i:nat,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  attacker(early_secret)
+.
+
+not i:nat,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let binder_key = hmac_ideal(i,b2mk(early_secret),(tls13_ext_res_binder,hash_ideal(i,zero))) in
+  attacker(binder_key)
+.
+
+(* DH Keys *)
+
+not s:seed; attacker(dh_f(s)).
+
+not i:nat,s_x, s_xy:seed,r:bytes32, v:TLS_version, h:hash_alg, a:aead_alg,
+  sn:sniExt, ech:echExt, ps:preSharedKeyExt, ex:extraExt;
+  let g = id_g(StrongDH,i) in
+  let gx = dh_pub(g,dh_k(s_x)) in
+  let client_hello = CH(r,nego(v,h,a,client_kex_ext(DHE_kex(g,gx)),sn,ech,ex,ps)) in
+  let gxy = dh_xy(s_xy,m2b(client_hello)) in
+  attacker(gxy)
+.
+
+(* Handshake secret :
+    - Secret if either the early secret is secret or if the element is secret.
+
+    Other than dh_f, we cannot directly deduce from the handshake secret if the
+    element was secret.
+*)
+
+not i:nat,e:element,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+  attacker(handshake_secret)
+.
+
+not i:nat,e:element,s:seed, extra_es:bitstring;
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(dh_f(s))) in
+  attacker(handshake_secret)
+.
+
+(* Keys wkh and fk
+    - Secret if the handshake secret is secret
+    - The log is not secret as it is composed only of the client hello messages + server hello +
+    possibly the HRR client hello.
+*)
+
+(* Case where handshake is secret thanks to psk *)
+
+not i:nat,e:element,log:bitstring,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+  let client_wkh = hmac_ideal(i,b2mk(client_hts),(tls13_key,zero)) in
+  attacker(client_wkh)
+.
+
+not i:nat,e:element,log:bitstring,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+  let client_fk = hmac_ideal(i,b2mk(client_hts),(tls13_finished,zero)) in
+  attacker(client_fk)
+.
+
+not i:nat,e:element,log:bitstring,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+  let server_wkh = hmac_ideal(i,b2mk(server_hts),(tls13_key,zero)) in
+  attacker(server_wkh)
+.
+
+not i:nat,e:element,log:bitstring,s:seed;
+  let psk = uc_psk(s) in
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+  let server_fk = hmac_ideal(i,b2mk(server_hts),(tls13_finished,zero)) in
+  attacker(server_fk)
+.
+
+(* Case where handshake is secret thanks to failure of decapsulation *)
+
+not i:nat,e:element,s:seed,log:bitstring, x,y,z:bitstring,a:aead_alg,extra_es:bitstring;
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(dh_f(s))) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+  let client_wkh = hmac_ideal(i,b2mk(client_hts),(tls13_key,zero)) in
+  attacker(aead_enc(a,b2ae(client_wkh),x,y,z))
+.
+
+not i:nat,e:element,s:seed,log:bitstring, x,y,z:bitstring,a:aead_alg,extra_es:bitstring;
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(dh_f(s))) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+  let client_fk = hmac_ideal(i,b2mk(client_hts),(tls13_finished,zero)) in
+  attacker(client_fk)
+.
+
+not i:nat,e:element,s:seed,log:bitstring, x,y,z:bitstring,a:aead_alg,extra_es:bitstring;
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(dh_f(s))) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+  let server_wkh = hmac_ideal(i,b2mk(server_hts),(tls13_key,zero)) in
+  attacker(aead_enc(a,b2ae(server_wkh),x,y,z))
+.
+
+not i:nat,e:element,s:seed,log:bitstring, x,y,z:bitstring,a:aead_alg,extra_es:bitstring;
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(dh_f(s))) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+  let server_fk = hmac_ideal(i,b2mk(server_hts),(tls13_finished,zero)) in
+  attacker(server_fk)
+.
+
+(* Client hello coming from an honest client *)
+not i:nat,s_x, s_xy:seed,r,r':bytes32, v,v':TLS_version, h,h':hash_alg, a,a':aead_alg,
+  sn,sn':sniExt, e,e':echExt, p,p':preSharedKeyExt,  ex,ex':extraExt, extra_es:bitstring,e_key:element,log:bitstring;
+  let g = id_g(StrongDH,i) in
+  let gx = dh_pub(g,dh_k(s_x)) in
+  let client_hello = CH(r,nego(v,h,a,client_kex_ext(DHE_kex(g,gx)),sn,e,ex,p)) in
+  let gxy = dh_xy(s_xy,m2b(client_hello)) in
+  let gy = dh_encap_fun(g,gx,gxy) in
+  let log1 = (log,client_hello) in
+  let log2 = (log1,SH(r',nego(v',h',a',server_kex_ext(DHE_kex(g,gy)),sn',e',ex',p'))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(gxy)) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log2))) in
+  let client_wkh = hmac_ideal(i,b2mk(client_hts),(tls13_key,zero)) in
+  attacker(client_wkh)
+.
+
+not i:nat,s_x, s_xy:seed,r,r':bytes32, v,v':TLS_version, h,h':hash_alg, a,a':aead_alg,
+  sn,sn':sniExt, e,e':echExt, p,p':preSharedKeyExt, ex,ex':extraExt, extra_es:bitstring,e_key:element,log:bitstring;
+  let g = id_g(StrongDH,i) in
+  let gx = dh_pub(g,dh_k(s_x)) in
+  let client_hello = CH(r,nego(v,h,a,client_kex_ext(DHE_kex(g,gx)),sn,e,ex,p)) in
+  let gxy = dh_xy(s_xy,m2b(client_hello)) in
+  let gy = dh_encap_fun(g,gx,gxy) in
+  let log1 = (log,client_hello) in
+  let log2 = (log1,SH(r',nego(v',h',a',server_kex_ext(DHE_kex(g,gy)),sn',e',ex',p'))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(gxy)) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log2))) in
+  let client_fk = hmac_ideal(i,b2mk(client_hts),(tls13_finished,zero)) in
+  attacker(client_fk)
+.
+
+not i:nat,s_x, s_xy:seed,r,r':bytes32, v,v':TLS_version, h,h':hash_alg, a,a':aead_alg,
+  sn,sn':sniExt, e,e':echExt, p,p':preSharedKeyExt, ex,ex':extraExt, extra_es:bitstring,e_key:element,log:bitstring;
+  let g = id_g(StrongDH,i) in
+  let gx = dh_pub(g,dh_k(s_x)) in
+  let client_hello = CH(r,nego(v,h,a,client_kex_ext(DHE_kex(g,gx)),sn,e,ex,p)) in
+  let gxy = dh_xy(s_xy,m2b(client_hello)) in
+  let gy = dh_encap_fun(g,gx,gxy) in
+  let log1 = (log,client_hello) in
+  let log2 = (log1,SH(r',nego(v',h',a',server_kex_ext(DHE_kex(g,gy)),sn',e',ex',p'))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(gxy)) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log2))) in
+  let server_wkh = hmac_ideal(i,b2mk(server_hts),(tls13_key,zero)) in
+  attacker(server_wkh)
+.
+
+not i:nat,s_x, s_xy:seed,r,r':bytes32, v,v':TLS_version, h,h':hash_alg, a,a':aead_alg,
+  sn,sn':sniExt, e,e':echExt, p,p':preSharedKeyExt, ex,ex':extraExt, extra_es:bitstring,e_key:element,log:bitstring;
+  let g = id_g(StrongDH,i) in
+  let gx = dh_pub(g,dh_k(s_x)) in
+  let client_hello = CH(r,nego(v,h,a,client_kex_ext(DHE_kex(g,gx)),sn,e,ex,p)) in
+  let gxy = dh_xy(s_xy,m2b(client_hello)) in
+  let gy = dh_encap_fun(g,gx,gxy) in
+  let log1 = (log,client_hello) in
+  let log2 = (log1,SH(r',nego(v',h',a',server_kex_ext(DHE_kex(g,gy)),sn',e',ex',p'))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(gxy)) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log2))) in
+  let server_fk = hmac_ideal(i,b2mk(server_hts),(tls13_finished,zero)) in
+  attacker(server_fk)
+.
+
+(* Secrecy assumption related to ECH *)
+
+not s,s':seed,i:nat; attacker(dh_xy(s',e2b(dh_pub(id_g(StrongDH,i),dh_k(s))))).
+
+not s,s':seed, info:bitstring, m:hpkeRole,i:nat;
+  let shared_secret = dh_xy(s',e2b(dh_pub(id_g(StrongDH,i),dh_k(s)))) in
+  let info_hash = hmac_ideal(i,b2mk(zero),(hpke_info_hash,info)) in
+  let xsecret = hmac_ideal(i,b2mk(e2b(shared_secret)),(hpke_secret,zero)) in
+  let key = hmac_ideal(i,b2mk(xsecret),(hpke_key,info_hash)) in
+  attacker(key)
+.
+
+not s,s':seed, info:bitstring, m:hpkeRole,i:nat;
+  let shared_secret = dh_f(s') in
+  let info_hash = hmac_ideal(i,b2mk(zero),(hpke_info_hash,info)) in
+  let xsecret = hmac_ideal(i,b2mk(e2b(shared_secret)),(hpke_secret,zero)) in
+  let key = hmac_ideal(i,b2mk(xsecret),(hpke_key,info_hash)) in
+  attacker(key)
+.
+set removeEventsForLemma = true.
+
+nounif s_dom:domain, h_alg:hash_alg, psk:preSharedKey; attacker(mk_idpsk( *s_dom, *h_alg, *psk)).
+
+nounif c_dom,s_dom:domain,h:hash_alg,id:identityPsk,x:preSharedKey, idP:idProc,is_safe:bool;
+  table(pre_shared_keys( *c_dom, *s_dom, *h, *id, *x, *idP, *is_safe))
+.
+
+axiom c_dom,c_dom',s_dom,s_dom':domain,h,h_alg,h_alg':hash_alg,id,id':identityPsk,cr,sr:bytes32,old_psk,psk,psk':preSharedKey,idP,idP',id_s,id_c:idProc,is_safe,is_safe':bool,i:nat,e:element,g:group,x:bitstring,s:seed,log:bitstring, s_pkey,c_pkey:pubkey;
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,is_safe)) ==> attacker(id) || id = mk_idpsk(s_dom,h,psk);
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) ==> id = mk_idpsk(s_dom,h,psk);
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) && attacker(psk);
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,is_safe)) && attacker(psk) ==> is_safe = false;
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,is_safe)) ==> psk <> NoPsk && psk <> b2psk(zero);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  attacker(early_secret);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let binder_key = hmac_ideal(i,b2mk(early_secret),(tls13_ext_res_binder,hash_ideal(i,zero))) in
+  attacker(binder_key);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+  attacker(handshake_secret);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+  let client_wkh = hmac_ideal(i,b2mk(client_hts),(tls13_key,zero)) in
+  attacker(client_wkh);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let client_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_client_handshake_traffic_secret,hash_ideal(i,log))) in
+  let client_fk = hmac_ideal(i,b2mk(client_hts),(tls13_finished,zero)) in
+  attacker(client_fk);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+  let server_wkh = hmac_ideal(i,b2mk(server_hts),(tls13_key,zero)) in
+  attacker(server_wkh);
+  (* ------ *)
+  table(pre_shared_keys(c_dom,s_dom,h,id,psk,idP,true)) &&
+  let early_secret = hmac_ideal(i,b2mk(zero),psk2b_pf(psk)) in
+  let extra_es = hmac_ideal(i,b2mk(early_secret),(tls13_derived,hash_ideal(i,hash_ideal(i,zero)))) in
+  let handshake_secret = hmac_ideal(i,b2mk(extra_es),e2b(e)) in
+
+  let server_hts = hmac_ideal(i,b2mk(handshake_secret),(tls13_server_handshake_traffic_secret,hash_ideal(i,log))) in
+  let server_fk = hmac_ideal(i,b2mk(server_hts),(tls13_finished,zero)) in
+  attacker(server_fk)
+  [fullSat]
+.
+
+(* GsVerif like axioms *)
+
+axiom id:idProc,e,e':element; event(Client_DH_server(id,e)) && event(Client_DH_server(id,e')) ==> e = e'.
+axiom id:idProc,k,k':preSharedKey,is,is':bool; event(Client_PSKChoosen(id,k,is)) && event(Client_PSKChoosen(id,k',is')) ==> (k,is) = (k',is').
+
+(* Secrecy properties *)
+
+(* 1-RTT handshake : secrecy and authentication queries *)
+
+query config:echConfig, g:group, x:bitstring, gxy:element, id_c,id_s:idProc,cr,cr',sr,sr':bytes32,old_psk,psk,psk':preSharedKey,s_pkey,s_pkey',c_pkey,c_pkey':pubkey,cak,cak',sak,sak':aead_key,ems,ems',rms,rms':bitstring;
+  (* Secrecy *)
+  event(ClientFinished(id_c,cr,sr,psk,s_pkey,c_pkey,cak,sak,ems,rms)) && attacker(cak) ==>
+    event(Client_DH_server(id_c,dh_encap_fun(g,dh_pub(g,x),gxy))) &&
+    attacker(gxy) &&
+    (
+      event(CompromisedLtk(s_pkey)) ||
+      (attacker(psk) && event(Client_PSKChoosen(id_c,psk,false)))
+    ) && (
+      event(ClientEchAcceptance(id_c,false)) ||
+      (
+        event(ClientOffersEchConfig(id_c,config)) &&
+        event(CompromisedEchKey(config))
+      )
+    );
+
+  (* Synchronisation *)
+
+  event(ClientFinished(id_c,cr,sr,psk,s_pkey,c_pkey,cak,sak,ems,rms)) &&
+  event(ServerFinished(id_s,cr',sr',psk',s_pkey',c_pkey',cak',sak',ems,rms')) ==>
+    cr = cr' && sr = sr' && s_pkey = s_pkey' && c_pkey = c_pkey' && psk = psk' ;
+
+  event(ClientFinished(id_c,cr,sr,psk,s_pkey,c_pkey,cak,sak,ems,rms)) &&
+  event(ServerFinished(id_s,cr',sr',psk',s_pkey',c_pkey',cak',sak',ems',rms)) ==>
+    cr = cr' && sr = sr' && s_pkey = s_pkey' && c_pkey = c_pkey' && psk = psk';
+
+  event(ClientFinished(id_c,cr,sr,psk,s_pkey,c_pkey,cak,sak,ems,rms)) &&
+  event(ServerFinished(id_s,cr',sr',psk',s_pkey',c_pkey',cak,sak,ems',rms')) ==>
+    cr = cr' && sr = sr' && s_pkey = s_pkey' && c_pkey = c_pkey' && psk = psk'
+.
+
+expand macro_ech_client(true,false,run_ech_client).
+expand macro_standard_client(true,run_tls_client).
+
+process
+  (
+    (* Generates the keys *)
+      gen_honest_key
+    | gen_dishonest_key
+    | all_internal_processes
+  ) | (
+    if clients_with_tls then
+    (* TLS*)
+    !
+    new id_tls_client:idProc;
+    (* Domains *)
+    in(io,s_dom:domain);
+    in(io,c_dom:domain);
+
+    run_tls_client(id_tls_client,c_dom,s_dom)
+  ) | (
+    if clients_with_ech then
+    (* ECH client *)
+    !
+    new id_client:idProc;
+    (* Domains *)
+    in(io,backend_dom:domain);
+    in(io,frontend_dom:domain);
+    in(io,c_dom:domain);
+
+    get ech_configurations(ech_config(id,g,pkR,=frontend_dom,h_alg,a_alg),skR) in
+    let ech_conf = ech_config(id,g,pkR,frontend_dom,h_alg,a_alg) in
+
+    run_ech_client(id_client,empty_extra_ext,c_dom,backend_dom,ech_conf)
+  ) | (
+    !
+    (* Server *)
+    new id_server:idProc;
+    in(io,s_dom:domain);
+    run_server(id_server,s_dom,empty_extra_ext)
+  )
