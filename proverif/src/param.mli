@@ -126,8 +126,20 @@ val abbreviate_derivation : bool ref
 val explain_derivation : bool ref
 val reconstruct_trace : int ref
 val trace_backtracking : bool ref
-val num_cores : int ref
+
 val display_init_state : bool ref
+
+(** Parameters for concurrent programming *)
+
+val num_cores : int ref
+
+type concurrent_t =
+  | Sequential
+  | Simple_Concurrent
+  | Grouped_Job
+
+val concurrent_mode : concurrent_t ref
+val job_size : int ref
 
 (* Parameters for recording features for the subsumption test *)
 

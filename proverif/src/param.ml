@@ -120,14 +120,14 @@ let trace_backtracking = ref true
 
 (** Concurrent parameters *)
 
-let num_cores = ref 4 (* Currently hard coded, need to make a parameter or auto detected *)
+let num_cores = ref 1 (* Currently hard coded, need to make a parameter or auto detected *)
 
 type concurrent_t =
   | Sequential
   | Simple_Concurrent
   | Grouped_Job
 
-let concurrent_mode = ref true
+let concurrent_mode = ref Sequential
 let job_size = ref 100
 
 (* Parameters for recording features for the subsumption test *)
@@ -274,13 +274,18 @@ let common_parameters p ext v =
   | "featureTables", _ -> boolean_param record_tables p ext v
   | "featureDepth", _ -> boolean_param record_depth p ext v
   | "featureWidth", _ -> boolean_param record_width p ext v
+  | "nbCores", I n -> num_cores := n
+  | "concurrent", S("sequential",_) -> concurrent_mode := Sequential
+  | "concurrent", S("simple",_) -> concurrent_mode := Simple_Concurrent
+  | "concurrent", S("grouped",_) -> concurrent_mode := Grouped_Job
+  | "jobSize", I n -> job_size := n
   | "cleanupThreshold", I n ->
       if n < 0 || n > 100 then
-	Parsing_helper.input_error "The cleanupThreshold value should be between 0 and 100" ext;
+	      Parsing_helper.input_error "The cleanupThreshold value should be between 0 and 100" ext;
       cleanup_threshold := n
   | "unifyTrieTermMaxDepth", I n ->
       if n < 1 then
-	Parsing_helper.input_error "The unifyTrieTermMaxDepth value should be at least 1" ext;
+	      Parsing_helper.input_error "The unifyTrieTermMaxDepth value should be at least 1" ext;
       unify_trie_term_max_depth := n
   | _, _ -> Parsing_helper.input_error ("Bad parameter " ^ p ^ "=" ^ (string_of_pval v) ^ ".") ext
 

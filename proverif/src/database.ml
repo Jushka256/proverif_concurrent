@@ -4,6 +4,8 @@ open Pitypes
 open Clause
 open Concurrent
 
+let nb_of_calls = ref 0
+
 (** Subsumption of clauses w.r.t. to set and queue of clauses *)
 
 (* Functions to compute the size of facts and terms.
@@ -143,6 +145,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     let rec match_fact_bound_with_hyp id_thread size1 fact1 passed_hyp = function
       | [] -> raise Terms.NoMatch
       | ((size2,fact2) as f2) :: fact_l2 ->
+          incr nb_of_calls;
           (* Since [fact1] contains only variables from the conclusion, the instantiation of [fact1] must be
              equal to one of the facts in the hypotheses of the second clause. *)
           if size2 > size1
@@ -160,6 +163,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     let rec match_hyp_bound id_thread hyp1 hyp2_bound = match hyp1 with
       | [] -> hyp2_bound
       | (_,fact1) :: fact_l1 ->
+          incr nb_of_calls;
           let size1 = fact_size id_thread (H.get_fact fact1) in
           let hyp2_bound' = match_fact_bound_with_hyp id_thread size1 fact1 [] hyp2_bound in
           (* Success *)
@@ -233,6 +237,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     let rec match_fact_with_hyp_concurrent nextf id_thread tok fact1 passed_hyp = function
       | [] -> raise Terms.NoMatch
       | ((_,fact2) as f2)::fact_l ->
+          incr nb_of_calls;
           Concurrent.check_domain_id id_thread "match_fact_with_hyp_concurrent";
           try
             Terms.auto_cleanup ~id_thread (fun () ->
@@ -245,6 +250,7 @@ module MakeSubsumption (H:HypSig) (C:ClauseSig with type hyp = H.hyp) =
     let rec match_hyp_concurrent nextf id_thread tok hyp1 hyp2 = match hyp1 with
       | [] -> nextf ()
       | (_,fact1) :: fact_l1 -> (*check here*)
+            incr nb_of_calls;
         Concurrent.check_token tok (fun () -> match_fact_with_hyp_concurrent (match_hyp_concurrent nextf id_thread tok fact_l1) id_thread tok fact1 [] hyp2) 
           (fun () -> raise StopThread)
 
@@ -1175,11 +1181,11 @@ module FeatureTrie =
 
     (* [exists_leq p fe_vec t] returns true if there exists an element of [t] with
        feature vector less or equal to [fe_vec] that satisfies the predicate [p] *)
-    let rec exists_leq flag p fe_vec t = match t, fe_vec with
+    let rec exists_leq p fe_vec t = match t, fe_vec with
       | Empty, _ -> false
       | Node(_,elt_l), [] ->
           (* Only the elements with empty feature vector can be less or equal *)
-          Concurrent.list_exists flag p elt_l 
+          List.exists p elt_l
       | Node(fe_map,elt_l), (fe,v)::q_vec ->
           (* Since feature_vector are always sorted in increasing order w.r.t. compare_feature, we have
              that [fe_vec] is sorted in decreasing order w.r.t. FV.compare_fst.
@@ -1198,8 +1204,18 @@ module FeatureTrie =
           (* We need to look in fe_map the branches that have a feature smaller than fe. *)
 
           (* The elements with no positive features are smaller *)
+          List.exists p elt_l || FVTree.exists_leq (exists_leq p) (fe,v) q_vec fe_map
+
+
+    (* [exists_leq_concurrent p fe_vec t] returns true if there exists an element of [t] with
+       feature vector less or equal to [fe_vec] that satisfies the predicate [p] *)
+    let rec exists_leq_concurrent flag p fe_vec t = match t, fe_vec with
+      | Empty, _ -> false
+      | Node(_,elt_l), [] ->
+          Concurrent.list_exists flag p elt_l 
+      | Node(fe_map,elt_l), (fe,v)::q_vec ->
           Concurrent.list_exists_ext flag p (fun () ->
-            FVTree.exists_leq (exists_leq flag p) (fe,v) q_vec fe_map
+            FVTree.exists_leq (exists_leq_concurrent flag p) (fe,v) q_vec fe_map
           ) elt_l
 
     let rec iter_leq f_iter fe_vec t = match t, fe_vec with
@@ -1612,21 +1628,56 @@ module MakeSet
       set.nb_total <- set.nb_total + 1
 
     (* [implies set vector cl] checks whether a clause from [set] implies (w.r.t. [f_implies])
+       the clause [cl] that have [vertor] as feature vector. *)
+    let implies_sequential set (cl, vector, sub_data) =
+      let test_fun elt =
+        let (elt_cl, elt_sub_data) = elt.annot_clause in
+        elt.active == Active && S.implies_no_test elt_cl elt_sub_data cl sub_data
+      in
+      if !Param.feature then
+        FeatureTrie.exists_leq test_fun vector set.trie
+      else
+        List.exists test_fun set.elt_list
+
+    (* [implies set vector cl] checks whether a clause from [set] implies (w.r.t. [f_implies])
        the clause [cl] that has [vector] as feature vector. *)
-    let implies set (cl, vector, sub_data) =
+    let implies_simple_concurrent set (cl, vector, sub_data) =
       let test_fun i tok elt =
         let (elt_cl, elt_sub_data) = elt.annot_clause in
         elt.active == Active && (S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data)
       in
-      let fl = Concurrent.create_flag () in (* This is the beginning of the subsumption? *)
-      (* Link.check_current_bound_vars (fun () -> *)
-        Concurrent.run_concurrent (fun () ->
-          if !Param.feature then (
-            FeatureTrie.exists_leq fl test_fun vector set.trie )
-          else
-            Concurrent.list_exists fl test_fun set.elt_list
-        )
-      (* ) "Set.implies" *)
+      let fl = Concurrent.create_flag () in 
+      Concurrent.run_concurrent (fun () ->
+        if !Param.feature then (
+          FeatureTrie.exists_leq_concurrent fl test_fun vector set.trie )
+        else
+          Concurrent.list_exists fl test_fun set.elt_list
+      )
+
+    let implies_grouped_concurrent set (cl, vector, sub_data) = 
+      let test_fun i tok elt =
+        let (elt_cl, elt_sub_data) = elt.annot_clause in
+        S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
+      in
+      if !Param.feature 
+      then 
+        Concurrent.exists_iter test_fun (fun f (set',vector') ->
+          FeatureTrie.iter_leq (fun elt ->
+            if elt.active == Active then f elt
+          ) vector' set'.trie
+        ) (set,vector)
+      else
+        Concurrent.exists_iter test_fun (fun f elt_list ->
+          List.iter (fun elt ->
+            if elt.active == Active then f elt
+          ) elt_list  
+        ) set.elt_list
+
+    let implies set (cl, vector, sub_data) = match !Param.concurrent_mode with
+      | Sequential -> implies_sequential set (cl, vector, sub_data)
+      | Simple_Concurrent -> implies_simple_concurrent set (cl, vector, sub_data)
+      | Grouped_Job -> implies_grouped_concurrent set (cl, vector, sub_data)
+
 
     let deactivate_implied_by empty_add_data set (cl, vector, sub_data) =
       if !Param.feature then
@@ -1825,25 +1876,72 @@ module MakeQueue (C:ClauseSig) (S:SubsumptionSig with type hyp = C.hyp and type 
       in
       iterrec queue.qstart
 
-    let implies queue (cl, vector, sub_data) =
+    let iter_elt f queue =
+      let rec iterrec = function
+        | None -> ()
+        | Some q ->
+            f q;
+            iterrec q.next
+      in
+      iterrec queue.qstart
+
+    let implies_sequential queue (cl, vector, sub_data) =
+      let test_fun elt =
+        let (elt_cl,_,elt_sub_data) = elt.annot_clause in
+        elt.active && S.implies_no_test elt_cl elt_sub_data cl sub_data
+      in
+      if !Param.feature then
+        FeatureTrie.exists_leq test_fun vector queue.trie
+      else
+        let rec existsrec q =
+          match q with
+            None -> false
+          | Some q' -> (test_fun q') || (existsrec q'.next)
+        in
+        existsrec queue.qstart
+
+    let implies_simple_concurrent queue (cl, vector, sub_data) =
       let test_fun i tok elt =
         let (elt_cl,_,elt_sub_data) = elt.annot_clause in
         elt.active && S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
       in
       let fl = Concurrent.create_flag () in
-      (* Link.check_current_bound_vars (fun () -> *)
-        Concurrent.run_concurrent (fun () -> 
-          if !Param.feature then
-            FeatureTrie.exists_leq fl test_fun vector queue.trie
-          else
-            let rec existsrec q =
-              match q with
-                None -> false
-              | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun () -> existsrec q'.next)
-            in
-            existsrec queue.qstart
-        ) 
-      (* ) "Queue.implies" *)
+      Concurrent.run_concurrent (fun () -> 
+        if !Param.feature then
+          FeatureTrie.exists_leq_concurrent fl test_fun vector queue.trie
+        else
+          let rec existsrec q =
+            match q with
+              None -> false
+            | Some q' -> Concurrent.or_function fl (fun i tok -> test_fun i tok q') (fun () -> existsrec q'.next)
+          in
+          existsrec queue.qstart
+      ) 
+
+    let implies_grouped_concurrent queue (cl, vector, sub_data) =
+
+      let test_fun i tok elt =
+        let (elt_cl,_,elt_sub_data) = elt.annot_clause in
+        S.implies_no_test_concurrent ~id_thread:i tok elt_cl elt_sub_data cl sub_data
+      in
+      if !Param.feature then
+        Concurrent.exists_iter test_fun (fun f (vector,trie) ->
+          FeatureTrie.iter_leq (fun elt ->
+            if elt.active then f elt
+          ) vector trie
+        ) (vector,queue.trie)
+      else
+        Concurrent.exists_iter test_fun (fun f q ->
+          iter_elt (fun elt ->
+            if elt.active then f elt
+          ) q
+        ) queue
+
+    let implies queue (cl, vector, sub_data) = match !Param.concurrent_mode with
+      | Sequential -> implies_sequential queue (cl, vector, sub_data)
+      | Simple_Concurrent -> implies_simple_concurrent queue (cl, vector, sub_data)
+      | Grouped_Job -> implies_grouped_concurrent queue (cl, vector, sub_data)
+
 
     let deactivate_implied_by queue (cl, vector, sub_data) =
       let iter_fun elem =
@@ -2082,13 +2180,25 @@ module MakeDatabase
       then 
         Display.dynamic_display (get_stat_string database)
 
+    let display_nb_of_call = 
+      let nb_rules = ref 0 in
+      let f () = 
+        incr nb_rules;
+        if !nb_of_calls > 20000 
+        then 
+          (Printf.printf "Nb of calls: %d, Nb of rules = %d \n\n" !nb_of_calls !nb_rules;
+          nb_of_calls := 0;
+          nb_rules := 0)
+      in
+      f
+
     let add_rule database rule =
       let annot_cl = F.generate_feature_vector_and_subsumption_data rule in
       (* Check that the rule is not already in the rule base or in the queue *)
       if Set.implies database.base_ns annot_cl ||
          Set.implies database.base_sel annot_cl ||
          Queue.implies database.queue annot_cl
-      then ()
+      then display_nb_of_call ()
       else
         begin
           let rule' = simplify_hypotheses rule in
@@ -2104,6 +2214,8 @@ module MakeDatabase
           Set.deactivate_implied_by true database.base_ns annot_cl';
           Set.deactivate_implied_by 0 database.base_sel annot_cl';
           Queue.deactivate_implied_by database.queue annot_cl';
+
+          display_nb_of_call ();
           
           (* We add the rule *)
           Queue.add database.queue annot_cl';

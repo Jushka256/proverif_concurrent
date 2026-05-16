@@ -415,12 +415,12 @@ let rec occurs_vars_all bl = function
 
 let get_link ?(id_thread=0) ?(name="") v = 
   Concurrent.check_domain_id id_thread "get_link";
-  assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name));
+  (* assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name)); *)
   v.link.(id_thread) (*[@@inline] *)
 
 let link_unsafe ?(id_thread=0) ?(name="") v l = 
   Concurrent.check_domain_id id_thread "link_unsafe";
-  assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name));
+  (* assert (id_thread == Domain.DLS.get Concurrent.domain_id || failwith (Printf.sprintf "id_thread: %d, current thread id: %d, calling threads %s\n" id_thread (Domain.DLS.get Concurrent.domain_id) name)); *)
   v.link.(id_thread) <- l (*[@@inline] *)
 
 let rec occurs_vars_follows ?(id_thread=0) v = function
@@ -717,6 +717,10 @@ with the way the function Rules.build_rules_eq is written...
 and would probably also slow down a bit the system.
 
 *)
+
+let initialize () =
+  local_current_bound_vars := Array.make !Param.num_cores [];
+  current_bound_vars := Array.make !Param.num_cores []
 
 (***************************************************
    Functions for General Variables
@@ -1414,7 +1418,6 @@ let rec copy_term3 ?(id_thread=0) = function
 
 let copy_fact3 ?(id_thread=0) = function
     Pred(p,l) as fact ->
-      Printf.printf "Copy_fact3 %d\n" id_thread;
       let l' = List.mapq (copy_term3 ~id_thread) l in
       if l == l' then fact else Pred(p, l')
 

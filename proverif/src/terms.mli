@@ -2,6 +2,8 @@
 
 open Types
 
+val initialize : unit -> unit
+
 (* Basic list functions *)
 
 val tuple_table : (typet list, funsymb) Hashtbl.t

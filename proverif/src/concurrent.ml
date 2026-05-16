@@ -2,39 +2,44 @@
 type flag = bool Atomic.t 
 type token = int ref * int * flag
 
-let limit : int = 100
+let limit : int = 1000000
 
 let create_flag () : flag = Atomic.make false
 
 let create_token ?(lim=limit) (fl:flag) = (ref 0, lim, fl)
 
-let set_token (tkn : token) =
+(* let set_token (tkn : token) =
   let (count_ref, lim, fl) = tkn in
-  Atomic.set fl true
+  Atomic.set fl true *)
+
+let set_token (tkn : token) = ()
 
 (** [check_token] is designed to or, as it returns true when stopped *)
-let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) = 
+(* let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) = 
   let (count_ref, lim, fl) = tkn in
   incr count_ref;
   if (!count_ref mod lim = 0 && Atomic.get fl) then 
     f_end ()
   else
+    f_cont () *)
+
+let check_token (tkn : token) (f_cont : unit -> 'a) (f_end : unit -> 'a) = 
     f_cont ()
 
 module T = Domainslib.Task
 
 (** Parameters *)
 let numCores = Param.num_cores (*Domainslib.Domains.num_domains ()*)
-let jobSize = ref 100
-
 
 let domain_id = Domain.DLS.new_key (fun () -> -1)
 
 
 let acc_domain_id = Atomic.make 0
 
-let check_domain_id i str = 
-  if Domain.DLS.get domain_id <> i then failwith (Printf.sprintf "%s: id_thread = %d, current_thread = %d" str i (Domain.DLS.get domain_id))
+(* let check_domain_id i str = 
+  if Domain.DLS.get domain_id <> i then failwith (Printf.sprintf "%s: id_thread = %d, current_thread = %d" str i (Domain.DLS.get domain_id)) *)
+
+let check_domain_id i str = ()
 
 let get_domain_id () = 
   let x = Domain.DLS.get domain_id in
@@ -117,44 +122,50 @@ both of those here, and just use the function one to define the list_exists one*
 
 (* For simplicity have hard coded the limit specification for now *)
 
+let acc_spawn = ref 0
+
 let exists_iter (f: int -> token -> 'a -> bool) (f_iter: ('a -> unit) -> 'b -> unit) (elt:'b) =
   let flag = create_flag () in
 
-  let acc_job_size = ref 0 in
+  let acc_job_size = ref !Param.job_size in
   let acc_job = ref [] in
   let acc_promise = ref [] in
   
-  f_iter (fun job ->
-    if !acc_job_size = 0
-    then 
-      begin
-        let job_list = !acc_job in 
-        let promise = 
-        T.async !pool (fun () ->
-          let i = get_domain_id () in
-          let tok = create_token flag in
-          List.exists (f i tok) job_list
-        )
-        in
-        acc_promise := promise :: !acc_promise;
-        acc_job := [];
-        acc_job_size := !jobSize
-      end
-    else
-      begin
-        decr acc_job_size;
-        acc_job := job :: !acc_job
-      end
-  ) elt;
+  run_concurrent (fun () ->
+    f_iter (fun job ->
+      if !acc_job_size = 0
+      then 
+        begin
+          let job_list = !acc_job in 
+          let promise = 
+            T.async !pool (fun () ->
+              let i = get_domain_id () in
+              let tok = create_token flag in
+              List.exists (f i tok) job_list
+            )
+          in
+          incr acc_spawn;
+          if !acc_spawn mod 100 = 0 then (Printf.printf "spawn = %d\n\n" !acc_spawn; flush_all ());
+          acc_promise := promise :: !acc_promise;
+          acc_job := [];
+          acc_job_size := !Param.job_size;
+        end
+      else
+        begin
+          decr acc_job_size;
+          acc_job := job :: !acc_job
+        end
+    ) elt;
 
-  let compute_remaining_job = 
-    if !acc_job <> [] 
-    then 
-      let i = get_domain_id () in
-      let tok = create_token flag in
-      List.exists (f i tok) !acc_job
-    else false
-  in
+    let compute_remaining_job = 
+      if !acc_job <> [] 
+      then 
+        let i = get_domain_id () in
+        let tok = create_token flag in
+        List.exists (f i tok) !acc_job
+      else false
+    in
 
-  compute_remaining_job || List.exists (fun p -> T.await !pool p) (List.rev !acc_promise)
+    compute_remaining_job || List.exists (fun p -> T.await !pool p) (List.rev !acc_promise)
+  )
 

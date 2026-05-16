@@ -1476,6 +1476,8 @@ let parse_file s =
   Param.set_ignore_types true;
   let decl,p = parse s in
   List.iter (fun ((p,ext),v) -> interpret_setting (p,ext) v) (!Param.additional_settings);
+  Terms.initialize ();
+  TermsEq.initialize ();
   List.iter check_one decl;
   let r = check_process [] (init_env()) p in
   let max_used_phase_process =

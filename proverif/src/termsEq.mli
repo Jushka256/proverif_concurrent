@@ -4,6 +4,8 @@
 open Types
 open Clause
 
+val initialize : unit -> unit
+
 (* returns true when at least one equation has been registered *)
 val hasEquations : unit -> bool
 

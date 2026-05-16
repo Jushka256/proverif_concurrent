@@ -531,6 +531,8 @@ let parse_file s =
   List.iter (function
     | TSet((p,ext),v) -> interpret_setting (p,ext) v
     | _ -> ()) decl;
+  Terms.initialize ();
+  TermsEq.initialize ();
   Param.default_set_ignore_types();
   check_all (List.filter (function
                    TSet _ -> false

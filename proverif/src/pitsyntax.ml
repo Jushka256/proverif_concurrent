@@ -4662,6 +4662,8 @@ let parse_file s =
     | TSet((p,ext),v) -> interpret_setting (p,ext) v
     | _ -> ()
               ) decl;
+  Terms.initialize ();
+  TermsEq.initialize ();
   Param.default_set_ignore_types();
   initialize_env();
   List.iter (function one_decl ->

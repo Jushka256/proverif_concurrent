@@ -33,3 +33,5 @@ val or_function : flag -> (int -> token -> bool) -> (unit -> bool) -> bool
 val run_concurrent : (unit -> 'a) -> 'a
 
 val check_domain_id : int -> string -> unit
+
+val exists_iter : (int -> token -> 'a -> bool) -> (('a -> unit) -> 'b -> unit) -> 'b -> bool

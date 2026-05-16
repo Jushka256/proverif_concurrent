@@ -324,7 +324,6 @@ let rewrite_system = ref []
 let order = ref []
 
 let rec normal_form ?(id_thread=0) = 
-  Printf.printf "Normal Form %d\n" id_thread;
   function
     Var v -> Var v
   | FunApp(f,l) ->
@@ -1831,7 +1830,6 @@ let rec has_gen_var = function
     of the disequation *)
 let elim_var_notelsewhere ?(id_thread=0) has_gen_var keep_vars accu_nat_vars nat_vars = function
   | Var v1, Var v2 ->
-      Printf.printf "elim_var_notelsewhere: %nx <> %nx\n" (Obj.magic v1) (Obj.magic v2);
       assert(v1 != v2);
       elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v1;
       elim_var_if_possible ~id_thread has_gen_var keep_vars accu_nat_vars nat_vars v2
@@ -2021,6 +2019,10 @@ module HashType =
 module HashTerm = Hashtbl.Make(HashType)
 
 let vertices = ref (Array.init !Param.num_cores (fun _ -> HashTerm.create 10))
+
+let initialize () = 
+  vertices := Array.init !Param.num_cores (fun _ -> HashTerm.create 10);
+  assoc_gen_with_term := Array.make !Param.num_cores []
 
 type infInt = N of int | Infinity
 
