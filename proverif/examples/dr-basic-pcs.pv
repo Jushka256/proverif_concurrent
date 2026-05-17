@@ -1,0 +1,2222 @@
+(* Compromise parameters *)
+
+letfun allow_CK_compromise = true.
+
+letfun allow_RK_compromise = true.
+
+letfun allow_DHs_compromise = true.
+
+letfun allow_MK_compromise = true.
+
+letfun allow_HK_compromise = true.
+
+letfun allow_compromise =
+allow_CK_compromise || allow_RK_compromise || allow_MK_compromise || allow_HK_compromise.
+
+(* Proof Helper *)
+
+letfun precise_scalar_pqxdh = true.
+letfun precise_scalar_dr = true.
+
+letfun precise_for_lemma = false.(* Header encryption disallowed, DHs compromise disallowed, SPK reuse disallowed *)
+letfun allow_HE = false.
+letfun allow_DHs_param = false.
+letfun allow_same_SPK = false.
+letfun fixed_version = true.(**** GSVerif style proof helper ****)
+
+type timestamp.
+
+type counter_location.
+
+(* In Counter(ch,n), n represents the position of the counter in
+  the channel. *)
+fun CL(channel,nat):counter_location.
+
+type counter_property.
+
+(* Currently, we only consider two types of properties for counters:
+  - Incr: Represents a counter that is is monotenously increasing 
+  - Decr: Represents a counter that is is monotenously decreasing
+
+  In a future release, we could consider other properties like a
+  counter cycling through a sequence of bounded value.
+*)
+
+(* The counter is monotenously increasing *)
+const Incr:counter_property.
+
+(* The counter is decreasingly monotenous *)
+const Decr:counter_property.
+
+(* A counter is a counter location associated to its property. *)
+type counter.
+fun C(counter_location,counter_property):counter.
+
+(*** Events stating properties on a counter ***)
+
+(* Represents the value of a counter *)
+event CounterValue(counter,nat).
+
+(* Indicate that the given bitstring should be the same when the counter is the same. *)
+event SynchCounterContent(counter,nat,bitstring).
+
+def Axioms_counter_Synch() {
+  axiom c:counter, i:nat, x,x':bitstring;
+    event(SynchCounterContent(c,i,x)) && event(SynchCounterContent(c,i,x')) ==> x = x'
+  .
+}
+
+(* Represent the last time this value will be read in the cell and will be updated *)
+event CounterChange(counter,timestamp,nat).
+
+(* Represent the last value in the cell *)
+event CounterLast(counter,timestamp,nat).
+
+def Axioms_counter_Change() {
+  axiom c:counter, i,i':nat, st,st':timestamp;
+    event(CounterChange(c,st,i)) && event(CounterChange(c,st,i')) ==> i = i';
+    event(CounterChange(c,st,i)) && event(CounterChange(c,st',i)) ==> st = st';
+    event(CounterLast(c,st,i)) && event(CounterLast(c,st',i')) ==> i = i' && st = st'
+  .
+
+  axiom cl:counter_location, p:counter_property, st,st':timestamp, i,i':nat, x:bitstring;
+    let c = C(cl,p) in
+    event(CounterLast(c,st,i)) && event(SynchCounterContent(c,i',x)) ==> (p = Decr && i' >= i) || (p = Incr && i' <= i);
+    let c = C(cl,p) in
+    event(CounterLast(c,st,i)) && event(CounterValue(c,i')) ==> (p = Decr && i' >= i) || (p = Incr && i' <= i);
+    let c = C(cl,p) in
+    event(CounterLast(c,st,i)) && event(CounterChange(c,st',i')) ==> (p = Decr && i' >= i) || (p = Incr && i' <= i)
+  [fullSat].
+}
+
+(** Represent two values of a counter that where read successively in a sequential process. When the counter 
+  c is increasing, i.e. we will have for all event CounterSequential(c,i,j), i <= j. Conversaly, when the 
+  counter is decreasing, we have i >= j. *)
+event CounterSequential(counter,nat,nat).
+
+def Axioms_counter_Sequential() {
+  axiom cl:counter_location, i,j:nat;
+    let c = C(cl,Incr) in
+    event(CounterSequential(c,i,j)) ==> i <= j;
+
+    let c = C(cl,Decr) in
+    event(CounterSequential(c,i,j)) ==> i >= j
+  [fullSat].
+}
+
+(** Represent two consecutive values of a counter. When the counter c is increasing, i.e. with counter property
+    being Incr, any event CounterInterval(c,i,j) implies i <= j. Conversaly, when the counter is decreasing, we
+    have i >= j. *)
+event CounterInterval(counter,nat,nat).
+
+def Axioms_counter_Interval() {
+  axiom cl:counter_location, p:counter_property, i,j,k,l:nat, st:timestamp, x:bitstring;
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(SynchCounterContent(c,k,x)) && i < k ==> j <= k;
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(SynchCounterContent(c,k,x)) && k < j ==> k <= i;
+    let c = C(cl,Decr) in
+    event(CounterInterval(c,i,j)) && event(SynchCounterContent(c,k,x)) && k > j ==> k >= i;
+    let c = C(cl,Decr) in
+    event(CounterInterval(c,i,j)) && event(SynchCounterContent(c,k,x)) && k < j ==> k <= i;
+
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(CounterValue(c,k)) && i < k ==> j <= k;
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(CounterValue(c,k)) && k < j ==> k <= i;
+    let c = C(cl,Decr) in
+    event(CounterInterval(c,i,j)) && event(CounterValue(c,k)) && k > j ==> k >= i;
+    let c = C(cl,Decr) in
+    event(CounterInterval(c,i,j)) && event(CounterValue(c,k)) && k < j ==> k <= i;
+
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(CounterChange(c,st,k)) && i < k ==> j <= k;
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(CounterChange(c,st,k)) && k < j ==> k <= i;
+    let c = C(cl,Decr) in
+    event(CounterInterval(c,i,j)) && event(CounterChange(c,st,k)) && k > j ==> k >= i;
+    let c = C(cl,Decr) in
+    event(CounterInterval(c,i,j)) && event(CounterChange(c,st,k)) && k < j ==> k <= i;
+
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(CounterInterval(c,k,l)) && j <= l ==> 
+      (j = l && i = k) || j <= k;
+
+    let c = C(cl,Incr) in
+    event(CounterInterval(c,i,j)) && event(CounterInterval(c,k,l)) && i <= k ==> 
+      (j = l && i = k) || j <= k
+  [fullSat].
+}
+
+(*** Relations between two counters ***)
+
+(* ImpliesChanges(c1,c2,i1,i2) represents that c1 changes then c2 changes.*)
+event ImpliesChanges(counter,counter,nat,nat).
+
+(* EquivalentChanges(c1,c2,i1,j2) represents that c1 changes if and only if c2 changes *)
+event EquivalentChanges(counter,counter,nat,nat).
+
+def Axioms_counter_Changes() {
+  axiom cl1,cl2:counter_location, p1,p2:counter_property, i1,i2,i1',i2':nat;
+    let c1 = C(cl1,Incr) in let c2 = C(cl2,Incr) in
+    event(ImpliesChanges(c1,c2,i1,i2)) && event(ImpliesChanges(c1,c2,i1',i2')) && i1 < i1' ==> i2 < i2';
+
+    let c1 = C(cl1,Incr) in let c2 = C(cl2,Incr) in
+    event(EquivalentChanges(c1,c2,i1,i2)) && event(EquivalentChanges(c1,c2,i1',i2')) && i1 <= i1' ==> i2 <= i2';
+    let c1 = C(cl1,Incr) in let c2 = C(cl2,Incr) in
+    event(EquivalentChanges(c1,c2,i1,i2)) && event(EquivalentChanges(c1,c2,i1',i2')) && i1 >= i1' ==> i2 >= i2';
+    let c1 = C(cl1,Incr) in let c2 = C(cl2,Incr) in
+    event(EquivalentChanges(c1,c2,i1,i2)) && event(EquivalentChanges(c1,c2,i1',i2')) && i2 <= i2' ==> i1 <= i1';
+    let c1 = C(cl1,Incr) in let c2 = C(cl2,Incr) in
+    event(EquivalentChanges(c1,c2,i1,i2)) && event(EquivalentChanges(c1,c2,i1',i2')) && i2 >= i2' ==> i1 >= i1';
+    let c1 = C(cl1,Incr) in let c2 = C(cl2,Incr) in
+    event(EquivalentChanges(c1,c2,i1,i2)) && event(EquivalentChanges(c1,c2,i1,i2')) ==> i2 = i2'
+  [fullSat].
+}
+
+(*** Relations between counters and tables ***)
+
+(* Table_id can be seen as an identifier for a subset of possible entries of a table. *)
+type table_id.
+
+(* RetrievedEntry(tid,c,i,j) reprents a subset of entries tid locked under a counter c.
+  Moreover, an entry has been retrieved through a "get" while the value of the counter c is j and 
+  that has entry while the value of c was i.  *)
+event RetrievedEntry(table_id,counter,nat,nat).
+
+def Axioms_counter_Tables() {
+  axiom tid:table_id, c:counter, i,j:nat;
+    event(RetrievedEntry(tid,c,i,j))  ==> i <= j
+  [fullSat]
+  .
+}
+
+(*** Subterm predicate ***)
+
+fun hash(bitstring):bitstring.
+
+(* We currently use a much weaker version of the subterm predicate as ProVerif is still
+  very limited with the usage of subterm predicate in axioms/lemmas/restrictions/queries. *)
+
+pred is_subterm(bitstring,bitstring).
+
+clauses 
+  forall x,y:bitstring; is_subterm(x,hash((y,x)));
+  forall x,y:bitstring; is_subterm(x,x);
+  forall x,y,z:bitstring; is_subterm(x,y) -> is_subterm(x,hash((y,z)))
+.
+
+(* TermFreshlyCreated(c,i,x) represents the fresh creation of term x when the value of c is i *)
+event TermFreshlyCreated(counter,nat,bitstring).
+
+(* TermReceived(c,i,x) represents the input of term x when the value of c is i *)
+event TermReceived(counter,nat,bitstring).
+
+(* We do not have a generic version of axiom here. In the future release of GSVerif, 
+   the events will contain arguments related to the position of the event in the process. *)
+
+def Axiom_Freshness() {
+  axiom c:counter, i,j:nat, x,y:bitstring;
+    event(TermFreshlyCreated(c,i,x)) && event(TermReceived(c,j,y)) && is_subterm(x,y) ==> i < j
+  .
+}
+
+(*** Precise Input ***)
+
+event PreciseInput(timestamp,bitstring).
+
+def GSVerif_Axiom_PreciseInput() {
+  axiom ts:timestamp, x,y:bitstring;
+    event(PreciseInput(ts,x)) && event(PreciseInput(ts,y)) ==> x = y
+  .
+}
+
+(*** All axioms ***)
+
+def Axioms_GSVerif() {
+  expand Axioms_counter_Synch().
+  expand Axioms_counter_Change().
+  expand Axioms_counter_Sequential().
+  expand Axioms_counter_Interval().
+  expand Axioms_counter_Changes().
+  expand Axioms_counter_Tables().
+  expand Axiom_Freshness().
+}
+
+(*** Functions ***)
+
+letfun PH_counter_change(c:counter,i:nat) =
+  new st[]:timestamp; event CounterChange(c,st,i); ().
+
+letfun PH_counter_last_value(c:counter,i:nat) =
+  new st[]:timestamp; event CounterLast(c,st,i); ().
+
+letfun PH_counter_sequential(c:counter,i:nat,j:nat) = 
+  event CounterSequential(c,i,j); ().
+
+letfun PH_synch_value(c:counter,i:nat,x:bitstring) =
+  event SynchCounterContent(c,i,x); ().
+
+letfun PH_term_received(c:counter,i:nat,x:bitstring) = 
+  event TermReceived(c,i,x); ().
+
+letfun PH_term_freshly_created(c:counter,i:nat,x:bitstring) = 
+  event TermFreshlyCreated(c,i,x); ().
+
+letfun PH_interval_value(c:counter,i,j:nat) =
+  event CounterInterval(c,i,j); ().
+
+letfun PH_implies_changes(c1,c2:counter,i1,i2:nat) =
+  event ImpliesChanges(c1,c2,i1,i2); ().
+
+letfun PH_retrieved_entry(tid:table_id,c:counter,i,i':nat) = 
+  event RetrievedEntry(tid,c,i,i'); ().
+
+letfun PH_precise_input(x:bitstring) = 
+  new ts[]:timestamp; event PreciseInput(ts,x); ().
+(* -lib ../params/params-all-comp.pvl *)
+(* -lib gsverif_library.pvl *)
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(***********************************************
+    Library for the cryptographic primitives
+************************************************)
+
+fun bool2b(bool):bitstring [typeConverter].
+
+const att:channel.
+
+(* Clients representing devices: Alice, Bob, etc. *)
+type client.
+
+(** Elliptic Curve Diffie-Hellman
+------------------------------------ *)
+
+type scalar.
+type point.
+
+fun p2b(point):bitstring [typeConverter].
+
+const null_s:scalar.
+
+const G:point.
+
+(** Scalar multiplication on points. Equivalent to group exponentiation *)
+fun SMUL(scalar,point):point.
+
+
+
+equation forall y,z: scalar; SMUL(y, SMUL(z, G)) = SMUL(z, SMUL(y, G)).
+
+(** The type of private/public DH keys *)
+type key_pair.
+fun KeyPair(scalar,point):key_pair [data].
+
+(** GENERATE_DH(): Returns a new Diffie-Hellman key pair.  *)
+fun dh_scal(scalar):scalar [private].
+
+
+letfun generate_dh() = 
+  let s = 
+    if precise_scalar_pqxdh
+    then new s:scalar; dh_scal(s)
+    else new s[]:scalar; dh_scal(s)
+  in 
+    KeyPair(s,SMUL(s,G))
+.
+
+(** DH(dh_pair, dh_pub): Returns the output from the Diffie-Hellman calculation between the private key from the DH key pair dh_pair and the DH public key dh_pub. 
+  
+  [In SPEC] If the DH function rejects invalid public keys, then this function may raise an exception which terminates processing. 
+  [In Model] The function never rejects invalid public keys. *)
+letfun dh(dh_pair:key_pair, dh_pub:point) = 
+  let KeyPair(dh_prv,_) = dh_pair in
+  SMUL(dh_prv,dh_pub)
+.
+
+
+(* Dummy functions for dh-table compat *)
+
+letfun dh_left(dh_pair:key_pair, dh_pub:point) =  dh(dh_pair, dh_pub).
+
+letfun dh_right(dh_pair:key_pair, dh_pub:point) =  dh(dh_pair, dh_pub).
+
+letfun dh_left_create(dh_pair:key_pair, dh_pub:point) =  dh(dh_pair, dh_pub).
+
+letfun dh_right_create(dh_pair:key_pair, dh_pub:point) =  dh(dh_pair, dh_pub).
+
+let attacker_access_left = 0.
+
+let attacker_access_right = 0.
+
+(* The processes to allow the attacker to retrieve the key when he know the private parts and
+   this is the first instance the key was created. *)
+let attacker_create_left = 0.
+
+let attacker_create_right = 0.
+
+
+
+fun discreteLog(point): scalar 
+reduc forall s:scalar, y:point;
+      discreteLog(SMUL(s,G)) = s [private]. (* Remark, this dL does not work on a g^xy model *)
+
+
+(** KDF
+------------------------------------ *)
+
+(** Type for the root key *)
+type root_key.
+
+(** Type for the root key *)
+type chain_key.
+
+(** Type for the message key *)
+type message_key.
+
+(** Type for the header key *)
+type header_key.
+
+(** KDF_RK(rk, dh_out): Returns a pair (32-byte root key, 32-byte chain key) as the output of applying a KDF keyed by a 32-byte root key rk to a Diffie-Hellman output dh_out.*)
+
+fun kdf_rk_root(root_key, point): root_key.
+fun kdf_rk_chain(root_key, point): chain_key.
+
+letfun kdf_rk(rk:root_key, dh_out:point) =  
+  (kdf_rk_root(rk,dh_out), kdf_rk_chain(rk,dh_out)).
+
+(* KDF_RK_HE(rk, dh_out): Returns a new root key, chain key, and next header key as the output of applying a KDF keyed by root key rk to a Diffie-Hellman output dh_out. *)
+
+fun kdf_rk_head(root_key, point):header_key.
+
+letfun kdf_rk_he(rk: root_key, dh_out:point) =
+  (kdf_rk_root(rk, dh_out), kdf_rk_chain(rk, dh_out), kdf_rk_head(rk, dh_out)).
+
+
+(** KDF_CK(ck): Returns a pair (32-byte chain key, 32-byte message key) as the output of applying a KDF keyed by a 32-byte chain key ck to some constant. *)
+
+fun kdf_ck_chain(chain_key): chain_key.
+fun kdf_ck_message(chain_key): message_key.
+
+letfun kdf_ck(ck:chain_key) =  (kdf_ck_chain(ck), kdf_ck_message(ck)).
+
+fun hkdf(bitstring, bitstring, bitstring) : root_key.
+
+(** Triple Ratchet **)
+
+(** KDF_HYBRID(ecmk, pqmk): Returns an AEAD encryption key as the output of applying a KDF keyed by the concatenation of two 32-byte secrets to some unique constant specifying the protocol in use and its parameters. **)
+fun kdf_hybrid(message_key, message_key):message_key.
+
+(** AEAD
+------------------------------------ *)
+
+(** Associated data used in encryption algorithm *)
+type associated_data.
+const none_ad: associated_data.
+
+(* AEAD Encryption *)
+type nonce.
+const empty_nonce:nonce.
+const encryption_nonce:nonce. (* Fixed nonce for the Signal message encryption *)
+
+fun aead_enc(message_key,nonce,bitstring,associated_data):bitstring.
+fun aead_dec(message_key,nonce,bitstring,associated_data):bitstring 
+reduc forall k:message_key,n:nonce,m:bitstring,ad:associated_data;
+      aead_dec(k,n,aead_enc(k,n,m,ad),ad) = m.
+
+
+(** ENCRYPT(mk, plaintext, associated_data): Returns an AEAD encryption of plaintext with message key mk [5]. The associated_data is authenticated but is not included in the ciphertext. Because each message key is only used once, the AEAD nonce may handled in several ways: fixed to a constant; derived from mk alongside an independent AEAD encryption key; derived as an additional output from KDF_CK(); or chosen randomly and transmitted. *)
+letfun encrypt(mk: message_key, plaintext:bitstring, ad: associated_data) = 
+  aead_enc(mk, encryption_nonce, plaintext, ad) 
+.
+
+(** DECRYPT(mk, ciphertext, associated_data): Returns the AEAD decryption of ciphertext with message key mk. If authentication fails, an exception will be raised that terminates processing. *)
+letfun decrypt(mk: message_key, ciphertext:bitstring, ad: associated_data) = 
+  aead_dec(mk, encryption_nonce, ciphertext, ad) 
+.
+
+
+(* XEdDSA Signatures *)
+fun sign(scalar,bitstring,nonce):bitstring.
+
+fun verify(point,bitstring,bitstring):bool
+
+reduc forall sk:scalar,m:bitstring,n:nonce;
+      verify(SMUL(sk,G),m,sign(sk,m,n)) = true.
+
+
+(** Header functions
+------------------------------------ *)
+
+type header.
+
+fun Header(point, nat, nat):header[data].
+fun bitstringHeader(header):bitstring [typeConverter].
+fun headerBitstring(bitstring):header [typeConverter].
+
+fun MK(header_key): message_key [typeConverter].
+
+(* Header Encryption *)
+letfun hencrypt(hk: header_key, n: nonce, hd:header) = 
+  aead_enc(MK(hk), n, bitstringHeader(hd), none_ad)
+.
+
+letfun hdecrypt(hk: header_key, n: nonce, enc_hd: bitstring) =
+  headerBitstring(aead_dec(MK(hk), n, enc_hd, none_ad))
+.
+
+(** HEADER(dh_pair, pn, n): Creates a new message header containing the DH ratchet public key from the key pair in dh_pair, the previous chain length pn, and the message number n. The returned header object contains ratchet public key dh and integers pn and n. *)
+letfun form_header(dh_pair:key_pair, pn: nat, n: nat) =
+  let KeyPair(_, pub_key:point) = dh_pair in 
+  Header(pub_key, pn, n)
+.
+
+
+(** CONCAT(ad, header): Encodes a message header into a parseable byte sequence, prepends the ad byte sequence, and returns the result. If ad is not guaranteed to be a parseable byte sequence, a length value should be prepended to the output to ensure that the output is parseable as a unique pair (ad, header). *)
+fun concat_he(associated_data, bitstring) : associated_data [data]. (* This one works for an encrypted header *)
+fun concat(associated_data, header) : associated_data [data].
+(* -lib ../params/params-all-comp.pvl *)
+(* -lib crypto.pvl *)
+(* -lib gsverif_library.pvl *)
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(** Internal States
+------------------------------------ *)
+
+(* [Extracted from Sec. 3.2] States are composed of the following data:
+  - DHs: DH Ratchet key pair (the "sending" or "self" ratchet key)
+  - DHr: DH Ratchet public key (the "received" or "remote" key)
+  - RK: 32-byte Root Key
+  - CKs, CKr: 32-byte Chain Keys for sending and receiving
+  - Ns, Nr: Message numbers for sending and receiving
+  - PN: Number of messages in previous sending chain
+  - HKs: Current sending header key
+  - NHKs: Next sending header key
+  - HKr: Current receiving header key
+  - NHKr: Next receiving header key
+  - mkskipped: Dictionary of skipped-over message keys, indexed by ratchet public key and message number. Raises an exception if too many elements are stored. 
+  - mkskippedHE: Dictionary of skipped-over message keys, indexed by *header key* and message number. Raises an exception if too many elements are stored. 
+  In our model, the dictionary mkskipped is represented by a global table and we use a private channel to represent a memory cell. Intuitively, the content of the global table when the memory cell is read correspond to the value of the dictionary mkskipped.
+*)
+
+(** The type for internal state. *)
+type internal_state.
+fun state(
+  key_pair,   (* DHs: DH Ratchet key pair (the "sending" or "self" ratchet key) *)
+  point,      (* DHr: DH Ratchet public key (the "received" or "remote" key) *)
+  root_key,   (* RK: 32-byte Root Key *)
+  chain_key,  (* CKs: 32-byte Chain Keys for sending *)
+  chain_key,  (* CKr: 32-byte Chain Keys for receiving *)
+  nat,        (* Ns: Message numbers for sending *)
+  nat,        (* Nr: Message numbers for receiving *)
+  nat,        (* PN: Number of messages in previous sending chain *)
+  header_key, (* HKs: Current sending header key *)
+  header_key, (* NHKs: Next sending header key *)
+  header_key, (* HKr: Current receiving header key *)
+  header_key  (* NHKr: Next receiving header key *)
+  ):internal_state [data].
+
+(** The type of memory cell content. *)
+type cell_content.
+
+(** Content of the memory cell, i.e. what will be exchanged over private channels. In cell(state,m_idx,ratchet_idx):
+- the integer r_idx represents the number of time a DH Ratchet has been executed in the session. We call this integer the ratchet index of the memory cell. 
+- the integer m_idx represents the number of time the state has been modified. We call this integer the modification index of the memory cell. 
+- the integer rcv_idx represents the total number of times a symmetric receive ratchet step has occurred in the session. *)
+fun cell(internal_state,nat,nat, nat):cell_content [data].
+
+(** Some access functions *)
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  DHs(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = dhs.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  DHr(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = dhr.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  RK(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = rk.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  CKs(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = cks.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  CKr(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = ckr.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  Ns(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = ns.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  Nr(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = nr.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  PN(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = pn.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  HKs(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = hks.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  NHKs(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = nhks.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  HKr(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = hkr.
+
+reduc forall dhs:key_pair, dhr:point, rk:root_key, cks,ckr:chain_key, ns,nr,pn:nat, hks,nhks,hkr,nhkr:header_key;
+  NHKr(state(dhs,dhr,rk,cks,ckr,ns,nr,pn,hks,nhks,hkr,nhkr)) = nhkr.
+
+(* And some more access functions for the header *)
+
+reduc forall hDH: point, pN:nat, N:nat;
+  HeaderN(Header(hDH, pN, N)) = N.
+
+reduc forall hDH: point, pN:nat, N:nat;
+  HeaderDHP(Header(hDH, pN, N)) = hDH.
+
+(** Information that uniquely identify a session *)
+type session_info.
+
+(** Session identifier *)
+type session_id. 
+
+(** Client identifiers *)
+type id. 
+
+
+(* A table to store the SPKs of a participant *)
+table SPKs(
+  id,      (* Responder *)
+  key_pair (* Responder SPK *)
+).
+
+
+event ChosenSPK(
+  session_info, (* Session id *)
+  key_pair (* SPK *)
+).
+
+(** Used to internally store who talks to who, with session(session_id,myid,partnerid) *)
+fun session(session_id,bool,id,id) : session_info [data]. 
+
+(** Create the private channel representing the memory cell containing the internal state. *)
+fun state_chan(session_info) : channel [private].
+
+free InitContinuationChannel:channel [private].
+free RespContinuationChannel:channel [private].
+
+(** The dictionary mkskipped
+------------------------------------ *)
+
+(* The dictionary mkskipped maps pair of (DHr,Nr) to a message key. As there is a dictionary per session, we thus represent this by a table where each entry contains the session info, the "key" of the map, i.e. DHr and NR and the message key. We also add the modification and ratchet index of the memory cell. The final argument is the timestamp indicating when the insertion has been done. *)
+table mkskipped(
+  session_info, (* Session info (unique per state) *)
+  point,        (* DHr *)
+  nat,          (* Nr *)
+  message_key,  (* The stored message key *)
+  nat,          (* Modification index *)
+  nat,          (* Ratchet index *)
+  timestamp     (* When the insertion happened.*)
+).
+
+(* To model deletion in the dictionary, we rely on restrictions *)
+
+event mkskipped_del(
+  session_info, (* Session info (unique per state) *)
+  point,        (* DHr *)
+  nat,          (* Nr *)
+  message_key  (* The stored message key *)
+).
+
+letfun delete_skipped_message(sinfo:session_info,dhr:point,nr:nat,mk:message_key) =
+  event mkskipped_del(sinfo,dhr,nr,mk);
+  ()
+.
+
+letfun insert_skipped_message(sinfo:session_info,dhr:point,nr:nat,mk:message_key,m_idx:nat,r_idx:nat) =
+  new ts[]:timestamp;
+  insert mkskipped(sinfo, dhr, nr, mk, m_idx, r_idx, ts);
+  ()
+.
+
+(** The restriction ensures that we can only "delete" the a key once. *)
+restriction sinfo:session_info, dhr:point, nr:nat, mk:message_key, i,j:time;
+  event(mkskipped_del(sinfo,dhr,nr,mk))@i && 
+  event(mkskipped_del(sinfo,dhr,nr,mk))@j ==>
+    i=j
+.
+
+(* Given the current memory cell cell(st,m_idx,ratchet_idx) of a session with session information sif, the dictionary MSKIPPED is the set of entries { [DHr,nr] -> mk | mkskipped(sif,Dhr,nr,mk,_,_,_) is an entry and no mkskipped_del(sif,Dhr,nr,mk,_,) has been executed so far. }. *)
+
+(* WARNING: Our current modelisation only works if we can ensure that the same message key will never be inserted with the same "key" (DHr, Nr) twice. We need to prove the following lemma. (proved in dr-lemma6) *)
+
+def correctness_model_dictionary() {
+  lemma sinfo:session_info, nr,m_idx1,m_idx2,r_idx1,r_idx2:nat, dhr:point, mk:message_key, ts1,ts2:timestamp;
+    table(mkskipped(sinfo,dhr,nr,mk,m_idx1,r_idx1,ts1)) &&
+    table(mkskipped(sinfo,dhr,nr,mk,m_idx2,r_idx2,ts2)) ==>
+      ts1 = ts2
+  [induction].
+}
+
+(* HEADER variants of the above functions *)
+
+(** The dictionary mkskippedHE
+------------------------------------ *)
+
+(* The dictionary mkskippedHE maps pair of (HKr,Nr) to a message key. *)
+table mkskipped_he(
+  session_info, (* Session info (unique per state) *)
+  header_key,   (* HKr *)
+  nat,          (* Nr *)
+  message_key,  (* The stored message key *)
+  nat,          (* Modification index *)
+  nat,          (* Ratchet index *)
+  timestamp     (* When the insertion happened.*)
+).
+
+(* To model deletion in the dictionary, we rely on restrictions *)
+
+event mkskipped_del_he(
+  session_info, (* Session info (unique per state) *)
+  header_key,   (* HKr *)
+  nat,          (* Nr *)
+  message_key  (* The stored message key *)
+).
+
+letfun delete_skipped_message_he(sinfo:session_info,hkr:header_key,nr:nat,mk:message_key) =
+  event mkskipped_del_he(sinfo,hkr,nr,mk);
+  ()
+.
+
+letfun insert_skipped_message_he(sinfo:session_info,hkr:header_key,nr:nat,mk:message_key,m_idx:nat,r_idx:nat) =
+  new ts[]:timestamp;
+  insert mkskipped_he(sinfo, hkr, nr, mk, m_idx, r_idx, ts);
+  ()
+.
+
+(** The restriction ensures that we can only "delete" the a key once. *)
+restriction sinfo:session_info, hkr:header_key, nr:nat, mk:message_key, i,j:time;
+  event(mkskipped_del_he(sinfo,hkr,nr,mk))@i && 
+  event(mkskipped_del_he(sinfo,hkr,nr,mk))@j ==>
+    i=j
+.
+
+(* Given the current memory cell cell(st,m_idx,ratchet_idx) of a session with session information sif, the dictionary MSKIPPED is the set of entries { [DHr,nr] -> mk | mkskipped(sif,Dhr,nr,mk,_,_,_) is an entry and no mkskipped_del(sif,Dhr,nr,mk,_,) has been executed so far. }. *)
+
+(* WARNING: Our current modelisation only works if we can ensure that the same message key will never be inserted with the same "key" (DHr, Nr) twice. We need to prove the following lemma. (proved in dr-lemma6) *)
+
+def correctness_model_dictionary_he() {
+  lemma sinfo:session_info, nr,m_idx1,m_idx2,r_idx1,r_idx2:nat, hkr:header_key, mk:message_key, ts1,ts2:timestamp;
+    table(mkskipped_he(sinfo,hkr,nr,mk,m_idx1,r_idx1,ts1)) &&
+    table(mkskipped_he(sinfo,hkr,nr,mk,m_idx2,r_idx2,ts2)) ==>
+      ts1 = ts2
+  [induction].
+}
+
+
+
+
+(** Events to express the security properties
+----------------------------------------------- *)
+
+event Nonce_used( (* The attacker has used a (non repeatable) nonce *)
+  session_info,
+  nonce,
+  timestamp
+).
+
+(** The receiver has successfully received and decrypted a message. *)
+event Receive(
+  session_info, (* The session info *)
+  point,        (* headerDH *)
+  nat,          (* headerN *)
+  bitstring     (* The plaintext decrypted *)
+).
+
+(** The sender has successfully encrypted and sent a message. *)
+event Send(
+  session_info, (* The session info *)
+  point,        (* headerDH *)
+  nat,          (* headerN *)
+  bitstring     (* The plaintext decrypted *)
+).
+
+event AuthFail(
+  session_info, (* The session info *)
+  point,        (* headerDH *)
+  nat           (* headerN *)
+).
+
+event HeaderAuthFail(
+  header,
+  header_key,
+  header_key
+).
+
+(** The receiver has successfully received and decrypted a header. *)
+event ReceiveHE(
+  session_info, (* The session info *)
+  point,        (* headerDH *)
+  nat,          (* headerN *)
+  header     (* The plaintext decrypted *)
+).
+
+
+type role.
+const Sender:role.
+const Receiver:role.
+
+event MessageKey(
+  session_info, (* The session info *)
+  role,         (* Role (Sender or receiver) *)
+  point,        (* DHs or DHr based on role *)
+  message_key,  (* Message key *)
+  nat,          (* Number of the key *)
+  nat           (* r_idx - Ratchet index *)
+).
+
+event Skip(
+  nat,  (* Message key *)
+  nat,          (* Number of the key *)
+  nat,
+  nat           (* r_idx - Ratchet index *)
+).
+
+event ComputedSK(
+  root_key,
+  timestamp 
+).
+
+event Reach(session_info,nat,nat).
+
+
+(* a fresh honest dh was generated by session *)
+event HonestDH(
+      session_info,  (* The session info *)
+      scalar,         (* the secret DH value *)      
+      point,         (* the public DH value *)
+      nat).          (* r_idx - Ratchet index *)
+
+(* a received header dh was used for ratcher by session *)
+event DHrUsed(
+      session_info,  (* The session info *)
+      point,         (* the public DH value *)
+      nat).          (* r_idx - Ratchet index *)
+
+(** Compromise events *)
+
+event Compromise(
+  session_info, (* The session info *)
+  nat           (* r_idx - Ratchet index *)
+).
+
+event CompromiseCKs(
+  session_info, (* The session info *)
+  chain_key,    (* Sender chain key *)
+  nat,          (* Ns - Number of sending key *)
+  nat           (* r_idx - Ratchet index *)
+).
+
+event CompromiseCKr(
+  session_info, (* The session info *)
+  chain_key,    (* Sender chain key *)
+  nat,          (* Ns - Number of sending key *)
+  nat           (* r_idx - Ratchet index *)
+).
+
+
+event CompromiseDHs(
+  session_info, (* The session info *)
+  scalar,       (* DH sending private key *)
+  nat           (* r_idx - Ratchet index *)
+).
+
+
+event CompromiseRK(
+  session_info, (* The session info *)
+  root_key,       (* The root key *)
+  nat           (* r_idx - Ratchet index *)  
+).
+
+event CompromiseMK(
+  session_info, (* The session info *)
+  message_key,       (* The root key *)
+  nat,           (* Nr - Number of receiving key *)  
+  nat           (* r_idx - Ratchet index *)  
+).
+
+event CompromiseHK(
+  session_info,
+  header_key, (* header / next header sending and receiving keys *)
+  header_key,
+  header_key,
+  header_key,
+  nat  (* r_idx *)
+).
+
+event Using_HE(
+  bool
+).
+
+event Header_Encryption(
+  session_info,
+  bool
+).(* -lib ../params/params-all-comp.pvl *)
+(* -lib crypto.pvl *)
+(* -lib gsverif_library.pvl *)
+(* -lib format.pvl *)
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(** Proof Helpers
+----------------------------------------------- *)
+
+(** Due to current limitation of ProVerif (hopefully will soon disappear in stable version of liveness), we use the KnowledgeAtt event to represent attacker knowledge in some lemmas. *)
+event KnowledgeAtt(point).
+
+(** Restrict various points to one replication for sanity **)
+event OneReplN(nat, timestamp).
+
+letfun OneReplicationN(n:nat) = 
+  new ts:timestamp;
+  event OneReplN(n, ts);
+  ()
+.
+
+(** Restrict to one session (for sanity checks) *)
+event OneRepl(timestamp).
+
+(* Restrict to two message creations (for sanity checks) *)
+event TwoRepl(timestamp).
+
+event OneRepl'(timestamp).
+
+letfun OneReplication() = 
+  new ts:timestamp;
+  event OneRepl(ts);
+  ()
+.
+
+(* We have two increasing counters in the memory cell *)
+letfun modif_counter(sif:session_info) = C(CL(state_chan(sif),0),Incr).
+letfun ratchet_counter(sif:session_info) = C(CL(state_chan(sif),1),Incr).
+letfun recv_counter(sif:session_info) = C(CL(state_chan(sif),2),Incr). 
+
+event ModificationIndices(
+  nat,          (* Location *)
+  session_info, (* Session info of the memeory cell *)
+  chain_key,    (* CKr *)
+  nat,          (* Nr *)
+  nat,          (* m_idx *)
+  nat           (* r_idx *)
+).    
+
+(* Sanity events *)
+
+event Sanity(
+  channel,  (* Memory cell *)
+  nat,      (* Location *)
+  nat,      (* Modification index *)
+  nat       (* Ratchet Index *)
+).
+
+(* The Location values are as follows:
+  - 0: Ratchet Encrypt
+  - 1: SkipMessageKeys 
+  - 2: BasicDecrypt  
+  - 3: RatchetDecrypt (Try Skipped Message Keys)
+  - 4: RatchetDecrypt (No found Skipped Message Keys, Different Header)
+*)(* -lib ../params/params-all-comp.pvl *)
+(* -lib ../params/switches.pvl *)
+(* -lib ../libs/gsverif_library.pvl *)
+(* -lib ../libs/crypto.pvl *)
+(* -lib ../libs/format.pvl*)
+(* -lib ../libs/proof_helpers.pvl *)
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(** Settings *)
+
+set privateCommOnPublicTerms = false.
+
+
+(** Global constants *)
+
+const none_ck: chain_key.
+const none_dh: point.
+const none_hk: header_key.
+const none_bs: bitstring.
+const none_nonce:nonce.
+const none_hd: header.
+
+(** Initialization process
+------------------------------------ *)
+
+(* Extracted from Sec. 3.3 / 4.4:
+  --------
+  def RatchetInitAlice(state, SK, bob_dh_public_key, shared_hka, shared_nhkb):
+      state.DHs = GENERATE_DH()
+      state.DHr = bob_dh_public_key
+      state.RK, state.CKs, state.NHKs = KDF_RK(SK, DH(state.DHs, state.DHr)) 
+      state.CKr = None
+      state.Ns = 0
+      state.Nr = 0
+      state.PN = 0
+      state.HKs = shared_hka
+      state.HKr = None
+      state.NHKr = shared_nhkb
+      state.MKSKIPPED = {}
+
+
+  def RatchetInitBob(state, SK, bob_dh_key_pair, shared_hka, shared_nhkb):
+      state.DHs = bob_dh_key_pair
+      state.DHr = None
+      state.RK = SK
+      state.CKs = None
+      state.CKr = None
+      state.Ns = 0
+      state.Nr = 0
+      state.PN = 0
+      state.MKSKIPPED = {}
+      state.HKs = None
+      state.NHKs = shared_nhkb
+      state.HKr = None
+      state.NHKr = shared_hka
+*)
+
+let RatchetInitAlice(sinfo:session_info, SK:root_key, bob_dh_public_key:point, shared_hka:header_key, shared_nhkb:header_key, header_encryption:bool) =
+  
+  let dhs = generate_dh() in (* for DR, unless forced, we need to have fresh values here *)
+  let KeyPair(_,dhs_pub) = dhs in
+  out(att,dhs_pub);  (* Reveal the public key to the attacker *)
+  
+    (*** Proof Helper *)
+    event KnowledgeAtt(dhs_pub);
+    (*** End Proof Helper *)
+
+  let dhr = bob_dh_public_key in
+  
+  (* Alice has the role of the sender at initialisation so it is the one creating 
+    the DH_product. *)
+  let g_sender_receiver = dh_left_create(dhs,dhr) in
+
+  let (rk:root_key,cks:chain_key, nhks':header_key) = kdf_rk_he(SK, g_sender_receiver) in
+  let nhks: header_key = if header_encryption then nhks' else none_hk in 
+  out(att, nhks);
+  let (shka: header_key, snhkb: header_key) = if header_encryption then (shared_hka, shared_nhkb) else (none_hk, none_hk) in 
+  
+  out(state_chan(sinfo), cell(state(dhs,dhr,rk,cks,none_ck,0,0,0, shka, nhks, none_hk, snhkb),1,0,0))
+
+.
+
+let RatchetInitBob(sinfo:session_info, SK:root_key, bob_dh_key_pair:key_pair, shared_hka:header_key, shared_nhkb:header_key, header_encryption:bool) =
+  
+  let dhs = bob_dh_key_pair in
+  let rk = SK in
+  let (shka: header_key, snhkb: header_key) = if header_encryption then (shared_hka, shared_nhkb) else (none_hk, none_hk) in 
+  
+  out(state_chan(sinfo), cell(state(dhs,none_dh,rk,none_ck,none_ck,0,0,0, none_hk, snhkb, none_hk, shka),0,0,0))
+.
+
+(** Sending messages process
+------------------------------------ *)
+
+
+(* Extracted from Sec. 3.4 / 4.5:
+  --------
+  def RatchetEncrypt(state, plaintext, AD):
+    state.CKs, mk = KDF_CK(state.CKs)
+    header = HEADER(state.DHs, state.PN, state.Ns)
+    enc_header = HENCRYPT(state.HKs, header)
+    state.Ns += 1
+    if header_encryption:
+      return none, enc_header, nonce, ENCRYPT(mk, plaintext, CONCAT(AD, enc_header))
+    else:
+      return header, enc_header, nonce, ENCRYPT(mk, plaintext, CONCAT(AD, header))
+
+*)
+
+let RatchetEncrypt(sinfo:session_info, plaintext:bitstring, ad:associated_data, header_encryption:bool) =
+  
+  in(state_chan(sinfo), cell(st,r_idx,m_idx,rcv_idx));
+    
+    (*** Proof Helper ***)
+    event Sanity(state_chan(sinfo),0,m_idx,r_idx);
+    let () = PH_counter_change(modif_counter(sinfo),m_idx) in
+    let () = PH_synch_value(modif_counter(sinfo),m_idx,(st,r_idx,rcv_idx)) in
+    (*** End Proof Helper ***)
+  if CKs(st) <> none_ck then       (* see remark in Sec 3.3, Bob will not send mesage until first asymmetric ratchet *)
+  let (cks:chain_key,dr_mk:message_key) = kdf_ck(CKs(st)) in
+  let hd = form_header( DHs(st), PN(st),  Ns(st)) in
+
+  (** Triple Ratchet pq message key chosen by attacker **)
+  in(att, (pq_mk:message_key));
+  let tr_mk = kdf_hybrid(dr_mk, pq_mk) in 
+
+  let KeyPair(_,dhs_pub) = DHs(st) in
+  event MessageKey(sinfo,Sender,dhs_pub,tr_mk, Ns(st), r_idx);  
+  event Send(sinfo, dhs_pub, Ns(st), plaintext);
+  in (att, h_nonce:nonce);
+  new ts[]:timestamp;
+  event Nonce_used(sinfo, h_nonce, ts);
+  let enc_header = hencrypt(HKs(st), h_nonce, hd) in 
+  let new_state = state(DHs(st), DHr(st), RK(st), cks, CKr(st), Ns(st) + 1, Nr(st), PN(st), HKs(st), NHKs(st), HKr(st), NHKr(st)) in
+  
+
+  
+  if header_encryption then 
+    out(att, (none_hd, enc_header, h_nonce, encrypt(tr_mk,plaintext, concat_he(ad,enc_header))));
+    out(state_chan(sinfo), cell(new_state,r_idx,m_idx+1,rcv_idx))
+  else 
+    out(att, (hd, none_bs, none_nonce, encrypt(tr_mk,plaintext, concat(ad,hd))));
+	  out(state_chan(sinfo), cell(new_state,r_idx,m_idx+1,rcv_idx))
+    
+.
+
+(** Receiving messages process
+------------------------------------ *)
+
+(* Extracted from Sec. 3.5 / 4.6:
+  --------
+  def DHRatchet(state, header):
+      state.PN = state.Ns
+      state.Ns = 0
+      state.Nr = 0
+      state.HKs = state.NHKs
+      state.HKr = state.NHKr
+      state.DHRr = header.dh
+      state.RK, state.CKr, state.NHKr = KDF_RK_HE(state.RK, DH(state.DHRs, state.DHRr))
+      state.DHRs = GENERATE_DH()
+      state.RK, state.CKs, state.NHKs = KDF_RK_HE(state.RK, DH(state.DHRs, state.DHRr))
+*)
+
+
+letfun DHRatchet(st:internal_state,header:header, is_HE: bool) =
+  let Header(hdDH:point,_:nat,_:nat) = header in
+
+  let newPN = Ns(st) in
+  let newNs = 0 in
+  let newNr = 0 in
+  let newDHr = hdDH in
+  let newHKs = NHKs(st) in
+  let newHKr = NHKr(st) in 
+    
+  let (rk:root_key, newCKr:chain_key, newNHKr: header_key) = kdf_rk_he(RK(st), dh(DHs(st),newDHr)) in
+
+  let newDHs = generate_dh() in (* for DR, unless forced, we need to have fresh values here *)
+
+  let (newRK:root_key, newCKs:chain_key, newNHKs:header_key) =  kdf_rk_he(rk, dh(newDHs,newDHr)) in 
+  
+  if is_HE then 
+    state(newDHs, newDHr, newRK, newCKs, newCKr, newNs, newNr, newPN, newHKs, newNHKs, newHKr, newNHKr) 
+  else 
+    state(newDHs, newDHr, newRK, newCKs, newCKr, newNs, newNr, newPN, none_hk, none_hk, none_hk, none_hk) 
+  
+.
+
+(* Extracted from Sec. 3.5 / 4.6:
+  --------
+  def SkipMessageKeys(state, until):
+    if state.Nr + MAX_SKIP < until:
+        raise Error()
+    if state.CKr != None:
+        while state.Nr < until:
+            state.CKr, mk = KDF_CK(state.CKr)
+            state.MKSKIPPED[state.DHr, state.Nr] = mk
+            state.Nr += 1
+  
+  In our model, our process does not take [until] and [MAX_SKIP] as argument. The process
+  allows to increase the chain as much as one want. However, the test "state.Nr = until" will be done outside of the process. Finally, the "Error" condition "state.Nr + MAX_SKIP < until" will not be modelled as ProVerif is not able to compare three integer variables. 
+*)
+
+
+let SkipMessageKeys(sinfo:session_info, header_encryption: bool) =
+  
+  let st_chan = state_chan(sinfo) in
+  in(st_chan, cell(st,r_idx,m_idx,rcv_idx));
+
+    (*** Proof Helper ***)
+    event Sanity(state_chan(sinfo),1,m_idx,r_idx);
+    let () = PH_counter_change(recv_counter(sinfo),rcv_idx) in
+    let () = PH_synch_value(recv_counter(sinfo),rcv_idx,(st,r_idx,m_idx)) in
+    let () = PH_counter_change(modif_counter(sinfo),m_idx) in
+    let () = PH_synch_value(modif_counter(sinfo),m_idx,(st,r_idx,rcv_idx)) in
+    (*** End Proof Helper ***)
+
+  if CKr(st) <> none_ck then
+
+  let (ckr:chain_key,mk:message_key) = kdf_ck(CKr(st)) in
+  
+	let () = if header_encryption then insert_skipped_message_he(sinfo, HKr(st), Nr(st), mk, m_idx, r_idx) 
+           else insert_skipped_message(sinfo, DHr(st), Nr(st), mk, m_idx, r_idx) in
+  
+  let new_st = state(DHs(st), DHr(st), RK(st), CKs(st), ckr, Ns(st), Nr(st) +1, PN(st), HKs(st), NHKs(st), HKr(st), NHKr(st)) in
+    
+	out(st_chan, cell(new_st,r_idx,m_idx+1,rcv_idx+1))
+.
+
+letfun only_skipped_message_keys(cell_before:cell_content,cell_after:cell_content) = 
+  let cell(state(dhs,dhr,rk,cks,_,ns,nr1,pn, hks, nhks, hkr, nhkr),r_idx,m_idx1,rcv_idx1) = cell_before in
+  let cell(state(=dhs,=dhr,=rk,=cks,_,=ns,nr2,=pn, =hks, =nhks, =hkr, =nhkr),=r_idx,m_idx2,rcv_idx2) = cell_after in
+  nr1 <= nr2 && m_idx1 <= m_idx2 && rcv_idx1 <= rcv_idx2
+.
+
+(* Extracted from Sec. 3.5 / 4.6:
+  --------
+  def RatchetDecrypt(state, header, ciphertext, AD):
+      plaintext = TrySkippedMessageKeys(state, header, ciphertext, AD)
+      if plaintext != None:
+          return plaintext
+      if header.dh != state.DHr:                 
+          SkipMessageKeys(state, header.pn)
+          DHRatchet(state, header)
+      SkipMessageKeys(state, header.n)             
+      state.CKr, mk = KDF_CK(state.CKr)
+      state.Nr += 1
+      return DECRYPT(mk, ciphertext, CONCAT(AD, header))
+
+  def TrySkippedMessageKeys(state, header, ciphertext, AD):
+      if (header.dh, header.n) in state.MKSKIPPED:
+          mk = state.MKSKIPPED[header.dh, header.n]
+          del state.MKSKIPPED[header.dh, header.n]
+          return DECRYPT(mk, ciphertext, CONCAT(AD, header))
+      else:
+          return None
+*)
+
+
+let BasicDecrypt(sinfo:session_info, hd:header, ciphertext:bitstring, header_ad:associated_data,cell_value:cell_content) =
+  let st_chan = state_chan(sinfo) in
+  let Header(headerDH:point, headerPN:nat, headerN:nat) = hd in
+  let cell(st,r_idx,m_idx,rcv_idx) = cell_value in
+  let state(dhs, =headerDH, rk, cks, ckr, ns, =headerN, pn, hks, nhks, hkr, nhkr) = st in
+    (* The three condition ensures that we have executed SkipMessageKeys(state, header.n) *)
+    (*** Proof Helper ***) 
+    event Sanity(state_chan(sinfo),2,m_idx,r_idx);
+    let () = PH_counter_change(recv_counter(sinfo),rcv_idx) in
+    let () = PH_synch_value(recv_counter(sinfo),rcv_idx,(st,r_idx, m_idx)) in
+    let () = PH_counter_change(modif_counter(sinfo),m_idx) in
+    let () = PH_synch_value(modif_counter(sinfo),m_idx,(st,r_idx,rcv_idx)) in
+    (*** End Proof Helper ***)
+  
+  if not(fixed_version) || ckr <> none_ck then    (* ADDITION: we would in theory only need the next addition, but adding it here avoids having to put to many precise. *) 
+
+
+  let (newCKr:chain_key,dr_mk:message_key) = kdf_ck(ckr) in
+
+  (** Triple Ratchet pq message key chosen by attacker **)
+  in(att, (pq_mk:message_key));
+  let tr_mk = kdf_hybrid(dr_mk, pq_mk) in 
+
+  event MessageKey(sinfo,Receiver,headerDH,tr_mk,headerN,r_idx);  
+  let new_st = state(dhs, headerDH, rk, cks, newCKr, ns, headerN +1, pn, hks, nhks, hkr, nhkr) in
+
+
+
+  let plaintext = decrypt(tr_mk, ciphertext, header_ad) in
+      event Receive(sinfo, headerDH,headerN,plaintext);
+      out(st_chan,cell(new_st,r_idx,m_idx+1,rcv_idx+1))
+    else 
+      event AuthFail(sinfo,headerDH,headerN);
+      out(st_chan,cell(new_st,r_idx,m_idx+1,rcv_idx+1))
+.
+
+
+let TrySkippedMessages(sinfo: session_info, st: internal_state, opt_hd: header, ciphertext:bitstring, ad: associated_data) =
+    
+    let Header(headerDH, headerPN, headerN) = opt_hd in
+    (* TrySkippedMessageKeys(state, header, ciphertext, AD) *)
+    get mkskipped(=sinfo,=headerDH,=headerN,dr_mk,m_idx,r_idx,_) in 
+    let () = delete_skipped_message(sinfo,headerDH,headerN,dr_mk) in
+    (* we found a skipped message key corresponding *)  
+    event Reach(sinfo,m_idx,r_idx);
+
+
+  (** Triple Ratchet pq message key chosen by attacker **)
+  in(att, (pq_mk:message_key));
+  let tr_mk = kdf_hybrid(dr_mk, pq_mk) in 
+
+    let plaintext = decrypt(tr_mk, ciphertext, concat(ad,opt_hd)) in
+      event MessageKey(sinfo,Receiver,headerDH,tr_mk,headerN,r_idx);    
+      event Receive(sinfo, headerDH,headerN,plaintext)
+    else 
+      event AuthFail(sinfo,headerDH,headerN)
+.
+
+let TrySkippedMessagesHE(sinfo: session_info, st: internal_state, enc_header: bitstring, h_nonce:nonce,  ciphertext:bitstring, ad: associated_data) =
+  
+  get mkskipped_he(=sinfo, hkr, n, dr_mk, m_idx, r_idx, ts) suchthat (
+    HeaderN(hdecrypt(hkr, h_nonce, enc_header)) = n 
+  ) in 
+  let () = delete_skipped_message_he(sinfo, hkr, n, dr_mk) in 
+  event Reach(sinfo,m_idx,r_idx);
+
+  let Header(headerDH, headerPN, headerN) = hdecrypt(hkr, h_nonce, enc_header) in
+  
+
+  (** Triple Ratchet pq message key chosen by attacker **)
+  in(att, (pq_mk:message_key));
+  let tr_mk = kdf_hybrid(dr_mk, pq_mk) in 
+
+  let plaintext = decrypt(tr_mk, ciphertext, concat_he(ad,enc_header)) in
+    event MessageKey(sinfo,Receiver,headerDH,tr_mk,headerN,r_idx);    
+    event Receive(sinfo, headerDH,headerN,plaintext)
+  else 
+    event AuthFail(sinfo,headerDH,headerN)
+.
+
+letfun DecryptHeader(st: internal_state, enc_header: bitstring, h_nonce:nonce) =  
+    let hd = hdecrypt(HKr(st), h_nonce, enc_header) 
+      in (hd, false)
+    else let hd = hdecrypt(NHKr(st), h_nonce, enc_header) in (hd, true)
+.
+
+
+
+let RatchetDecrypt(sinfo:session_info, ad:associated_data, header_encryption:bool) =
+
+  in(att, (opt_hd:header, ciphertext:bitstring));
+  in(att, (opt_enc_header: bitstring, h_nonce:nonce)) [precise];
+
+    (***) let () = PH_precise_input((opt_hd,ciphertext)) in
+
+  let st_chan = state_chan(sinfo) in
+  in(st_chan,cell(st,r_idx,m_idx,rcv_idx));
+    
+    (***) let () = if precise_for_lemma then PH_precise_input((st,r_idx,m_idx,rcv_idx)) else () in
+
+   if header_encryption  || not(fixed_version) || HeaderDHP(opt_hd) <> none_dh  then  (* Addition *)
+    (if header_encryption then TrySkippedMessagesHE(sinfo, st, opt_enc_header, h_nonce, ciphertext, ad)
+    else TrySkippedMessages(sinfo, st, opt_hd, ciphertext, ad))
+  |
+  ( 
+    (* Overapproximation of the Else branch of the Get. *)
+    
+    let (hd: header, ratchet_needed: bool) = 
+      if header_encryption then DecryptHeader(st, opt_enc_header, h_nonce)
+      else (opt_hd, HeaderDHP(opt_hd) <> DHr(st)) 
+    in
+    
+    let Header(headerDH, headerPN, headerN) = hd in
+    let encryption_ad = if header_encryption then concat_he(ad, opt_enc_header) else concat(ad, hd) in
+    if ratchet_needed  
+    then (
+        (*** Proof Helper ***) 
+        event Sanity(state_chan(sinfo),4,m_idx,r_idx);
+        let () = PH_counter_change(modif_counter(sinfo),m_idx) in
+        let () = PH_synch_value(modif_counter(sinfo),m_idx,(st,r_idx,rcv_idx)) in
+        let () = PH_counter_change(ratchet_counter(sinfo),r_idx) in
+        let () = PH_synch_value(ratchet_counter(sinfo),r_idx,(st,m_idx,rcv_idx)) in  
+        (*** End Proof Helper ***)
+      
+      if Nr(st) = headerPN then (* Negation of the condition in "while state.Nr < until:" from SkipMessageKeys*)
+      let st1 = DHRatchet(st,opt_hd, header_encryption) in
+      let KeyPair(dhs_prv,dhs_pub) = DHs(st1) in
+      event HonestDH(sinfo, dhs_prv, dhs_pub, r_idx);
+      event DHrUsed(sinfo, headerDH, r_idx);  
+      out(att, (NHKs(st1), NHKr(st1)));   
+      out(att,dhs_pub);
+      event KnowledgeAtt(dhs_pub);
+      out(st_chan,cell(st1,r_idx+2,m_idx+1,rcv_idx)) |
+
+      in(st_chan, cell_value_after_skip:cell_content);
+      
+      if only_skipped_message_keys(cell(st1,r_idx+2,m_idx+1,rcv_idx),cell_value_after_skip) then
+  
+      BasicDecrypt(sinfo, opt_hd, ciphertext, encryption_ad, cell_value_after_skip) 
+    ) else (
+      BasicDecrypt(sinfo, opt_hd, ciphertext, encryption_ad, cell(st,r_idx,m_idx,rcv_idx))
+    )
+  )
+.
+
+
+(* We do not allow the attacker to compromise a used receiver message key, as it is deleted after use. *)
+
+restriction sinfo:session_info, dhs:point, pq_mk,dr_mk:message_key, n,r_idx:nat, i,j:time;
+	event(CompromiseMK(sinfo,dr_mk,n,r_idx))@i && event(MessageKey(sinfo,Receiver,dhs, kdf_hybrid(dr_mk,pq_mk) ,n,r_idx))@j ==> i < j.
+
+let compromise_mkskipped(sinfo:session_info) =
+  if allow_MK_compromise then
+  in(att,dhr:point);
+  in(att,n:nat);
+  get mkskipped(=sinfo,=dhr,=n,mk,_,r_idx,_) in 
+  event CompromiseMK(sinfo,mk,n,r_idx);
+  out(att,mk)
+.
+
+let compromise(sinfo:session_info) =
+  compromise_mkskipped(sinfo) |
+  if allow_compromise then
+  let st_chan = state_chan(sinfo) in
+  in(st_chan, cell(state(dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx));
+  event Compromise(sinfo,r_idx);
+  let KeyPair(dhs_prv,_) = dhs in
+  
+  out(st_chan, cell(state(dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) |
+  (if allow_HK_compromise then event CompromiseHK(sinfo, hks, nhks, hkr, nhkr, r_idx); out(att, (hks, nhks, hkr, nhkr))) |
+  (if allow_RK_compromise then event CompromiseRK(sinfo,rk,r_idx); out(att,rk)) |
+  (if allow_DHs_param then if allow_DHs_compromise then event CompromiseDHs(sinfo,dhs_prv,r_idx); out(att,dhs_prv)) | (* One of these is parametrised e.g. for proofs like sanity and the other is for speed reasons *)
+  if allow_CK_compromise then
+  (event CompromiseCKs(sinfo,cks,ns,r_idx); out(att,cks)) |
+  (event CompromiseCKr(sinfo,ckr,nr,r_idx); out(att,ckr))
+
+.
+
+(** Finally launching processes
+------------------------------------ *)
+
+let DoubleRatchet(sinfo:session_info, ad:associated_data, header_encryption:bool) =
+    ! SkipMessageKeys(sinfo, header_encryption)
+  | ! RatchetDecrypt(sinfo,ad,header_encryption)
+  | ! new secret_message:bitstring; RatchetEncrypt(sinfo, secret_message,ad, header_encryption)
+  | ! compromise(sinfo)
+.
+
+let AliceDoubleRatchet(sinfo:session_info, SK:root_key, bob_dh_public_key:point, shared_hk: header_key, shared_nhk:header_key, ad:associated_data, header_encryption:bool) = 
+  event Header_Encryption(sinfo,header_encryption); 
+  (    
+      RatchetInitAlice(sinfo,SK,bob_dh_public_key, shared_hk, shared_nhk, header_encryption)
+    | DoubleRatchet(sinfo, ad, header_encryption)
+  )
+.
+
+let BobDoubleRatchet(sinfo:session_info, SK:root_key, bob_dh_key_pair:key_pair, shared_hk: header_key, shared_nhk:header_key, ad:associated_data, header_encryption:bool) = 
+  event Header_Encryption(sinfo,header_encryption); 
+  (
+      RatchetInitBob(sinfo,SK,bob_dh_key_pair, shared_hk, shared_nhk, header_encryption)
+    | DoubleRatchet(sinfo, ad, header_encryption)
+  )
+.
+(* WARNING: File generated from lemmas.m4.pvl *)
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(* -lib ../params/params-all-comp.pvl *)
+(* -lib crypto.pvl *)
+(* -lib gsverif_library.pvl *)
+(* -lib format.pvl *)
+
+
+
+
+(* This lemmas shows all keys secret, but in a no compromise setting *)
+def lemmas_secrecy_no_comp() {
+  lemma sif:session_info,dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk:root_key, cks:chain_key, ckr:chain_key, hks, nhks, hkr, nhkr:header_key, ns,nr,pn,m_idx,r_idx:nat, rcv_idx,rcv_idx':nat;
+    mess(state_chan(sif),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( dhs_prv) ==> false;
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( rk) ==> false;
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( cks) ==> cks=none_ck;
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( ckr) ==> ckr=none_ck
+
+  [induction].
+
+}
+
+(* To subsume loops over public knowledge, those lemmas defines the public elements of states. *)
+def lemmas_public_knowledge() {
+  lemma s:session_info, dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk:root_key, cks:chain_key, rcv_idx,rcv_idx':nat,ckr:chain_key, hks, nhks, hkr, nhkr:header_key, ns,nr,pn,m_idx,r_idx:nat, i,j:time;
+    mess(state_chan(s),cell(state( dhs, dhr, rk, none_ck, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) ==> 
+      m_idx = 0 && r_idx = 0 && ckr = none_ck && dhr = none_dh && ns = 0 && nr = 0 && pn = 0;
+
+    mess(state_chan(s),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))  ==> is_nat(ns) && is_nat(nr) && is_nat(pn) && is_nat(m_idx) && is_nat(r_idx);
+
+    mess(state_chan(s),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))@i ==>
+
+      (event(KnowledgeAtt(dhr))@j && i > j) ||
+
+      (attacker(dhr)@j && i > j);      
+
+    mess(state_chan(s),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))@i ==>
+
+      (event(KnowledgeAtt(dhs_pub))@j && i > j) ||
+
+      (attacker(dhs_pub)@j && i > j)
+
+  [induction].
+
+}
+
+def lemmas_internal_state1() {
+
+  lemma sif:session_info,dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk:root_key, cks:chain_key,rcv_idx,rcv_idx':nat, ckr:chain_key, hks, nhks, hkr, nhkr:header_key, 
+    ns,nr,pn,m_idx,r_idx:nat;
+
+    (* Shape of DHs*)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) ==>
+      dhs = KeyPair(dhs_prv,SMUL(dhs_prv,G))
+
+      
+
+  [induction]
+
+  .
+
+  lemma sif:session_info,dhs,dhs':key_pair, sd:session_id, idA,idB:id, r:bool, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,r_idx,m_idx',r_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same DHs implies same DHr, RK, r_idx and Pn and header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs, dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      dhr = dhr' && r_idx = r_idx' && pn = pn' && rk = rk' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+    (* Same DHs and Ns implies same CKs *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks', ckr', ns, nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      cks = cks';
+
+    (* Same CKs implies same DHs, DHr, Ns, header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks, ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      ns = ns' && dhs = dhs' && dhr = dhr' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+     (* Same DHs and Nr implies same CKr and rcv_idx *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs, dhr', rk', cks', ckr', ns', nr, pn', hks', nhks', hkr', nhkr'),r_idx,m_idx',rcv_idx')) ==> 
+      ckr = ckr' && rcv_idx = rcv_idx';
+
+
+    (* Same RK implies same DHs, header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk, cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      dhs = dhs' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+    (* Booleans are booleans *)
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))
+      ==> r = true || r = false
+
+
+  [induction]
+
+  .
+}
+
+def lemmas_internal_state2() {
+
+  lemma sif:session_info,dhs,dhs':key_pair, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,r_idx,m_idx',r_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same r_idx implies same DHs and header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx,m_idx',rcv_idx')) ==> 
+      dhs = dhs' && dhr = dhr' && rk = rk' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+    (* Same m_idx implies same everything *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx,rcv_idx')) ==> 
+      dhs = dhs' && dhr = dhr' && rk = rk' && r_idx = r_idx' && cks = cks' && ckr = ckr' && ns = ns' && nr = nr' && pn = pn' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr'
+
+
+  [induction]
+
+  . 
+}
+
+def lemmas_internal_state3() {
+  lemma sif:session_info, dhs,dhs':key_pair, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,r_idx,m_idx',r_idx',rcv_idx,rcv_idx':nat;
+    (* Same CKr implies same DHs and Nr, header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr, ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      nr = nr' && dhs = dhs' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr'
+
+  [induction]
+
+  .
+
+  lemma sinfo:session_info, dhs,dhs':scalar, dhp,dhp':point, r_idx:nat;
+    event(HonestDH(sinfo,dhs,dhp,r_idx)) && event(HonestDH(sinfo,dhs',dhp',r_idx))  ==> dhp=dhp' && dhs=dhs'
+  .
+}
+
+
+def lemmas_session_state_invariants() {
+
+  lemma  sd,sd':session_id, s,s':bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhr,dhr',p,p':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same rk implies same session and r_idx *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk, cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx'  ; (* as there is a one off double jump for root keys, the two opposite chains are never syncrhonized *)
+
+    (* One off RK implies partnered session and one off r_idx *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', kdf_rk_root(rk,p), cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s <> s' && idA'=idB && idB'=idA && (r_idx'=r_idx+1) ; (* as there is a one off double jump for root keys, the two opposite chains are never syncrhonized *)
+
+
+    (*  A cks derived from rk implies same session two r_idx epocs later *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', kdf_rk_chain(kdf_rk_root(rk,p),p'), ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s = s' && ( (idA'=idA && idB'=idB)) && r_idx+2=r_idx' && ns'=0 ;
+
+    (* A ckr derived from rk implies same session  two r_idx epocs later  *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', ckr', kdf_rk_chain(rk,p), ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s = s' && ((idA'=idA && idB'=idB))  && r_idx+2=r_idx' && nr'=0;
+
+    (* Opposite ckr and cks implies partners and one off r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, CK, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', CK, ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      CK = none_ck
+      ||
+      (sd=sd' && s <> s' && (idA'=idB && idB'=idA) && r_idx=r_idx' +1 && nr=ns')
+
+  [induction]
+
+  .
+
+  lemma sd,sd':session_id, s,s':bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhs_prv:scalar, dhs_pub:point, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key,  ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same dhs implies same session *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs, dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      sd=sd' && s=s' && (idA'=idA && idB'=idB) && r_idx=r_idx' ||
+      idA'=idA && s = false && s' = false && r_idx = 0 && r_idx' = 0 && event(ChosenSPK(session(sd,false,idA,idB), dhs)) && event(ChosenSPK(session(sd',false,idA,idB'), dhs)) && sd <> sd'
+    
+    [induction]
+    
+  .
+
+  (* same cks implies same session and same r_idx epoc *)
+  lemma sd,sd':session_id, s,s':bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhs_prv:scalar, dhs_pub:point, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key,  ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', cks, ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      cks = none_ck || (sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx' && ns=ns');
+
+    (* Same ckr implies same session and same r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', cks', ckr, ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      ckr = none_ck || (sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx' && nr=nr');
+
+    (* One off cks implies same session and same r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', kdf_ck_chain(cks), ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx' && ns'=ns+1 ;
+
+    (* One off cross ck implies same session and same r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk',cks',  kdf_ck_chain(ckr), ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+    sd=sd' && s = s' && idA'=idA && idB'=idB && r_idx=r_idx' && nr'=nr+1
+    
+    [induction]
+    
+  .
+
+}
+
+
+def lemmas_track_comp() {
+  (* Helping axiom to keep in memory the mess corresponding to compromise, needed to apply the other lemmas *)
+  lemma sd,sd':session_id, s:bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhs_prv:scalar, dhs_pub,dhr,dhr',p,p':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+    event(CompromiseRK(session(sd,s,idA,idB), rk,r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx));
+    event(CompromiseDHs(session(sd,s,idA,idB), dhs_prv,r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)); 
+    event(CompromiseCKs(session(sd,s,idA,idB), cks,ns, r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx));
+    event(CompromiseCKr(session(sd,s,idA,idB), ckr,nr,r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state(dhs , dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)).
+}
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(* -lib ../params/params-all-comp.pvl *)
+(* -lib crypto.pvl *)
+(* -lib gsverif_library.pvl *)
+(* -lib format.pvl *)
+
+
+
+
+(* This lemmas shows all keys secret, but in a no compromise setting *)
+def axioms_secrecy_no_comp() {
+  axiom sif:session_info,dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk:root_key, cks:chain_key, ckr:chain_key, hks, nhks, hkr, nhkr:header_key, ns,nr,pn,m_idx,r_idx:nat, rcv_idx,rcv_idx':nat;
+    mess(state_chan(sif),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( dhs_prv) ==> false;
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( rk) ==> false;
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( cks) ==> cks=none_ck;
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( ckr) ==> ckr=none_ck
+
+   [fullSat].
+
+}
+
+(* To subsume loops over public knowledge, those lemmas defines the public elements of states. *)
+def axioms_public_knowledge() {
+  axiom s:session_info, dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk:root_key, cks:chain_key, rcv_idx,rcv_idx':nat,ckr:chain_key, hks, nhks, hkr, nhkr:header_key, ns,nr,pn,m_idx,r_idx:nat, i,j:time;
+    mess(state_chan(s),cell(state( dhs, dhr, rk, none_ck, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) ==> 
+      m_idx = 0 && r_idx = 0 && ckr = none_ck && dhr = none_dh && ns = 0 && nr = 0 && pn = 0;
+
+    mess(state_chan(s),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))  ==> is_nat(ns) && is_nat(nr) && is_nat(pn) && is_nat(m_idx) && is_nat(r_idx);
+
+    mess(state_chan(s),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))@i ==>
+
+      (attacker(dhr)@j && i > j);      
+
+    mess(state_chan(s),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))@i ==>
+
+      (attacker(dhs_pub)@j && i > j)
+
+   [fullSat].
+
+}
+
+def axioms_internal_state1() {
+
+  axiom sif:session_info,dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk:root_key, cks:chain_key,rcv_idx,rcv_idx':nat, ckr:chain_key, hks, nhks, hkr, nhkr:header_key, 
+    ns,nr,pn,m_idx,r_idx:nat;
+
+    (* Shape of DHs*)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) ==>
+      dhs = KeyPair(dhs_prv,SMUL(dhs_prv,G))
+
+      
+
+  .
+
+  axiom sif:session_info,dhs,dhs':key_pair, sd:session_id, idA,idB:id, r:bool, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,r_idx,m_idx',r_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same DHs implies same DHr, RK, r_idx and Pn and header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs, dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      dhr = dhr' && r_idx = r_idx' && pn = pn' && rk = rk' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+    (* Same DHs and Ns implies same CKs *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks', ckr', ns, nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      cks = cks';
+
+    (* Same CKs implies same DHs, DHr, Ns, header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks, ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      ns = ns' && dhs = dhs' && dhr = dhr' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+     (* Same DHs and Nr implies same CKr and rcv_idx *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs, dhr', rk', cks', ckr', ns', nr, pn', hks', nhks', hkr', nhkr'),r_idx,m_idx',rcv_idx')) ==> 
+      ckr = ckr' && rcv_idx = rcv_idx';
+
+
+    (* Same RK implies same DHs, header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk, cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      dhs = dhs' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+    (* Booleans are booleans *)
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx))
+      ==> r = true || r = false
+
+
+  .
+}
+
+def axioms_internal_state2() {
+
+  axiom sif:session_info,dhs,dhs':key_pair, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,r_idx,m_idx',r_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same r_idx implies same DHs and header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx,m_idx',rcv_idx')) ==> 
+      dhs = dhs' && dhr = dhr' && rk = rk' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr';
+
+    (* Same m_idx implies same everything *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx,rcv_idx')) ==> 
+      dhs = dhs' && dhr = dhr' && rk = rk' && r_idx = r_idx' && cks = cks' && ckr = ckr' && ns = ns' && nr = nr' && pn = pn' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr'
+
+
+  . 
+}
+
+def axioms_internal_state3() {
+  axiom sif:session_info, dhs,dhs':key_pair, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,r_idx,m_idx',r_idx',rcv_idx,rcv_idx':nat;
+    (* Same CKr implies same DHs and Nr, header keys *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr, ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      nr = nr' && dhs = dhs' && hks = hks' && nhks = nhks' && hkr = hkr' && nhkr = nhkr'
+
+  .
+
+  axiom sinfo:session_info, dhs,dhs':scalar, dhp,dhp':point, r_idx:nat;
+    event(HonestDH(sinfo,dhs,dhp,r_idx)) && event(HonestDH(sinfo,dhs',dhp',r_idx))  ==> dhp=dhp' && dhs=dhs'
+  .
+}
+
+
+def axioms_session_state_invariants() {
+
+  axiom  sd,sd':session_id, s,s':bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhr,dhr',p,p':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same rk implies same session and r_idx *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk, cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx'  ; (* as there is a one off double jump for root keys, the two opposite chains are never syncrhonized *)
+
+    (* One off RK implies partnered session and one off r_idx *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', kdf_rk_root(rk,p), cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s <> s' && idA'=idB && idB'=idA && (r_idx'=r_idx+1) ; (* as there is a one off double jump for root keys, the two opposite chains are never syncrhonized *)
+
+
+    (*  A cks derived from rk implies same session two r_idx epocs later *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', kdf_rk_chain(kdf_rk_root(rk,p),p'), ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s = s' && ( (idA'=idA && idB'=idB)) && r_idx+2=r_idx' && ns'=0 ;
+
+    (* A ckr derived from rk implies same session  two r_idx epocs later  *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', ckr', kdf_rk_chain(rk,p), ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s = s' && ((idA'=idA && idB'=idB))  && r_idx+2=r_idx' && nr'=0;
+
+    (* Opposite ckr and cks implies partners and one off r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, CK, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', CK, ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      CK = none_ck
+      ||
+      (sd=sd' && s <> s' && (idA'=idB && idB'=idA) && r_idx=r_idx' +1 && nr=ns')
+
+  .
+
+  axiom sd,sd':session_id, s,s':bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhs_prv:scalar, dhs_pub:point, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key,  ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+
+    (* Same dhs implies same session *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs, dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==> 
+      sd=sd' && s=s' && (idA'=idA && idB'=idB) && r_idx=r_idx' ||
+      idA'=idA && s = false && s' = false && r_idx = 0 && r_idx' = 0 && event(ChosenSPK(session(sd,false,idA,idB), dhs)) && event(ChosenSPK(session(sd',false,idA,idB'), dhs)) && sd <> sd'
+    
+  .
+
+  (* same cks implies same session and same r_idx epoc *)
+  axiom sd,sd':session_id, s,s':bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhs_prv:scalar, dhs_pub:point, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key,  ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', cks, ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      cks = none_ck || (sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx' && ns=ns');
+
+    (* Same ckr implies same session and same r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', cks', ckr, ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      ckr = none_ck || (sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx' && nr=nr');
+
+    (* One off cks implies same session and same r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk', kdf_ck_chain(cks), ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+      sd=sd' && s=s' && idA'=idA && idB'=idB && r_idx=r_idx' && ns'=ns+1 ;
+
+    (* One off cross ck implies same session and same r_idx epoc *)
+    mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && 
+    mess(state_chan(session(sd',s',idA',idB')),cell(state( dhs', dhr', rk',cks',  kdf_ck_chain(ckr), ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) ==>
+    sd=sd' && s = s' && idA'=idA && idB'=idB && r_idx=r_idx' && nr'=nr+1
+    
+  .
+
+}
+
+
+def axioms_track_comp() {
+  (* Helping axiom to keep in memory the mess corresponding to compromise, needed to apply the other lemmas *)
+  axiom sd,sd':session_id, s:bool, idA,idA',idB,idB':id,dhs,dhs':key_pair, dhs_prv:scalar, dhs_pub,dhr,dhr',p,p':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr',CK:chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, ns,ns':nat, nr,nr':nat, pn,pn':nat,r_idx,m_idx,r_idx',m_idx',rcv_idx,rcv_idx':nat;
+    event(CompromiseRK(session(sd,s,idA,idB), rk,r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx));
+    event(CompromiseDHs(session(sd,s,idA,idB), dhs_prv,r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)); 
+    event(CompromiseCKs(session(sd,s,idA,idB), cks,ns, r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx));
+    event(CompromiseCKr(session(sd,s,idA,idB), ckr,nr,r_idx)) ==> mess(state_chan(session(sd,s,idA,idB)),cell(state(dhs , dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)).
+}
+
+(* -lib ../params/params-all-comp.pvl *)
+(* -lib ../params/switches.pvl *)
+(* -lib ../libs/gsverif_library.pvl *)
+(* -lib ../libs/crypto.pvl *)
+(* -lib ../libs/format.pvl*)
+(* -lib ../libs/proof_helpers.pvl *)
+(* -lib ../models/DR-functions.pvl*)
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+(* Values inherited from PQXDH 
+
+Extracted from Sec. 7.1: (combination with PQXDH)
+-------
+The following outputs from PQXDH are used by the Double Ratchet:
+
+    The SK output from PQXDH becomes the SK input to Double Ratchet initialization (see Section 3.3).
+
+    The AD output from PQXDH becomes the AD input to Double Ratchet encryption and decryption (see Section 3.4 and Section 3.5).
+
+    Bob's signed prekey from PQXDH (SPKB) becomes Bob's initial ratchet public key (and corresponding key pair) for Double Ratchet initialization.
+*)
+
+fun sid_of_rk(root_key): session_id.
+
+(** Function to generate the associated data. *)
+fun idPair(id,id) : associated_data. 
+
+
+
+let genSPKs = 
+  if allow_same_SPK then 
+  !
+  in(att,r:id);
+  let s = generate_dh() in
+  insert SPKs(r, s)
+.
+
+
+let System = 
+   genSPKs | 
+  !
+    (*** Sanity ***)  let () = OneReplication() in
+  in(att, (idA:id, idB:id)); (* we let the attacker decide who talks with who *)
+  in(att, (HE:bool, shared_hk:header_key, shared_nhk:header_key)); (* Attacker decides if headers are encrypted *) 
+  let is_HE = if allow_HE then HE else false in
+  event Using_HE(is_HE);
+    (***) let () = PH_precise_input((idA, idB)) in
+
+  let bob_dh_key_pair = (* From PQXDH: Pair of keys that is magically authenticated with Alice *)
+    if allow_same_SPK 
+    then (get SPKs(=idB, bob_dh_key_pair) in bob_dh_key_pair)
+    else generate_dh() 
+  in   
+
+  new SK:root_key; (* From PQXDH: Magically shared root key *) 
+  let s_id = sid_of_rk(SK) in
+
+  event ChosenSPK(session(s_id,false,idB,idA), bob_dh_key_pair);
+
+  let AD = idPair(idA,idB) in 
+
+  let KeyPair(_,bob_dh_public_key) = bob_dh_key_pair in
+  out(att,bob_dh_public_key);
+  event KnowledgeAtt(bob_dh_public_key);
+
+    AliceDoubleRatchet(session(s_id,true,idA,idB), SK, bob_dh_public_key, shared_hk, shared_nhk, AD, is_HE)
+  | BobDoubleRatchet(session(s_id,false,idB,idA), SK,  bob_dh_key_pair, shared_hk, shared_nhk, AD, is_HE)
+.(* -lib ../params/params-all-comp.pvl *)
+(* -lib ../params/switches.pvl *)
+(* -lib ../libs/gsverif_library.pvl *)
+(* -lib ../libs/crypto.pvl *)
+(* -lib ../libs/format.pvl*)
+(* -lib ../libs/proof_helpers.pvl *)
+(* -lib ../models/DR-functions.pvl *)
+(* -lib ../libs/lemmas.pvl *)
+(* -lib ../models/DR-model.pvl *)
+
+(*************************************************************
+ *                                                           *
+ *  Automated formal analysis of Signal’s Double Ratchet:    *
+ *    attacks, fixes and security proofs                     *
+ *                                                           *
+ *  Vincent Cheval, Charlie Jacomme, and Jessica Richards    *
+ *                                                           *
+ *  IEEE Symposium on Security and Privacy 2026              *
+ *                                                           *
+ *************************************************************)
+
+set redundancyElim = simple.
+set simpEqFinal = false.
+noselect sif:session_info, x:bitstring; mess(state_chan( *sif), *x).
+noselect z:scalar; attacker(SMUL( *z,G)) / 30000.
+noselect hk:header_key; attacker(hk).
+
+expand axioms_public_knowledge().
+expand axioms_session_state_invariants().
+expand axioms_track_comp().
+expand axioms_internal_state1().
+expand axioms_internal_state2().
+expand axioms_internal_state3().
+
+lemma sif:session_info,dhs,dhs':key_pair, dhr,dhr':point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, 
+    ns,ns',nr,nr',pn,pn',m_idx,m_idx',r_idx,r_idx',rcv_idx,rcv_idx':nat, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key;
+
+    (* Ratchet index jump by at least 2 *)
+    mess(state_chan(sif),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) &&
+    mess(state_chan(sif),cell(state( dhs', dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx',m_idx',rcv_idx')) && r_idx > r_idx' ==> r_idx > r_idx' + 1
+    [induction]
+.
+
+lemma sd,sd':session_id, r,r',r'',r''':bool, idA,idA',idB,idB':id,sif:session_info,dhs:key_pair, dhs_prv:scalar, dhs_pub,dhr:point, rk,rk':root_key, cks,cks':chain_key, ckr,ckr':chain_key, n,ns,nr,pn,m_idx,r_idx,r_idx',rcv_idx,rcv_idx':nat,hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, i,j,k:time;
+
+   (* dhs is secret unless compromised by same session *)
+    mess(state_chan(session(sd, r, idA, idB)),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( dhs_prv)
+    ==> (event(CompromiseDHs(session(sd, r, idA, idB),dhs_prv,r_idx)) ||
+         event(CompromiseDHs(session(sd', r, idA, idB'),dhs_prv,0)) && r_idx = 0 && r = false && event(ChosenSPK(session(sd, false, idA, idB), dhs)) && event(ChosenSPK(session(sd', false, idA, idB'), dhs)) && sd <> sd') ;
+    (* rk is secret unless compromised by partners *)
+    mess(state_chan(session(sd, r, idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( rk) ==>
+      (event(CompromiseRK(session(sd, r', idA',idB'),rk',r_idx')) && r_idx' <= r_idx  && ((r<>r' && idA'=idB && idB'=idA)|| ( r=r' && idA'=idA && idB'=idB)))    ;
+
+    (event(HonestDH(session(sd,r,idA,idB), dhs_prv, dhs_pub, r_idx))) && attacker(dhs_prv) ==>
+    
+       (event(CompromiseDHs(session(sd,r,idA,idB),dhs_prv,r_idx+2)));
+
+    (event(HonestDH(session(sd,r,idA,idB), dhs_prv, dhs_pub, r_idx)))  ==>
+    					 dhs_pub = SMUL(dhs_prv,G)
+
+[induction].
+
+
+lemma sd:session_id, r,r':bool, idA,idB,idA',idB':id, pn,m_idx,n,ns,nr,r_idx,r_idx_comp,rcv_idx,rcv_idx',r_idx_heal,r_idx_recomp:nat, dhs,dhr:point, dhs_prv,dhs_prv':scalar, dhs_pub,dhs_pub':point, mk:message_key, cks,ckr:chain_key, hks, nhks, hkr, nhkr:header_key, rk,rk':root_key, p:point, msg:bitstring, i,j,k:time;
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx+2,m_idx,rcv_idx))  &&
+	     (event(HonestDH(session(sd,r,idA,idB), dhs_prv', dhs_pub', r_idx)))
+	     ==> dhs_pub' = dhs_pub && dhs_prv'=dhs_prv
+[induction]
+.
+
+
+(* Any step PCS rk security ~ 3 minutes *)
+lemma sd:session_id, r,r',r'',r''':bool, idA,idB,idA',idB':id, pn,pn',m_idx,m_idx',n,n',ns,ns',nr,nr',r_idx,r_idx',rcv_idx,rcv_idx',r_idx_comp,r_idx_heal,r_idx_recomp:nat, dhs,dhr,dhs',dhr':point, dhs_prv,dhr_prv,dhs_prv',dhr_prv':scalar, dhs_pub,dhs_pub':point, mk:message_key, cks,ckr,cks',ckr':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, rk,rk',rk'':root_key, p:point, msg:bitstring, i,j,k:time;
+    (* the attacked session *)
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv,dhs_pub), dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( rk )
+    &&
+    (* the past healing *)
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv',dhs_pub'), dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx_heal,m_idx',rcv_idx'))
+    
+    && event(HonestDH(session(sd,r',idB,idA),dhr_prv',dhr',r_idx'))
+
+
+  ==> r = r' || 
+    r_idx_heal > r_idx ||
+    (r_idx_heal <= r_idx && 
+      (
+        (* a root key was compromised after the heal *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&  r_idx_heal <= r_idx_comp && r_idx_comp <= r_idx && ((r'=r'' && idA'=idB && idB'=idA)|| (r=r'' && idA'=idA && idB'=idB)) 
+        )
+        ||
+        (* a past root key was compromised by self or other, and the healing shares were re-compromised *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&
+          r_idx_comp < r_idx_heal &&
+	        ((r'=r'' && idA'=idB && idB'=idA)|| (r=r'' && idA'=idA && idB'=idB)) &&
+          (
+            (event(CompromiseDHs(session(sd,r',idB,idA), dhr_prv', r_idx'+2)))
+            ||
+            event(CompromiseDHs(session(sd,r,idA,idB), dhs_prv', r_idx_heal))
+          )
+        )
+      )
+    )
+  [induction] (* induction is needed, for cks and ckr chain keys in fact ! *)
+.
+
+
+lemma sd:session_id, r,r',r'':bool, idA,idB,idA',idB':id, pn,pn',m_idx,m_idx',n,n',ns,ns',nr,nr',r_idx,r_idx',r_idx''',rcv_idx,rcv_idx',r_idx_comp,r_idx_heal,r_idx_recomp:nat, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key,  dhs:key_pair,dhr,dhs',dhr':point, dhs_prv,dhr_prv,dhs_prv',dhr_prv':scalar, dhs_pub,dhs_pub':point, mk:message_key, ck,cks,ckr,cks',ckr',cks'',ckr'':chain_key, rk,rk',rk'':root_key, p:point, msg:bitstring, i,j,k:time;
+    (* cks is secret unless compromised by partners *)
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( cks)
+    (* the past healing *)
+    && 
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv',dhs_pub'), dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx_heal,m_idx',rcv_idx'))
+    
+    && event(HonestDH(session(sd,r',idB,idA),dhr_prv',dhr',r_idx'))
+
+  ==>  r=r' || 
+    r_idx_heal > r_idx ||
+    (r_idx_heal <= r_idx &&
+      (
+        cks=none_ck  (* && r_idx = 0 ? *)
+        ||
+        (event(CompromiseCKs(session(sd,r,idA,idB),cks'',n,r_idx)) && n <= ns) 
+        ||
+	      (event(CompromiseCKr(session(sd,r',idB,idA),ckr'',n,r_idx+1)) && n <= ns)
+        ||
+        (* a root key was compromised after the heal *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&  r_idx_heal <= r_idx_comp && r_idx_comp + 1 <= r_idx && ((r'=r'' && idA'=idB && idB'=idA)|| (r=r'' && idA'=idA && idB'=idB)) 
+        )
+        ||
+        (* a past root key was compromised by self or other, and the healing shares were re-compromised *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&
+          r_idx_comp < r_idx_heal &&
+	        ((r'=r'' && idA'=idB && idB'=idA)|| (r''=r && idA'=idA && idB'=idB)) &&
+          (
+            (event(CompromiseDHs(session(sd,r',idB,idA), dhr_prv', r_idx'+2)))
+            ||
+            event(CompromiseDHs(session(sd,r,idA,idB), dhs_prv', r_idx_heal))
+          )
+        )
+      )
+    )
+
+[induction].
+
+(* PCS over ckr *)
+lemma sd:session_id, r,r',r'':bool, idA,idB,idA',idB':id, pn,pn',m_idx,m_idx',n,n',ns,ns',nr,nr',r_idx,r_idx',r_idx''',rcv_idx,rcv_idx',r_idx_comp,r_idx_heal,r_idx_recomp:nat, dhs:key_pair,dhr,dhs',dhr':point, dhs_prv,dhr_prv,dhs_prv',dhr_prv':scalar, dhs_pub,dhs_pub':point, mk:message_key, ck,cks,ckr,cks',ckr',cks'',ckr'':chain_key, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key, rk,rk',rk'':root_key, p:point, msg:bitstring, i,j,k:time;
+    (* cks is secret unless compromised by partners *) 
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( dhs, dhr, rk, cks, ckr, ns, nr, pn, hks, nhks, hkr, nhkr),r_idx,m_idx,rcv_idx)) && attacker( ckr)
+ (* the past healing *)
+    && 
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv',dhs_pub'), dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx_heal,m_idx',rcv_idx'))
+    
+    && event(HonestDH(session(sd,r',idB,idA),dhr_prv',dhr',r_idx'))
+   
+==>  r = r' ||
+      r_idx_heal >= r_idx || (* compared to cks, the heal on receiver side only takes place at the next step ! *)
+    (r_idx_heal < r_idx &&
+
+    (
+	ckr=none_ck
+	||
+	(event(CompromiseCKs(session(sd,r',idB,idA),cks'',n,r_idx''')) && n <= nr && r_idx'''+1=r_idx)
+	||
+	(event(CompromiseCKr(session(sd,r,idA,idB),ckr'',n,r_idx)) && n <= nr)
+	||
+	        (* a root key was compromised after the heal *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&  r_idx_heal <= r_idx_comp && r_idx_comp + 2 <= r_idx && ((r'=r'' && idA'=idB && idB'=idA)|| (r=r'' && idA'=idA && idB'=idB)) 
+        )
+        ||
+        (* a past root key was compromised by self or other, and the healing shares were re-compromised *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&
+          r_idx_comp < r_idx_heal &&
+	        ((r'=r'' && idA'=idB && idB'=idA)|| (r=r'' && idA'=idA && idB'=idB)) &&
+          (
+            (event(CompromiseDHs(session(sd,r',idB,idA), dhr_prv', r_idx'+2)))
+            ||
+            (event(CompromiseDHs(session(sd,r,idA,idB), dhs_prv', r_idx_heal)))
+          )
+        )
+
+
+     )
+     )
+
+[induction]. 
+
+
+query sd:session_id, r,r',r'':bool, idA,idB,idA',idB':id, pn,pn',m_idx,m_idx',n,n',ns,ns',nr,nr',r_idx,r_idx',rcv_idx,rcv_idx',r_idx_comp,r_idx_heal,r_idx_recomp:nat, dhs,dhr,dhs',dhr':point, hks', nhks', hkr',  nhkr':header_key, dhs_prv,dhr_prv,dhs_prv',dhr_prv':scalar, dhs_pub,dhs_pub':point, mk,dr_mk,pq_mk:message_key, ck,cks,ckr,cks',ckr':chain_key, rk,rk',rk'':root_key, p:point, msg:bitstring, i,j,k:time;
+    event(MessageKey(session(sd,r,idA,idB),Sender,dhs, mk,n,r_idx)) && attacker(mk)
+    (* the past healing *)
+    && 
+    mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv',dhs_pub'), dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx_heal,m_idx',rcv_idx'))
+    
+    && event(HonestDH(session(sd,r',idB,idA),dhr_prv',dhr',r_idx'))
+
+==> r=r' ||
+  r_idx_heal > r_idx ||
+    (r_idx_heal <= r_idx &&
+      (
+        event(CompromiseMK(session(sd,r',idB,idA), dr_mk,n,r_idx+1)) && mk=kdf_hybrid(dr_mk, pq_mk) || 
+	(event(CompromiseCKs(session(sd,r,idA,idB),ck,ns,r_idx)) && ns <= n ) ||
+	(event(CompromiseCKr(session(sd,r',idB,idA),ck,nr,r_idx+1)) && nr <= n) ||
+      
+        (* a root key was compromised after the heal *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&  r_idx_heal <= r_idx_comp && r_idx_comp + 1 <= r_idx && ((r'' = r' && idA'=idB && idB'=idA)|| (r'' = r && idA'=idA && idB'=idB)) 
+        )
+        ||
+        (* a past root key was compromised by self or other, and the healing shares were re-compromised *)
+        (
+          event(CompromiseRK(session(sd,r'', idA',idB'),rk'',r_idx_comp)) &&
+          r_idx_comp < r_idx_heal &&
+	        ((r''=r' && idA'=idB && idB'=idA)|| (r''=r && idA'=idA && idB'=idB)) &&
+          (
+            event(CompromiseDHs(session(sd,r',idB,idA), dhr_prv', r_idx'+2))
+            ||
+            event(CompromiseDHs(session(sd,r,idA,idB), dhs_prv', r_idx_heal))
+          )
+        )
+      )
+    )
+.
+
+
+
+query sd:session_id, r,r',r'':bool, idA,idB,idA',idB':id, pn,pn',m_idx,m_idx',n,n',ns,ns',nr,nr',r_idx,r_idx',r_idx''',rcv_idx,rcv_idx',r_idx_comp,r_idx_heal,r_idx_recomp:nat, hks, hks', nhks, nhks', hkr, hkr', nhkr, nhkr':header_key,  dhs,dhr,dhs',dhr':point, dhs_prv,dhr_prv,dhs_prv',dhr_prv':scalar, dhs_pub,dhs_pub':point, dr_mk,pq_mk,mk:message_key, ck,cks,ckr,cks',ckr':chain_key, rk,rk',rk'':root_key, p:point, msg:bitstring, i,j,k:time;
+  event(MessageKey(session(sd,r,idA,idB),Receiver,dhs, mk,n,r_idx)) && attacker(mk)
+  (* the past healing *)
+  && 
+  mess(state_chan(session(sd,r,idA,idB)),cell(state( KeyPair(dhs_prv',dhs_pub'), dhr', rk', cks', ckr', ns', nr', pn', hks', nhks', hkr', nhkr'),r_idx_heal,m_idx',rcv_idx'))
+  && event(HonestDH(session(sd,r',idB,idA),dhr_prv',dhr',r_idx'))
+  ==> r=r' ||
+    r_idx_heal >= r_idx ||
+    (r_idx_heal < r_idx &&
+      (    
+        event(CompromiseMK(session(sd,r,idA,idB), dr_mk,n,r_idx)) && mk=kdf_hybrid(dr_mk,pq_mk)
+        || 
+        (event(CompromiseCKs(session(sd,r',idB,idA),ck,ns,r_idx''')) && ns <= n && r_idx'''+1 = r_idx) 
+        ||
+        (event(CompromiseCKr(session(sd,r,idA,idB),ck,nr,r_idx)) && nr <= n) 
+        ||
+        (* a root key was compromised after the heal *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&  r_idx_heal <= r_idx_comp && r_idx_comp + 2 <= r_idx && ((r'=r'' && idA'=idB && idB'=idA)|| (r=r'' && idA'=idA && idB'=idB)) 
+        )
+        ||
+        (* a past root key was compromised by self or other, and the healing shares were re-compromised *)
+        (
+          event(CompromiseRK(session(sd,r'',idA',idB'),rk'',r_idx_comp)) &&
+          r_idx_comp < r_idx_heal &&
+	        ((r''=r' && idA'=idB && idB'=idA)|| (r''=r && idA'=idA && idB'=idB)) &&
+          (
+            event(CompromiseDHs(session(sd,r',idB,idA), dhr_prv', r_idx'+2))
+            ||
+            event(CompromiseDHs(session(sd,r,idA,idB), dhs_prv', r_idx_heal))
+          )
+        )
+      )
+    ) 
+. 
+
+process System
+
+
+
